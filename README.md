@@ -20,7 +20,7 @@ Until this release is adopted by HomeAssistant (HACS) the best method is to inst
 The initial setup can take some time, please be patient.
 
 # UI
-An other user made a HA card to display the information:
+Another user made a HA card to display the information:
 https://github.com/stepsolar/hassio-package-panel-solar
 ____________________________________
 
