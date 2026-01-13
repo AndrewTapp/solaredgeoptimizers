@@ -12,7 +12,7 @@ When the inverter is not working, the last know result is send back from the por
 The best method is using HACS (https://hacs.xyz)
 1.  Make sure you have hacs installed
 2.  Add this repository as custom repository to hacs by going to hacs, integrations, click on the three dots in the upper right corner and click on custom repositories.
-3.  In the repository field, fill in the link to this repository (https://github.com/ProudElm/solaredgeoptimizers) and for category, select Integration. Click on Add
+3.  In the repository field, fill in the link to this repository (https://github.com/AndrewTapp/solaredgeoptimizers) and for category, select Integration. Click on Add
 4.  Go back to hacs, integrations and add click on the blue button Exlore and download repositories in the bottom left corner, search for SolarEdge Optimizers Data and install it
 5.  Reboot HA
 6.  In HA goto Config -> Integrations. Add the SolarEdge Optimizers Data to HA.
