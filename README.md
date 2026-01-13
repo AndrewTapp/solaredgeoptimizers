@@ -33,5 +33,7 @@ If you liked the project click below to buy me a coffee
 
 Thanks:
 
+[@proudem](https://github.com/proudem)
+[@Mariusthvdb](https://github.com/Mariusthvdb)
 [@stepsolar](https://github.com/stepsolar)
 [@slyoldfox](https://github.com/slyoldfox)
