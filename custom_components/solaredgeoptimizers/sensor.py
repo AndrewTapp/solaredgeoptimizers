@@ -137,7 +137,13 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         self._paneel = paneel.paneel_description
         self._attr_unique_id = "{}_{}".format(paneel.serialnumber, sensortype)
         self._sensor_type = sensortype
-        self._attr_name = "{}_{}".format(self._sensor_type, optimizer.displayName)
+        # AJT: 15-Jan-2026: Make sensor names display-friendly by replacing underscores with spaces
+        # Special-case last measurement to use lowercase 'm'
+        if self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
+            display_type = "Last measurement"
+        else:
+            display_type = self._sensor_type.replace("_", " ")
+        self._attr_name = "{} {}".format(display_type, optimizer.displayName)
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry.entry_id}")},
