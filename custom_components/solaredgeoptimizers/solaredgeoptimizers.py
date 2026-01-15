@@ -93,10 +93,20 @@ class solaredgeoptimizers:
                     _LOGGER.debug("Response data: %s", json_object)
                     raise Exception("Error while processing data") from e
             else:
-                # AJT: 10-Jan-2025: Replaced print() statements with logging
-                _LOGGER.error("Error with sending request. Status code: %s", r.status_code)
-                _LOGGER.error(r.text)
-                raise Exception(f"Problem sending request, status code {r.status_code}: {r.text}")
+                # AJT: 15-Jan-2026: Treat 5xx errors as temporary with a clean log line
+                if 500 <= r.status_code < 600:
+                    _LOGGER.warning(
+                        "Temporary server error from SolarEdge (HTTP %s). Will retry on next update.",
+                        r.status_code,
+                    )
+                    _LOGGER.debug(
+                        "Server error response body for optimizer %s: %s", itemId, r.text
+                    )
+                    raise Exception(f"Temporary server error from SolarEdge (HTTP {r.status_code})")
+                # Other HTTP errors: log status and body at debug only, raise concise exception
+                _LOGGER.error("Error sending request to SolarEdge. Status code: %s", r.status_code)
+                _LOGGER.debug("Error response body for optimizer %s: %s", itemId, r.text)
+                raise Exception(f"Problem sending request to SolarEdge (HTTP {r.status_code})")
 
     def requestAllData(self):
 
