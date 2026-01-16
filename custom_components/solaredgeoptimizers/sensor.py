@@ -13,6 +13,8 @@ from homeassistant.components.sensor import (
 )
 
 from homeassistant.core import callback
+from homeassistant.util import dt as dt_util
+from datetime import timezone
 
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -27,6 +29,7 @@ from .const import (
     SENSOR_TYPE_VOLTAGE,
     SENSOR_TYPE_ENERGY,
     SENSOR_TYPE_LASTMEASUREMENT,
+    CHECK_TIME_DELTA,
 )
 
 # AJT: 10-Jan-2025: Changed import to use coordinator module
@@ -201,21 +204,18 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
 
             for item in self.coordinator.data:
                 if item.paneel_id == self._paneelobject.paneel_id:
-                    # weird first time after reboot value is None
-                    # if self._attr_native_value is not None:
-                    if self._sensor_type is SENSOR_TYPE_VOLTAGE:
-                        self._attr_native_value = item.voltage
-                        break
-                    elif self._sensor_type is SENSOR_TYPE_CURRENT:
-                        self._attr_native_value = item.current
-                        break
-                    elif self._sensor_type is SENSOR_TYPE_OPT_VOLTAGE:
-                        self._attr_native_value = item.optimizer_voltage
-                        break
-                    elif self._sensor_type is SENSOR_TYPE_POWER:
-                        self._attr_native_value = item.power
-                        break
-                    elif self._sensor_type is SENSOR_TYPE_ENERGY:
+                    # AJT: 16-Jan-2026: Check if last measurement is older than 1 hour
+                    timetocheck = dt_util.utcnow() - CHECK_TIME_DELTA
+                    ts = item.lastmeasurement
+                    
+                    # SolarEdge returns a *naive* UTC timestamp – tag it as UTC
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
+                    
+                    measurement_too_old = ts <= timetocheck
+                    
+                    # Lifetime energy and last measurement always update regardless of age
+                    if self._sensor_type is SENSOR_TYPE_ENERGY:
                         # AJT: 10-Jan-2025: Removed redundant else clause that assigned self._attr_native_value = self._attr_native_value
                         if (
                             self._attr_native_value is None
@@ -225,6 +225,29 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                         break
                     elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
                         self._attr_native_value = item.lastmeasurement
+                        break
+                    # For other sensors: set to 0 if measurement is older than 1 hour
+                    elif measurement_too_old:
+                        # AJT: 16-Jan-2026: Set non-cumulative sensors to 0 when measurement is older than 1 hour
+                        if self._sensor_type is SENSOR_TYPE_VOLTAGE:
+                            self._attr_native_value = 0
+                        elif self._sensor_type is SENSOR_TYPE_CURRENT:
+                            self._attr_native_value = 0
+                        elif self._sensor_type is SENSOR_TYPE_OPT_VOLTAGE:
+                            self._attr_native_value = 0
+                        elif self._sensor_type is SENSOR_TYPE_POWER:
+                            self._attr_native_value = 0
+                        break
+                    else:
+                        # Measurement is recent, update with actual values
+                        if self._sensor_type is SENSOR_TYPE_VOLTAGE:
+                            self._attr_native_value = item.voltage
+                        elif self._sensor_type is SENSOR_TYPE_CURRENT:
+                            self._attr_native_value = item.current
+                        elif self._sensor_type is SENSOR_TYPE_OPT_VOLTAGE:
+                            self._attr_native_value = item.optimizer_voltage
+                        elif self._sensor_type is SENSOR_TYPE_POWER:
+                            self._attr_native_value = item.power
                         break
         else:
             # Set the value to zero. (BUT NOT FOR LIFETIME ENERGY)
