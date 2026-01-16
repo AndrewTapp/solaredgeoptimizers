@@ -1,34 +1,71 @@
-# SolarEdge Optimizers Data
-Intergration to get optimizers information from the SolarEdge portal
+# SolarEdge Optimizers Integration
 
-This integration works by gathering the information from the SolarEdge portal website. The current data per optimizer is gather and shown in HomeAssistant. Also is the total energy produced per optimizer is added as sensor.
-For this intergration to work you need to provide it with your information: your Site-id, your username and password.
+Integration to get optimizer information from the SolarEdge monitoring portal.
 
-This intergration will update its sensors every 15 minutes. More frequent is not usefull because the portal will only update every 15 minutes.
+This integration works by gathering information from the SolarEdge portal website. Current data per optimizer is gathered and shown in Home Assistant. The total lifetime energy produced per optimizer is also added as a sensor.
 
-When the inverter is not working, the last know result is send back from the portal. The intergation will check if the value for last measerement is less then 1 hour. If not, meaning the inverter is offline, the value for all sensors (except Last measurement and total energy produced) will be set to 0. 
+For this integration to work, you need to provide:
+- Your **Site ID**
+- Your **Username** 
+- Your **Password**
 
-# Installation
-Until this release is adopted by HomeAssistant (HACS) the best method is to install as a custom repository.
-1.  Add this repository as custom repository to hacs by going to hacs, integrations, click on the three dots in the upper right corner and click on custom repositories.
-2.  In the repository field, fill in the link to this repository (https://github.com/AndrewTapp/solaredgeoptimizers) and for category, select Integration. Click on Add
-3.  Go back to hacs, integrations and add click on the blue button Exlore and download repositories in the bottom left corner, search for SolarEdge Optimizers Data and install it
-4.  Reboot HA
-5.  In HA goto Config -> Integrations. Add the SolarEdge Optimizers Data to HA.
-6.  Enter your Site-ID, username and password.
+## Available Sensors
 
-The initial setup can take some time, please be patient.
+For each optimizer, the following sensors are created:
 
-# UI
-Another user made a HA card to display the information:
-https://github.com/stepsolar/hassio-package-panel-solar
-____________________________________
+- **Voltage** - Panel voltage (V)
+- **Current** - Panel current (A)  
+- **Optimizer voltage** - Optimizer output voltage (V)
+- **Power** - Current power output (W)
+- **Lifetime energy** - Total cumulative energy produced (kWh) - always updates regardless of measurement age
+- **Last measurement** - Timestamp of the last measurement - always updates regardless of measurement age
 
-If you liked the project click below to buy me a coffee
+Sensor names are displayed in a user-friendly format (e.g., "Current 1.1.1", "Last measurement 1.1.1").
+
+## Update Behavior
+
+This integration updates its sensors every 15 minutes. More frequent updates are not useful because the SolarEdge portal only updates data every 15 minutes.
+
+**Important:** When an optimizer is offline or not reporting:
+- If the last measurement is **older than 1 hour**, non-cumulative sensors (Voltage, Current, Optimizer voltage, Power) will show **0**
+- **Lifetime energy** and **Last measurement** sensors will always show their actual values, regardless of measurement age
+- This ensures you can still see historical cumulative data even when the optimizer is temporarily offline
+
+## Error Handling
+
+The integration includes robust error handling:
+- Temporary server errors (HTTP 5xx) from SolarEdge are handled gracefully with clear log messages
+- The integration will automatically retry on the next update cycle
+- File descriptor leaks have been fixed for long-running stability
+
+## Installation
+
+Until this integration is adopted by Home Assistant Core, HACS is the recommended method to install as a custom repository.
+
+1. Add this repository as a custom repository to HACS:
+   - Go to **HACS** → Click the three dots in the upper right corner → Click **Custom repositories**
+   - In the repository field, enter: `https://github.com/AndrewTapp/solaredgeoptimizers`
+   - For type, select **Integration**
+   - Click **Add**
+
+2. Install the integration:
+   - Go back to **HACS** → Select the **SolarEdge Optimizers** integration
+   - Click the blue **Download** button (bottom right) and install it
+
+3. Restart Home Assistant
+
+4. Configure the integration:
+   - In Home Assistant, go to **Settings** → **Devices & services**
+   - Click **Add Integration** and search for **SolarEdge Optimizers**
+   - Enter your **Site ID**, **Username**, and **Password**
+
+**Note:** The initial setup can take some time, especially if you have many optimizers. Please be patient.
+________________________________________________________________________
+
+If you liked this integration, please click below to buy me a coffee.
 
 <a href="https://buymeacoffee.com/andrewtapp" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/arial-black.png" alt="Buy Me A Coffee" style="height: 51px !important;width: 217px !important;" ></a>
-
-------------------------------------
+________________________________________________________________________
 
 Thanks:
 
