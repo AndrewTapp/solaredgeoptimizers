@@ -60,7 +60,8 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         raise InvalidAuth
 
     # Return info that you want to store in the config entry.
-    return {"title": "SolarEdge Site {}".format(data["siteid"])}
+    # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+    return {"title": f"SolarEdge Site {data['siteid']}"}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
