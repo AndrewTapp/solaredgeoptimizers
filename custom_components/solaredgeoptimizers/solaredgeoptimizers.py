@@ -528,7 +528,7 @@ class SolarEdgeOptimizerData:
         self.model = ""
         self.manufacturer = ""
 
-        # Waarden
+        # Warden
         self.current = ""
         self.optimizer_voltage = ""
         self.power = ""
@@ -568,9 +568,38 @@ class SolarEdgeOptimizerData:
             self.model = json_object.get("model", "")
             self.manufacturer = json_object.get("manufacturer", "")
 
-            # Waarden - AJT: 11-Jan-2026: Fixed unsafe dictionary access using .get() with defaults
+            # Warden - AJT: 11-Jan-2026: Fixed unsafe dictionary access using .get() with defaults
+            # AJT: 17-Jan-2026: Handle cases where measurements might be missing, null, or have different structure
             measurements = json_object.get("measurements", {})
-            self.current = measurements.get("Current [A]", 0.0)
-            self.optimizer_voltage = measurements.get("Optimizer Voltage [V]", 0.0)
-            self.power = measurements.get("Power [W]", 0.0)
-            self.voltage = measurements.get("Voltage [V]", 0.0)
+            if not measurements or not isinstance(measurements, dict):
+                _LOGGER.warning(
+                    "Missing or invalid measurements for optimizer %s (panel_id: %s). Available keys: %s",
+                    panelid,
+                    json_object.get("serialNumber", "unknown"),
+                    list(json_object.keys()) if isinstance(json_object, dict) else "N/A"
+                )
+                measurements = {}
+            
+            # AJT: 17-Jan-2026: Handle null values and convert to float safely
+            def safe_float(value, default=0.0):
+                """Safely convert value to float, handling None, empty strings, and invalid types."""
+                if value is None or value == "":
+                    return default
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return default
+            
+            self.current = safe_float(measurements.get("Current [A]"), 0.0)
+            self.optimizer_voltage = safe_float(measurements.get("Optimizer Voltage [V]"), 0.0)
+            self.power = safe_float(measurements.get("Power [W]"), 0.0)
+            self.voltage = safe_float(measurements.get("Voltage [V]"), 0.0)
+            
+            # AJT: 17-Jan-2026: Log if all measurements are zero to help diagnose API response issues
+            if self.current == 0.0 and self.power == 0.0 and self.voltage == 0.0 and self.optimizer_voltage == 0.0:
+                _LOGGER.debug(
+                    "All measurements are zero for optimizer %s (serial: %s). Measurements dict: %s",
+                    panelid,
+                    json_object.get("serialNumber", "unknown"),
+                    measurements
+                )
