@@ -269,10 +269,29 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                     attr_name = sensor_attr_map.get(self._sensor_type)
                     if attr_name:
                         # For other sensors: set to 0 if measurement is older than 1 hour, else use actual value
+                        actual_value = getattr(item, attr_name, 0)
                         if measurement_too_old:
+                            # AJT: 17-Jan-2026: Log when measurements are zeroed due to old timestamp
+                            if actual_value != 0 and _LOGGER.isEnabledFor(logging.DEBUG):
+                                _LOGGER.debug(
+                                    "Sensor %s (%s) set to 0: measurement too old (last: %s, threshold: %s)",
+                                    self._attr_name,
+                                    attr_name,
+                                    ts,
+                                    timetocheck
+                                )
                             self._attr_native_value = 0
                         else:
-                            self._attr_native_value = getattr(item, attr_name)
+                            # AJT: 17-Jan-2026: Log if actual value is 0 but measurement is recent (potential API issue)
+                            if actual_value == 0 and _LOGGER.isEnabledFor(logging.DEBUG):
+                                _LOGGER.debug(
+                                    "Sensor %s (%s) has zero value but measurement is recent (last: %s). "
+                                    "This may indicate missing data in API response.",
+                                    self._attr_name,
+                                    attr_name,
+                                    ts
+                                )
+                            self._attr_native_value = actual_value
         else:
             # Set the value to zero. (BUT NOT FOR LIFETIME ENERGY)
             # AJT: 10-Jan-2025: Fixed comparison syntax from "not self._sensor_type is" to "self._sensor_type is not"
