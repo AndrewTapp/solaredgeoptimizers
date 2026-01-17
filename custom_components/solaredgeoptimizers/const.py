@@ -6,7 +6,7 @@ DOMAIN = "solaredgeoptimizers"
 CONF_SITE_ID = "siteid"
 DATA_API_CLIENT = "api_client"
 
-PANEEL_DATA = "paneel_data"
+PANEL_DATA = "panel_data"
 
 LOGGER = logging.getLogger(__package__)
 
