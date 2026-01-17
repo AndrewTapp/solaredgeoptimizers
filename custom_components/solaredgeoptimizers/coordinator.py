@@ -41,6 +41,8 @@ class MyCoordinator(DataUpdateCoordinator):
         )
         self.my_api = my_api
         self.first_boot = first_boot
+        # AJT: 16-Jan-2026: Pre-compute timetocheck once per update cycle for all sensors
+        self._timetocheck = None
 
     async def _async_setup(self) -> None:
         """Set up the coordinator.
@@ -59,8 +61,8 @@ class MyCoordinator(DataUpdateCoordinator):
         )
         
 
-        i = 1
-        for inverter in site.inverters:
+        # AJT: 16-Jan-2026: Use enumerate instead of manual counter variable
+        for i, inverter in enumerate(site.inverters, start=1):
             _LOGGER.info("Adding all optimizers from inverter: %s", i)
 
             device_registry = dr.async_get(self.hass)
@@ -83,31 +85,36 @@ class MyCoordinator(DataUpdateCoordinator):
             # handled by the data update coordinator.
             async with async_timeout.timeout(300):
                 _LOGGER.debug("Update from the coordinator")
-                data = await self.hass.async_add_executor_job(
+                data_list = await self.hass.async_add_executor_job(
                     self.my_api.requestAllData
                 )
 
+                # AJT: 16-Jan-2026: Pre-compute timetocheck once per update cycle for all sensors
+                self._timetocheck = dt_util.utcnow() - CHECK_TIME_DELTA    # tz-aware UTC
                 update = False
 
-                timetocheck = dt_util.utcnow() - CHECK_TIME_DELTA    # tz-aware UTC
-
-                for optimizer in data:
-                    # AJT: 10-Jan-2025: Fixed typo "measerument" to "measurement" in log message
-                    _LOGGER.debug(
-                        "Checking time: %s | Versus last measurement: %s",
-                        timetocheck,
-                        optimizer.lastmeasurement,
-                    )
-
-                    ts = optimizer.lastmeasurement
-                
-                    # SolarEdge returns a *naive* UTC timestamp – tag it as UTC
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=timezone.utc)
-                
-                    if ts > timetocheck:
-                        update = True
-                        break
+                # AJT: 16-Jan-2026: Pre-compute timezone-aware timestamps and check time efficiently
+                # Only check if we have data to process
+                if data_list:
+                    for optimizer in data_list:
+                        # AJT: 16-Jan-2026: Pre-convert timestamps to timezone-aware once in coordinator
+                        # Ensure it's a datetime object and convert if naive
+                        if isinstance(optimizer.lastmeasurement, datetime):
+                            if optimizer.lastmeasurement.tzinfo is None:
+                                optimizer.lastmeasurement = optimizer.lastmeasurement.replace(tzinfo=timezone.utc)
+                        
+                        # AJT: 16-Jan-2026: Reduce debug logging overhead - only log if debug level is enabled
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            # AJT: 10-Jan-2025: Fixed typo "measerument" to "measurement" in log message
+                            _LOGGER.debug(
+                                "Checking time: %s | Versus last measurement: %s",
+                                self._timetocheck,
+                                optimizer.lastmeasurement,
+                            )
+                    
+                        if optimizer.lastmeasurement > self._timetocheck:
+                            update = True
+                            break
 
                 # AJT: 11-Jan-2026: Always return data to allow lifetime_energy and last_measurement sensors to update
                 # The time check is only used for logging purposes - all sensors need to update
@@ -117,7 +124,9 @@ class MyCoordinator(DataUpdateCoordinator):
                 else:
                     _LOGGER.debug("No new measurements within time window, but returning data for cumulative sensors")
                 
-                return data
+                # AJT: 16-Jan-2026: Convert list to dictionary for O(1) lookup instead of O(n) linear search
+                data_dict = {item.panel_id: item for item in data_list}
+                return data_dict
 
         except Exception as err:
             # AJT: 11-Jan-2026: Improved exception logging with full traceback
