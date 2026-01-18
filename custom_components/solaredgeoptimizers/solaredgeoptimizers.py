@@ -548,22 +548,47 @@ class SolarEdgeOptimizerData:
             rawdate = json_object.get("lastMeasurementDate", "")
             
             # AJT: 11-Jan-2026: Fixed fragile date parsing with error handling
+            # AJT: 18-Jan-2026: Fixed timezone handling - SolarEdge API returns UTC timestamps
+            # The date string format is typically: "Thu Jan 17 14:36:14 UTC 2026" or "Thu Jan 17 14:36:14 2026"
+            # IMPORTANT: SolarEdge API returns timestamps in UTC, even if the string doesn't explicitly say "UTC"
             try:
-                # Removing the Timezone information
                 date_parts = rawdate.split(' ')
+                
+                # Parse the date string - handle both with and without explicit timezone indicator
                 if len(date_parts) >= 6:
-                    # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
-                    new_time = f"{date_parts[0]} {date_parts[1]} {date_parts[2]} {date_parts[3]} {date_parts[5]}"
-                    self.lastmeasurement = datetime.strptime(new_time, "%a %b %d %H:%M:%S %Y")
-                else:
-                    # Fallback: try parsing the full string (strip timezone if present)
-                    _LOGGER.warning("Unexpected date format for optimizer %s: %s", panelid, rawdate)
+                    # Format: "Day Month DD HH:MM:SS TZ YYYY" or "Day Month DD HH:MM:SS YYYY"
+                    # Check if 4th element (index 4) looks like a timezone abbreviation
+                    potential_tz = date_parts[4] if len(date_parts) > 4 else None
+                    if potential_tz and not potential_tz.replace(':', '').isdigit() and len(potential_tz) <= 5:
+                        # Has timezone indicator (e.g., "UTC", "GMT") - parse without it
+                        # Format: "Thu Jan 17 14:36:14 UTC 2026" -> "Thu Jan 17 14:36:14 2026"
+                        new_time = f"{date_parts[0]} {date_parts[1]} {date_parts[2]} {date_parts[3]} {date_parts[5]}"
+                    else:
+                        # No timezone indicator - parse as-is
+                        # Format: "Thu Jan 17 14:36:14 2026"
+                        new_time = f"{date_parts[0]} {date_parts[1]} {date_parts[2]} {date_parts[3]} {date_parts[5]}"
+                    
+                    naive_dt = datetime.strptime(new_time, "%a %b %d %H:%M:%S %Y")
+                    # AJT: 18-Jan-2026: SolarEdge API returns UTC timestamps - tag as UTC immediately
+                    # This ensures consistent timezone handling regardless of user's local timezone
+                    self.lastmeasurement = naive_dt.replace(tzinfo=pytz.UTC)
+                elif len(date_parts) >= 5:
+                    # Fallback: try parsing shorter format "Thu Jan 17 14:36:14 2026"
                     date_str = rawdate.split('(')[0].strip() if '(' in rawdate else rawdate
-                    self.lastmeasurement = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
+                    naive_dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
+                    # AJT: 18-Jan-2026: SolarEdge API returns UTC timestamps - tag as UTC immediately
+                    self.lastmeasurement = naive_dt.replace(tzinfo=pytz.UTC)
+                else:
+                    _LOGGER.warning("Unexpected date format for optimizer %s: %s", panelid, rawdate)
+                    # Fallback: try parsing the full string
+                    date_str = rawdate.split('(')[0].strip() if '(' in rawdate else rawdate
+                    naive_dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
+                    # AJT: 18-Jan-2026: SolarEdge API returns UTC timestamps - tag as UTC immediately
+                    self.lastmeasurement = naive_dt.replace(tzinfo=pytz.UTC)
             except (ValueError, IndexError) as e:
                 _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
-                # Set to current time as fallback
-                self.lastmeasurement = datetime.now()
+                # Set to current UTC time as fallback
+                self.lastmeasurement = datetime.now(pytz.UTC)
 
             self.model = json_object.get("model", "")
             self.manufacturer = json_object.get("manufacturer", "")
