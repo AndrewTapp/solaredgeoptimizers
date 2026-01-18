@@ -16,10 +16,12 @@ from jsonfinder import jsonfinder
 _LOGGER = logging.getLogger(__name__)
 
 class solaredgeoptimizers:
-    def __init__(self, siteid, username, password):
+    def __init__(self, siteid, username, password, timezone=None):
         self.siteid = siteid
         self.username = username
         self.password = password
+        # AJT: 18-Jan-2026: Store timezone for date parsing (default to UTC if not provided)
+        self._timezone = timezone if timezone is not None else pytz.UTC
         # AJT: 16-Jan-2026: Thread-local storage for session reuse (one session per thread)
         self._thread_local = threading.local()
         # AJT: 16-Jan-2026: Cache for requestListOfAllPanels() result (TTL: 1 hour)
@@ -100,7 +102,8 @@ class solaredgeoptimizers:
                         _LOGGER.debug("Skipping optimizer %s without measurements", itemId)
                         return None
                     else:
-                        return SolarEdgeOptimizerData(itemId, json_object)
+                        # AJT: 18-Jan-2026: Pass timezone to SolarEdgeOptimizerData for correct date parsing
+                        return SolarEdgeOptimizerData(itemId, json_object, self._timezone)
                 except KeyError as e:
                     # AJT: 10-Jan-2025: Added specific KeyError handling with better logging
                     _LOGGER.error("Missing expected key in response for optimizer %s: %s", itemId, e)
@@ -517,7 +520,10 @@ class SolarlEdgeOptimizer:
 class SolarEdgeOptimizerData:
     """Data class for SolarEdge optimizer measurements and metadata."""
 
-    def __init__(self, panelid, json_object):
+    def __init__(self, panelid, json_object, timezone=None):
+
+        # AJT: 18-Jan-2026: Store timezone for date parsing (default to UTC if not provided)
+        self._timezone = timezone if timezone is not None else pytz.UTC
 
         # Atributen die we willen zien:
         self.serialnumber = ""
@@ -548,9 +554,9 @@ class SolarEdgeOptimizerData:
             rawdate = json_object.get("lastMeasurementDate", "")
             
             # AJT: 11-Jan-2026: Fixed fragile date parsing with error handling
-            # AJT: 18-Jan-2026: Fixed timezone handling - SolarEdge API returns UTC timestamps
+            # AJT: 18-Jan-2026: Fixed timezone handling - SolarEdge API returns timestamps in user's local timezone
             # The date string format is typically: "Thu Jan 17 14:36:14 UTC 2026" or "Thu Jan 17 14:36:14 2026"
-            # IMPORTANT: SolarEdge API returns timestamps in UTC, even if the string doesn't explicitly say "UTC"
+            # IMPORTANT: Parse as local time, then convert to UTC for consistent comparison
             try:
                 date_parts = rawdate.split(' ')
                 
@@ -569,22 +575,52 @@ class SolarEdgeOptimizerData:
                         new_time = f"{date_parts[0]} {date_parts[1]} {date_parts[2]} {date_parts[3]} {date_parts[5]}"
                     
                     naive_dt = datetime.strptime(new_time, "%a %b %d %H:%M:%S %Y")
-                    # AJT: 18-Jan-2026: SolarEdge API returns UTC timestamps - tag as UTC immediately
-                    # This ensures consistent timezone handling regardless of user's local timezone
-                    self.lastmeasurement = naive_dt.replace(tzinfo=pytz.UTC)
+                    # AJT: 18-Jan-2026: Parse as local time, then convert to UTC
+                    # Use the timezone from Home Assistant config (defaults to UTC if not set)
+                    # Handle both pytz and ZoneInfo timezones
+                    if naive_dt.tzinfo is None:
+                        if hasattr(self._timezone, 'localize'):
+                            # pytz timezone
+                            local_dt = self._timezone.localize(naive_dt)
+                        else:
+                            # ZoneInfo or other timezone
+                            local_dt = naive_dt.replace(tzinfo=self._timezone)
+                    else:
+                        local_dt = naive_dt
+                    self.lastmeasurement = local_dt.astimezone(pytz.UTC)
                 elif len(date_parts) >= 5:
                     # Fallback: try parsing shorter format "Thu Jan 17 14:36:14 2026"
                     date_str = rawdate.split('(')[0].strip() if '(' in rawdate else rawdate
                     naive_dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
-                    # AJT: 18-Jan-2026: SolarEdge API returns UTC timestamps - tag as UTC immediately
-                    self.lastmeasurement = naive_dt.replace(tzinfo=pytz.UTC)
+                    # AJT: 18-Jan-2026: Parse as local time, then convert to UTC
+                    # Handle both pytz and ZoneInfo timezones
+                    if naive_dt.tzinfo is None:
+                        if hasattr(self._timezone, 'localize'):
+                            # pytz timezone
+                            local_dt = self._timezone.localize(naive_dt)
+                        else:
+                            # ZoneInfo or other timezone
+                            local_dt = naive_dt.replace(tzinfo=self._timezone)
+                    else:
+                        local_dt = naive_dt
+                    self.lastmeasurement = local_dt.astimezone(pytz.UTC)
                 else:
                     _LOGGER.warning("Unexpected date format for optimizer %s: %s", panelid, rawdate)
                     # Fallback: try parsing the full string
                     date_str = rawdate.split('(')[0].strip() if '(' in rawdate else rawdate
                     naive_dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
-                    # AJT: 18-Jan-2026: SolarEdge API returns UTC timestamps - tag as UTC immediately
-                    self.lastmeasurement = naive_dt.replace(tzinfo=pytz.UTC)
+                    # AJT: 18-Jan-2026: Parse as local time, then convert to UTC
+                    # Handle both pytz and ZoneInfo timezones
+                    if naive_dt.tzinfo is None:
+                        if hasattr(self._timezone, 'localize'):
+                            # pytz timezone
+                            local_dt = self._timezone.localize(naive_dt)
+                        else:
+                            # ZoneInfo or other timezone
+                            local_dt = naive_dt.replace(tzinfo=self._timezone)
+                    else:
+                        local_dt = naive_dt
+                    self.lastmeasurement = local_dt.astimezone(pytz.UTC)
             except (ValueError, IndexError) as e:
                 _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
                 # Set to current UTC time as fallback
