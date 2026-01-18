@@ -90,7 +90,19 @@ class MyCoordinator(DataUpdateCoordinator):
                 )
 
                 # AJT: 16-Jan-2026: Pre-compute timetocheck once per update cycle for all sensors
-                self._timetocheck = dt_util.utcnow() - CHECK_TIME_DELTA    # tz-aware UTC
+                # AJT: 18-Jan-2026: Use datetime.now(timezone.utc) to ensure correct UTC time
+                # dt_util.utcnow() should work, but using explicit UTC for reliability
+                current_utc = datetime.now(timezone.utc)
+                self._timetocheck = current_utc - CHECK_TIME_DELTA    # tz-aware UTC
+                # AJT: 18-Jan-2026: Log timezone debugging info for checking time calculation
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "Timezone debug - Current UTC: %s | Checking time (UTC - %s): %s | HA timezone: %s",
+                        current_utc,
+                        CHECK_TIME_DELTA,
+                        self._timetocheck,
+                        self.hass.config.time_zone
+                    )
                 update = False
 
                 # AJT: 16-Jan-2026: Pre-compute timezone-aware timestamps and check time efficiently
