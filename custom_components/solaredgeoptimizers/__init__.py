@@ -4,6 +4,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.util import dt as dt_util
 
 # AJT: 10-Jan-2025: Changed from absolute import to relative import to use local solaredgeoptimizers.py instead of site-packages version
 from .solaredgeoptimizers import solaredgeoptimizers
@@ -19,8 +20,11 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SolarEdge Optimizers Data from a config entry."""
 
+    # AJT: 18-Jan-2026: Get Home Assistant's configured timezone for date parsing
+    ha_timezone = dt_util.get_time_zone(hass.config.time_zone)
+    
     api = solaredgeoptimizers(
-        entry.data["siteid"], entry.data["username"], entry.data["password"]
+        entry.data["siteid"], entry.data["username"], entry.data["password"], ha_timezone
     )
     try:
         http_result_code = await hass.async_add_executor_job(api.check_login)
