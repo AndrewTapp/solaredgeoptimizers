@@ -588,6 +588,17 @@ class SolarEdgeOptimizerData:
                     else:
                         local_dt = naive_dt
                     self.lastmeasurement = local_dt.astimezone(pytz.UTC)
+                    # AJT: 18-Jan-2026: Log timezone conversion for debugging
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Timezone conversion for optimizer %s: raw='%s' | naive=%s | local=%s (%s) | UTC=%s",
+                            panelid,
+                            rawdate,
+                            naive_dt,
+                            local_dt,
+                            str(self._timezone),
+                            self.lastmeasurement
+                        )
                 elif len(date_parts) >= 5:
                     # Fallback: try parsing shorter format "Thu Jan 17 14:36:14 2026"
                     date_str = rawdate.split('(')[0].strip() if '(' in rawdate else rawdate
@@ -604,6 +615,17 @@ class SolarEdgeOptimizerData:
                     else:
                         local_dt = naive_dt
                     self.lastmeasurement = local_dt.astimezone(pytz.UTC)
+                    # AJT: 18-Jan-2026: Log timezone conversion for debugging
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Timezone conversion for optimizer %s: raw='%s' | naive=%s | local=%s (%s) | UTC=%s",
+                            panelid,
+                            rawdate,
+                            naive_dt,
+                            local_dt,
+                            str(self._timezone),
+                            self.lastmeasurement
+                        )
                 else:
                     _LOGGER.warning("Unexpected date format for optimizer %s: %s", panelid, rawdate)
                     # Fallback: try parsing the full string
@@ -621,6 +643,17 @@ class SolarEdgeOptimizerData:
                     else:
                         local_dt = naive_dt
                     self.lastmeasurement = local_dt.astimezone(pytz.UTC)
+                    # AJT: 18-Jan-2026: Log timezone conversion for debugging
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Timezone conversion for optimizer %s: raw='%s' | naive=%s | local=%s (%s) | UTC=%s",
+                            panelid,
+                            rawdate,
+                            naive_dt,
+                            local_dt,
+                            str(self._timezone),
+                            self.lastmeasurement
+                        )
             except (ValueError, IndexError) as e:
                 _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
                 # Set to current UTC time as fallback
