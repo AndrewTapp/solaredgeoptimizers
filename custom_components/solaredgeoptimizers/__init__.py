@@ -22,6 +22,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # AJT: 18-Jan-2026: Get Home Assistant's configured timezone for date parsing
     ha_timezone = dt_util.get_time_zone(hass.config.time_zone)
+    # AJT: 18-Jan-2026: Log timezone configuration for debugging
+    LOGGER.info(
+        "SolarEdge Optimizers: Using timezone '%s' (HA config: '%s') for date parsing",
+        str(ha_timezone),
+        hass.config.time_zone
+    )
     
     api = solaredgeoptimizers(
         entry.data["siteid"], entry.data["username"], entry.data["password"], ha_timezone
