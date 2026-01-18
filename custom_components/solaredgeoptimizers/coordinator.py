@@ -97,10 +97,15 @@ class MyCoordinator(DataUpdateCoordinator):
                 # Only check if we have data to process
                 if data_list:
                     for optimizer in data_list:
-                        # AJT: 16-Jan-2026: Pre-convert timestamps to timezone-aware once in coordinator
-                        # Ensure it's a datetime object and convert if naive
+                        # AJT: 18-Jan-2026: Timestamps should already be timezone-aware (UTC) from parsing
+                        # Only convert if somehow still naive (safety check)
                         if isinstance(optimizer.lastmeasurement, datetime):
                             if optimizer.lastmeasurement.tzinfo is None:
+                                # AJT: 18-Jan-2026: Fallback - should not happen if parsing is correct
+                                _LOGGER.warning(
+                                    "Optimizer %s has naive timestamp, converting to UTC. This should not happen.",
+                                    getattr(optimizer, 'panel_id', 'unknown')
+                                )
                                 optimizer.lastmeasurement = optimizer.lastmeasurement.replace(tzinfo=timezone.utc)
                         
                         # AJT: 16-Jan-2026: Reduce debug logging overhead - only log if debug level is enabled
