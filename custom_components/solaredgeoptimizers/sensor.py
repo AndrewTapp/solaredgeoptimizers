@@ -237,7 +237,8 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                 # Timestamp should be timezone-aware (converted in coordinator), but add safety check
                 timetocheck = self.coordinator._timetocheck
                 if timetocheck is None:
-                    timetocheck = dt_util.utcnow() - CHECK_TIME_DELTA
+                    # AJT: 18-Jan-2026: Use datetime.now(timezone.utc) to ensure correct UTC time
+                    timetocheck = datetime.now(timezone.utc) - CHECK_TIME_DELTA
                 
                 # AJT: 16-Jan-2026: Safety check - ensure timestamp is timezone-aware before comparison
                 ts = item.lastmeasurement
