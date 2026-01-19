@@ -1,5 +1,9 @@
 # SolarEdge Optimizers Integration
 
+<a href="https://github.com/AndrewTapp/solaredgeoptimizers/releases"><img src="https://img.shields.io/github/release/AndrewTapp/solaredgeoptimizers.svg"></a>
+[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.me/AndrewJTapp)
+[![Donate](https://img.shields.io/badge/Donate-BuyMeACoffee-green.svg)](https://buymeacoffee.com/andrewtapp)
+
 Integration to get optimizer information from the SolarEdge monitoring portal.
 
 This integration works by gathering information from the SolarEdge portal website. Current data per optimizer is gathered and shown in Home Assistant. The total lifetime energy produced per optimizer is also added as a sensor.
@@ -62,14 +66,17 @@ Until this integration is adopted by Home Assistant Core, HACS is the recommende
 **Note:** The initial setup can take some time, especially if you have many optimizers. Please be patient.
 ________________________________________________________________________
 
-If you liked this integration, please click below to buy me a coffee.
-
-<a href="https://buymeacoffee.com/andrewtapp" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/arial-black.png" alt="Buy Me A Coffee" style="height: 51px !important;width: 217px !important;" ></a>
-________________________________________________________________________
-
-Thanks:
+## Thanks to the following people
 
 [@proudem](https://github.com/proudem)
 [@Mariusthvdb](https://github.com/Mariusthvdb)
 [@stepsolar](https://github.com/stepsolar)
 [@slyoldfox](https://github.com/slyoldfox)
+
+## Donators
+
+Thank you to the PayPal and Buy Me a Coffee donators
+
+|  |  |  |  | 
+|--------------------|--------------------|----------------------|----------------------|
+| apf-doit | JochenGr | dselb |  |
