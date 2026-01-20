@@ -22,7 +22,7 @@ For each optimizer, the following sensors are created:
 - **Optimizer voltage** - Optimizer output voltage (V)
 - **Power** - Current power output (W)
 - **Lifetime energy** - Total cumulative energy produced (kWh) - always updates regardless of measurement age
-- **Last measurement** - Timestamp of the last measurement - always updates regardless of measurement age
+- **Last measurement** - Timestamp of the last measurement - obtained from the SolarEdge portal
 
 Sensor names are displayed in a user-friendly format (e.g., "Current 1.1.1", "Last measurement 1.1.1").
 
