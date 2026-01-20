@@ -79,4 +79,4 @@ Thank you to the PayPal and Buy Me a Coffee donators
 
 |  |  |  |  | 
 |--------------------|--------------------|----------------------|----------------------|
-| apf-doit | JochenGr | dselb |  |
+| apf-doit | JochenGr | James Kaiser | dselb |
