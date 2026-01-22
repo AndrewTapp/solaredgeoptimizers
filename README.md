@@ -28,7 +28,7 @@ Sensor names are displayed in a user-friendly format (e.g., "Current 1.1.1", "La
 
 ## Update Behavior
 
-This integration updates its sensors every 15 minutes. More frequent updates are not useful because the SolarEdge portal only updates data every 15 minutes.
+This integration updates its sensors every 15 minutes. More frequent updates are not useful because the SolarEdge portal only updates data every 15 minutes. See https://www.solaredge.com/uk/support/system-owner/mysolaredge-app-does-not-display-production-data and https://www.solaredge.com/us/support/system-owner/app-does-not-display-production-data
 
 **Important:** When an optimizer is offline or not reporting:
 - If the last measurement is **older than 1 hour**, non-cumulative sensors (Voltage, Current, Optimizer voltage, Power) will show **0**
