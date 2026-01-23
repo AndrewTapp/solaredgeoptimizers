@@ -23,6 +23,7 @@ For each optimizer, the following sensors are created:
 - **Power** - Current power output (W)
 - **Lifetime energy** - Total cumulative energy produced (kWh) - always updates regardless of measurement age
 - **Last measurement** - Timestamp of the last measurement - obtained from the SolarEdge portal
+- **Last polled** - When the Home Assistant integration last queried the optimizer
 
 Sensor names are displayed in a user-friendly format (e.g., "Current 1.1.1", "Last measurement 1.1.1").
 
