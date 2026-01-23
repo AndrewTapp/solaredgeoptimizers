@@ -30,6 +30,7 @@ from .const import (
     SENSOR_TYPE_VOLTAGE,
     SENSOR_TYPE_ENERGY,
     SENSOR_TYPE_LASTMEASUREMENT,
+    SENSOR_TYPE_LASTPOLLED,
     CHECK_TIME_DELTA,
 )
 
@@ -166,9 +167,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{panel.serialnumber}_{sensortype}"
         self._sensor_type = sensortype
         # AJT: 15-Jan-2026: Make sensor names display-friendly by replacing underscores with spaces
-        # Special-case last measurement to use lowercase 'm'
+        # AJT: 22-Jan-2026: Special-case last measurement and last polled to use lowercase
         if self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             display_type = "Last measurement"
+        elif self._sensor_type is SENSOR_TYPE_LASTPOLLED:
+            display_type = "Last polled"
         else:
             display_type = self._sensor_type.replace("_", " ")
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
@@ -200,6 +203,10 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             self._attr_state_class = SensorStateClass.TOTAL_INCREASING
         elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             # AJT: 17-Jan-2026: Use TIMESTAMP instead of DATE to show both date and time
+            self._attr_device_class = SensorDeviceClass.TIMESTAMP
+            self._attr_state_class = None
+        elif self._sensor_type is SENSOR_TYPE_LASTPOLLED:
+            # AJT: 22-Jan-2026: Track when the integration last polled this optimizer
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
             self._attr_state_class = None
 
@@ -249,7 +256,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                 measurement_too_old = ts <= timetocheck
                 
                 # AJT: 16-Jan-2026: Use dictionary mapping for sensor updates instead of long if/elif chain
-                # Lifetime energy and last measurement always update regardless of age
+                # AJT: 22-Jan-2026: Lifetime energy, last measurement, and last polled always update regardless of age
                 if self._sensor_type is SENSOR_TYPE_ENERGY:
                     # AJT: 10-Jan-2025: Removed redundant else clause that assigned self._attr_native_value = self._attr_native_value
                     if (
@@ -259,6 +266,14 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                         self._attr_native_value = item.lifetime_energy
                 elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
                     self._attr_native_value = item.lastmeasurement
+                elif self._sensor_type is SENSOR_TYPE_LASTPOLLED:
+                    # AJT: 22-Jan-2026: Get the last polled time from the coordinator
+                    last_polled_time = self.coordinator._last_polled.get(self._panelobject.panel_id)
+                    if last_polled_time is not None:
+                        self._attr_native_value = last_polled_time
+                    else:
+                        # AJT: 22-Jan-2026: Fallback to current time if not tracked yet
+                        self._attr_native_value = datetime.now(timezone.utc)
                 else:
                     # AJT: 16-Jan-2026: Dictionary mapping for sensor type to attribute name
                     sensor_attr_map = {
@@ -294,12 +309,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                                 )
                             self._attr_native_value = actual_value
         else:
-            # Set the value to zero. (BUT NOT FOR LIFETIME ENERGY)
+            # AJT: 22-Jan-2026: Set the value to zero. (BUT NOT FOR LIFETIME ENERGY, LAST MEASUREMENT, OR LAST POLLED)
             # AJT: 10-Jan-2025: Fixed comparison syntax from "not self._sensor_type is" to "self._sensor_type is not"
             if (self._sensor_type is not SENSOR_TYPE_ENERGY) and (
                 self._sensor_type is not SENSOR_TYPE_LASTMEASUREMENT
-            ):
+            ) and (self._sensor_type is not SENSOR_TYPE_LASTPOLLED):
                 self._attr_native_value = 0
+            elif self._sensor_type is SENSOR_TYPE_LASTPOLLED:
+                # AJT: 22-Jan-2026: If no data available, use current time as fallback
+                self._attr_native_value = datetime.now(timezone.utc)
 
         value = self._attr_native_value
         if isinstance(value, str) and "," in value:
