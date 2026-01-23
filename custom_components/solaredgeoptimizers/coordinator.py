@@ -43,6 +43,8 @@ class MyCoordinator(DataUpdateCoordinator):
         self.first_boot = first_boot
         # AJT: 16-Jan-2026: Pre-compute timetocheck once per update cycle for all sensors
         self._timetocheck = None
+        # AJT: 22-Jan-2026: Track when each optimizer was last polled (panel_id -> datetime)
+        self._last_polled = {}
 
     async def _async_setup(self) -> None:
         """Set up the coordinator.
@@ -142,7 +144,12 @@ class MyCoordinator(DataUpdateCoordinator):
                     _LOGGER.debug("No new measurements within time window, but returning data for cumulative sensors")
                 
                 # AJT: 16-Jan-2026: Convert list to dictionary for O(1) lookup instead of O(n) linear search
-                data_dict = {item.panel_id: item for item in data_list}
+                # AJT: 22-Jan-2026: Track when each optimizer was last polled
+                data_dict = {}
+                for item in data_list:
+                    data_dict[item.panel_id] = item
+                    # AJT: 22-Jan-2026: Store the current UTC time as the last polled time for this optimizer
+                    self._last_polled[item.panel_id] = current_utc
                 return data_dict
 
         except Exception as err:
