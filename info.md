@@ -4,7 +4,7 @@ Intergration to get optimizers information from the SolarEdge portal
 This integration works by gathering the information from the SolarEdge portal website. The current data per optimizer is gather and shown in HomeAssistant. Also is the total energy produced per optimizer is added as sensor.
 For this intergration to work you need to provide it with your information: your Site-id, your username and password.
 
-This intergration will update its sensors every 15 minutes. More frequent is not usefull because the portal will only update every 15 minutes.
+This integration updates its sensors every 15 minutes. More frequent updates are not useful because the SolarEdge portal only updates data every 15 minutes. See https://www.solaredge.com/uk/support/system-owner/mysolaredge-app-does-not-display-production-data and https://www.solaredge.com/us/support/system-owner/app-does-not-display-production-data
 
 When the inverter is not working, the last know result is send back from the portal. The intergation will check if the value for last measerement is less then 1 hour. If not, meaning the inverter is offline, the value for all sensors (except Last measurement and total energy produced) will be set to 0. 
 
