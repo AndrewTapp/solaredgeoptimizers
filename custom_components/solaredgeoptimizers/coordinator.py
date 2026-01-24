@@ -52,15 +52,23 @@ class MyCoordinator(DataUpdateCoordinator):
         Can be overwritten by integrations to load data or resources
         only once during the first refresh.
         """
+        # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
+        _LOGGER.info("SolarEdge Optimizers: Starting coordinator setup")
+        _LOGGER.debug("SolarEdge Optimizers: About to request list of all panels")
 
-        site = await self.hass.async_add_executor_job(self.my_api.requestListOfAllPanels)
+        try:
+            site = await self.hass.async_add_executor_job(self.my_api.requestListOfAllPanels)
+            _LOGGER.info("SolarEdge Optimizers: Successfully retrieved panel list")
 
-        _LOGGER.info("Found all information for site: %s", site.siteId)
-        _LOGGER.info("Site has %s inverters", len(site.inverters))
-        _LOGGER.info(
-            "Adding all optimizers (%s) found to Home Assistant",
-            site.returnNumberOfOptimizers(),
-        )
+            _LOGGER.info("Found all information for site: %s", site.siteId)
+            _LOGGER.info("Site has %s inverters", len(site.inverters))
+            _LOGGER.info(
+                "Adding all optimizers (%s) found to Home Assistant",
+                site.returnNumberOfOptimizers(),
+            )
+        except Exception as e:
+            _LOGGER.error("SolarEdge Optimizers: Failed to get panel list in coordinator setup: %s", e)
+            raise
         
 
         # AJT: 16-Jan-2026: Use enumerate instead of manual counter variable
