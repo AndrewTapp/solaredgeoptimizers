@@ -34,47 +34,108 @@ class solaredgeoptimizers:
         self._lifetime_energy_cache_ttl = timedelta(hours=1)
 
     def check_login(self):
+        # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
+        _LOGGER.info("SolarEdge Optimizers: Starting login check for site %s", self.siteid)
+
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
+        _LOGGER.debug("SolarEdge Optimizers: Login check URL: %s", url)
 
         kwargs = {}
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
         kwargs["headers"] = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
                              }
-        # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
-        with requests.get(url, **kwargs) as r:
-            return r.status_code
+        # AJT: 24-Jan-2026: Add timeout to prevent hanging and log request attempt
+        kwargs["timeout"] = 30  # 30 second timeout
+        _LOGGER.debug("SolarEdge Optimizers: Making login check request with 30s timeout")
+
+        try:
+            # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
+            with requests.get(url, **kwargs) as r:
+                _LOGGER.info("SolarEdge Optimizers: Login check completed - Status: %s", r.status_code)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Login check response headers: %s", dict(r.headers))
+                return r.status_code
+        except requests.exceptions.Timeout as e:
+            _LOGGER.error("SolarEdge Optimizers: Login check timed out after 30s: %s", e)
+            raise
+        except requests.exceptions.ConnectionError as e:
+            _LOGGER.error("SolarEdge Optimizers: Login check connection error: %s", e)
+            raise
+        except requests.exceptions.RequestException as e:
+            _LOGGER.error("SolarEdge Optimizers: Login check request error: %s", e)
+            raise
+        except Exception as e:
+            _LOGGER.error("SolarEdge Optimizers: Login check unexpected error: %s", e)
+            raise
 
     def requestLogicalLayout(self):
+        # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
+        _LOGGER.info("SolarEdge Optimizers: Requesting logical layout for site %s", self.siteid)
+
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
+        _LOGGER.debug("SolarEdge Optimizers: Logical layout URL: %s", url)
 
         kwargs = {}
-
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
-        # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
-        with requests.get(url, **kwargs) as r:
-            # AJT: 22-Jan-2026: Log raw response data for debugging
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Raw response from requestLogicalLayout (status %s): %s", r.status_code, r.text[:1000] if len(r.text) > 1000 else r.text)
-            return r.text
+        # AJT: 24-Jan-2026: Add timeout to prevent hanging
+        kwargs["timeout"] = 60  # 60 second timeout for layout request
+        _LOGGER.debug("SolarEdge Optimizers: Making logical layout request with 60s timeout")
+
+        try:
+            # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
+            with requests.get(url, **kwargs) as r:
+                _LOGGER.info("SolarEdge Optimizers: Logical layout request completed - Status: %s, Content length: %s", r.status_code, len(r.text))
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Logical layout response headers: %s", dict(r.headers))
+                    _LOGGER.debug("Raw response from requestLogicalLayout (status %s): %s", r.status_code, r.text[:1000] if len(r.text) > 1000 else r.text)
+                return r.text
+        except requests.exceptions.Timeout as e:
+            _LOGGER.error("SolarEdge Optimizers: Logical layout request timed out after 60s: %s", e)
+            raise
+        except requests.exceptions.ConnectionError as e:
+            _LOGGER.error("SolarEdge Optimizers: Logical layout connection error: %s", e)
+            raise
+        except requests.exceptions.RequestException as e:
+            _LOGGER.error("SolarEdge Optimizers: Logical layout request error: %s", e)
+            raise
+        except Exception as e:
+            _LOGGER.error("SolarEdge Optimizers: Logical layout unexpected error: %s", e)
+            raise
 
     def requestListOfAllPanels(self):
+        # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
+        _LOGGER.info("SolarEdge Optimizers: Requesting list of all panels")
+
         # AJT: 16-Jan-2026: Cache result to avoid repeated API calls (layout rarely changes)
         now = datetime.now()
-        if (self._panels_cache is None or 
-            self._panels_cache_time is None or 
+        if (self._panels_cache is None or
+            self._panels_cache_time is None or
             (now - self._panels_cache_time) > self._panels_cache_ttl):
-            raw_layout = self.requestLogicalLayout()
-            json_obj = json.loads(raw_layout)
-            # AJT: 22-Jan-2026: Log parsed logical layout JSON for debugging
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Parsed logical layout JSON: %s", json_obj)
-            self._panels_cache = SolarEdgeSite(json_obj)
-            self._panels_cache_time = now
-            _LOGGER.debug("Refreshed panels cache")
+            _LOGGER.debug("SolarEdge Optimizers: Cache miss, fetching fresh layout data")
+            try:
+                raw_layout = self.requestLogicalLayout()
+                _LOGGER.debug("SolarEdge Optimizers: Received raw layout data, parsing JSON")
+                json_obj = json.loads(raw_layout)
+                # AJT: 22-Jan-2026: Log parsed logical layout JSON for debugging
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Parsed logical layout JSON: %s", json_obj)
+                _LOGGER.debug("SolarEdge Optimizers: Creating SolarEdgeSite object")
+                self._panels_cache = SolarEdgeSite(json_obj)
+                self._panels_cache_time = now
+                _LOGGER.info("SolarEdge Optimizers: Refreshed panels cache with %s optimizers",
+                           self._panels_cache.returnNumberOfOptimizers())
+            except json.JSONDecodeError as e:
+                _LOGGER.error("SolarEdge Optimizers: Failed to parse layout JSON: %s", e)
+                _LOGGER.debug("SolarEdge Optimizers: Raw layout data: %s", raw_layout[:1000] if len(raw_layout) > 1000 else raw_layout)
+                raise
+            except Exception as e:
+                _LOGGER.error("SolarEdge Optimizers: Unexpected error in requestListOfAllPanels: %s", e)
+                raise
         else:
-            _LOGGER.debug("Using cached panels data")
+            _LOGGER.debug("SolarEdge Optimizers: Using cached panels data (age: %s)",
+                         now - self._panels_cache_time)
         return self._panels_cache
 
     def requestSystemData(self, itemId):
@@ -461,24 +522,39 @@ class solaredgeoptimizers:
 
 class SolarEdgeSite:
     def __init__(self, json_obj):
+        # AJT: 24-Jan-2026: Add debugging for site initialization
+        _LOGGER.debug("SolarEdge Optimizers: Initializing SolarEdgeSite with siteId: %s", json_obj.get("siteId"))
         self.siteId = json_obj["siteId"]
+        _LOGGER.debug("SolarEdge Optimizers: Getting all inverters for site %s", self.siteId)
         self.inverters = self.__GetAllInverters(json_obj)
+        _LOGGER.debug("SolarEdge Optimizers: Site %s initialized with %d inverters", self.siteId, len(self.inverters))
 
     def __GetAllInverters(self, json_obj):
+        # AJT: 24-Jan-2026: Add debugging for inverter parsing
+        _LOGGER.debug("SolarEdge Optimizers: Parsing inverters from logical tree")
 
         inverters = []
-        for i in range(len(json_obj["logicalTree"]["childIds"])):
+        child_count = len(json_obj["logicalTree"]["childIds"])
+        _LOGGER.debug("SolarEdge Optimizers: Found %d children in logical tree", child_count)
+
+        for i in range(child_count):
+            child_name = json_obj["logicalTree"]["children"][i]["data"]["name"]
+            _LOGGER.debug("SolarEdge Optimizers: Processing child %d: %s", i, child_name)
 
             # Blijkbaar kan er een powermeter tussen zitten. Checken of dit het geval is
             # Production Meter -> moeten 1 niveau dieper
             # Inverter 1 -> dit is 'normaal'
-            if "PRODUCTION METER" not in json_obj["logicalTree"]["children"][i]["data"]["name"].upper():
+            if "PRODUCTION METER" not in child_name.upper():
+                _LOGGER.debug("SolarEdge Optimizers: Adding inverter at index %d", i)
                 inverters.append(SolarEdgeInverter(json_obj=json_obj, index=i))
             else:
-                for j in range(len(json_obj["logicalTree"]["children"][i]["childIds"])):
-                    #inverters.append(SolarEdgeInverter(json_obj, i, j, True))
+                _LOGGER.debug("SolarEdge Optimizers: Found production meter, processing sub-children")
+                sub_child_count = len(json_obj["logicalTree"]["children"][i]["childIds"])
+                for j in range(sub_child_count):
+                    _LOGGER.debug("SolarEdge Optimizers: Adding inverter at indices %d,%d", i, j)
                     inverters.append(SolarEdgeInverter(json_obj=json_obj, index=i, index2=j, powermeterpresent=True))
 
+        _LOGGER.debug("SolarEdge Optimizers: Completed parsing %d inverters", len(inverters))
         return inverters
 
     def returnNumberOfOptimizers(self):
@@ -608,145 +684,47 @@ class SolarEdgeOptimizerData:
             self.panel_description = json_object["description"]
             rawdate = json_object.get("lastMeasurementDate", "")
             
-            # AJT: 11-Jan-2026: Fixed fragile date parsing with error handling
-            # AJT: 18-Jan-2026: Fixed timezone handling - SolarEdge API returns timestamps in user's local timezone
-            # The date string format is typically: "Thu Jan 17 14:36:14 UTC 2026" or "Thu Jan 17 14:36:14 2026"
-            # IMPORTANT: Parse as local time, then convert to UTC for consistent comparison
+            # AJT: 24-Jan-2026: Simplified timezone handling - always parse as local time using Home Assistant timezone
+            # The SolarEdge API returns timestamps in the local timezone where the optimizers are installed,
+            # but since we don't know the optimizer locations, we use the Home Assistant timezone as a reasonable approximation.
+            # The date string format is typically: "Fri Jan 23 16:04:21 GMT 2026" where the time is local but labeled as GMT
             try:
-                date_parts = rawdate.split(' ')
-                
-                # Parse the date string - handle both with and without explicit timezone indicator
-                if len(date_parts) >= 6:
-                    # Format: "Day Month DD HH:MM:SS TZ YYYY" or "Day Month DD HH:MM:SS YYYY"
-                    # Check if 4th element (index 4) looks like a timezone abbreviation
-                    potential_tz = date_parts[4] if len(date_parts) > 4 else None
-                    if potential_tz and not potential_tz.replace(':', '').isdigit() and len(potential_tz) <= 5:
-                        # Has timezone indicator (e.g., "UTC", "GMT")
-                        # AJT: 18-Jan-2026: If API explicitly says UTC/GMT, treat as UTC, not local time
-                        if potential_tz.upper() in ('UTC', 'GMT'):
-                            # API explicitly says UTC/GMT - parse as UTC
-                            new_time = f"{date_parts[0]} {date_parts[1]} {date_parts[2]} {date_parts[3]} {date_parts[5]}"
-                            naive_dt = datetime.strptime(new_time, "%a %b %d %H:%M:%S %Y")
-                            # Treat as UTC directly
-                            self.lastmeasurement = naive_dt.replace(tzinfo=pytz.UTC)
-                            # AJT: 18-Jan-2026: Log timezone conversion for debugging
-                            if _LOGGER.isEnabledFor(logging.DEBUG):
-                                _LOGGER.debug(
-                                    "Timezone conversion for optimizer %s: raw='%s' | naive=%s | API indicated UTC/GMT, using UTC directly | UTC=%s",
-                                    panelid,
-                                    rawdate,
-                                    naive_dt,
-                                    self.lastmeasurement
-                                )
-                        else:
-                            # Other timezone indicator - parse without it and use local timezone
-                            # Format: "Thu Jan 17 14:36:14 EST 2026" -> "Thu Jan 17 14:36:14 2026"
-                            new_time = f"{date_parts[0]} {date_parts[1]} {date_parts[2]} {date_parts[3]} {date_parts[5]}"
-                            naive_dt = datetime.strptime(new_time, "%a %b %d %H:%M:%S %Y")
-                            # Parse as local time, then convert to UTC
-                            if naive_dt.tzinfo is None:
-                                if hasattr(self._timezone, 'localize'):
-                                    # pytz timezone
-                                    local_dt = self._timezone.localize(naive_dt)
-                                else:
-                                    # ZoneInfo or other timezone
-                                    local_dt = naive_dt.replace(tzinfo=self._timezone)
-                            else:
-                                local_dt = naive_dt
-                            self.lastmeasurement = local_dt.astimezone(pytz.UTC)
-                            # AJT: 18-Jan-2026: Log timezone conversion for debugging
-                            if _LOGGER.isEnabledFor(logging.DEBUG):
-                                _LOGGER.debug(
-                                    "Timezone conversion for optimizer %s: raw='%s' | naive=%s | local=%s (%s) | UTC=%s",
-                                    panelid,
-                                    rawdate,
-                                    naive_dt,
-                                    local_dt,
-                                    str(self._timezone),
-                                    self.lastmeasurement
-                                )
+                # Clean the date string by removing any timezone indicators (GMT, UTC, etc.)
+                # This handles formats like "Fri Jan 23 16:04:21 GMT 2026" -> "Fri Jan 23 16:04:21 2026"
+                date_str = rawdate
+                # Remove timezone abbreviations that appear before the year
+                import re
+                date_str = re.sub(r'\s+(?:GMT|UTC|EST|CST|PST|EDT|CDT|PDT|[A-Z]{3})\s+', ' ', date_str)
+
+                # Parse as naive datetime (no timezone info)
+                naive_dt = datetime.strptime(date_str.strip(), "%a %b %d %H:%M:%S %Y")
+
+                # Apply Home Assistant timezone (treat as local time)
+                if naive_dt.tzinfo is None:
+                    if hasattr(self._timezone, 'localize'):
+                        # pytz timezone
+                        local_dt = self._timezone.localize(naive_dt)
                     else:
-                        # No timezone indicator - parse as local time
-                        # Format: "Thu Jan 17 14:36:14 2026"
-                        new_time = f"{date_parts[0]} {date_parts[1]} {date_parts[2]} {date_parts[3]} {date_parts[5]}"
-                        naive_dt = datetime.strptime(new_time, "%a %b %d %H:%M:%S %Y")
-                        # Parse as local time, then convert to UTC
-                        if naive_dt.tzinfo is None:
-                            if hasattr(self._timezone, 'localize'):
-                                # pytz timezone
-                                local_dt = self._timezone.localize(naive_dt)
-                            else:
-                                # ZoneInfo or other timezone
-                                local_dt = naive_dt.replace(tzinfo=self._timezone)
-                        else:
-                            local_dt = naive_dt
-                        self.lastmeasurement = local_dt.astimezone(pytz.UTC)
-                        # AJT: 18-Jan-2026: Log timezone conversion for debugging
-                        if _LOGGER.isEnabledFor(logging.DEBUG):
-                            _LOGGER.debug(
-                                "Timezone conversion for optimizer %s: raw='%s' | naive=%s | local=%s (%s) | UTC=%s",
-                                panelid,
-                                rawdate,
-                                naive_dt,
-                                local_dt,
-                                str(self._timezone),
-                                self.lastmeasurement
-                            )
-                elif len(date_parts) >= 5:
-                    # Fallback: try parsing shorter format "Thu Jan 17 14:36:14 2026"
-                    date_str = rawdate.split('(')[0].strip() if '(' in rawdate else rawdate
-                    naive_dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
-                    # AJT: 18-Jan-2026: Parse as local time, then convert to UTC
-                    # Handle both pytz and ZoneInfo timezones
-                    if naive_dt.tzinfo is None:
-                        if hasattr(self._timezone, 'localize'):
-                            # pytz timezone
-                            local_dt = self._timezone.localize(naive_dt)
-                        else:
-                            # ZoneInfo or other timezone
-                            local_dt = naive_dt.replace(tzinfo=self._timezone)
-                    else:
-                        local_dt = naive_dt
-                    self.lastmeasurement = local_dt.astimezone(pytz.UTC)
-                    # AJT: 18-Jan-2026: Log timezone conversion for debugging
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "Timezone conversion for optimizer %s: raw='%s' | naive=%s | local=%s (%s) | UTC=%s",
-                            panelid,
-                            rawdate,
-                            naive_dt,
-                            local_dt,
-                            str(self._timezone),
-                            self.lastmeasurement
-                        )
+                        # ZoneInfo or other timezone
+                        local_dt = naive_dt.replace(tzinfo=self._timezone)
                 else:
-                    _LOGGER.warning("Unexpected date format for optimizer %s: %s", panelid, rawdate)
-                    # Fallback: try parsing the full string
-                    date_str = rawdate.split('(')[0].strip() if '(' in rawdate else rawdate
-                    naive_dt = datetime.strptime(date_str, "%a %b %d %H:%M:%S %Y")
-                    # AJT: 18-Jan-2026: Parse as local time, then convert to UTC
-                    # Handle both pytz and ZoneInfo timezones
-                    if naive_dt.tzinfo is None:
-                        if hasattr(self._timezone, 'localize'):
-                            # pytz timezone
-                            local_dt = self._timezone.localize(naive_dt)
-                        else:
-                            # ZoneInfo or other timezone
-                            local_dt = naive_dt.replace(tzinfo=self._timezone)
-                    else:
-                        local_dt = naive_dt
-                    self.lastmeasurement = local_dt.astimezone(pytz.UTC)
-                    # AJT: 18-Jan-2026: Log timezone conversion for debugging
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "Timezone conversion for optimizer %s: raw='%s' | naive=%s | local=%s (%s) | UTC=%s",
-                            panelid,
-                            rawdate,
-                            naive_dt,
-                            local_dt,
-                            str(self._timezone),
-                            self.lastmeasurement
-                        )
+                    local_dt = naive_dt
+
+                # Convert to UTC for consistent storage
+                self.lastmeasurement = local_dt.astimezone(pytz.UTC)
+
+                # AJT: 24-Jan-2026: Updated logging to reflect simplified timezone handling
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "Timezone conversion for optimizer %s: raw='%s' | cleaned='%s' | naive=%s | local=%s (%s) | UTC=%s",
+                        panelid,
+                        rawdate,
+                        date_str.strip(),
+                        naive_dt,
+                        local_dt,
+                        str(self._timezone),
+                        self.lastmeasurement
+                    )
             except (ValueError, IndexError) as e:
                 _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
                 # Set to current UTC time as fallback
