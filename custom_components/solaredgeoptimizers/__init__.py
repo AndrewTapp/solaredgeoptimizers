@@ -20,6 +20,11 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SolarEdge Optimizers Data from a config entry."""
 
+    # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
+    LOGGER.info("SolarEdge Optimizers: Starting setup for config entry: %s", entry.entry_id)
+    LOGGER.info("SolarEdge Optimizers: Config data - siteid: %s, username: %s",
+               entry.data.get("siteid", "MISSING"), entry.data.get("username", "MISSING"))
+
     # AJT: 18-Jan-2026: Get Home Assistant's configured timezone for date parsing
     ha_timezone = dt_util.get_time_zone(hass.config.time_zone)
     # AJT: 18-Jan-2026: Log timezone configuration for debugging
@@ -28,30 +33,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         str(ha_timezone),
         hass.config.time_zone
     )
-    
+
+    LOGGER.debug("SolarEdge Optimizers: Creating API instance")
     api = solaredgeoptimizers(
         entry.data["siteid"], entry.data["username"], entry.data["password"], ha_timezone
     )
+
+    LOGGER.debug("SolarEdge Optimizers: Starting login check")
     try:
         http_result_code = await hass.async_add_executor_job(api.check_login)
+        LOGGER.info("SolarEdge Optimizers: Login check result: %s", http_result_code)
     except (ConnectTimeout, HTTPError) as ex:
-        LOGGER.error("Could not retrieve details from SolarEdge API")
+        LOGGER.error("SolarEdge Optimizers: Could not retrieve details from SolarEdge API: %s", ex)
+        raise ConfigEntryNotReady from ex
+    except Exception as ex:
+        LOGGER.error("SolarEdge Optimizers: Unexpected error during login check: %s", ex)
         raise ConfigEntryNotReady from ex
 
     if http_result_code != 200:
-        LOGGER.error("Missing details data in SolarEdge response")
+        LOGGER.error("SolarEdge Optimizers: Missing details data in SolarEdge response (status: %s)", http_result_code)
         raise ConfigEntryNotReady
+
+    LOGGER.debug("SolarEdge Optimizers: Login successful, creating coordinator")
 
     hass.data.setdefault(DOMAIN, {})
 
     # AJT: 10-Jan-2025: Pass config_entry to coordinator to enable async_config_entry_first_refresh()
+    LOGGER.debug("SolarEdge Optimizers: Creating coordinator instance")
     coordinator = MyCoordinator(hass, api, True, entry)
 
     # Fetch initial data so we have data when entities subscribe
     #
     # If the refresh fails, async_config_entry_first_refresh will
     # raise ConfigEntryNotReady and setup will try again later
-    await coordinator.async_config_entry_first_refresh()
+    LOGGER.debug("SolarEdge Optimizers: Starting initial coordinator refresh")
+    try:
+        await coordinator.async_config_entry_first_refresh()
+        LOGGER.info("SolarEdge Optimizers: Initial coordinator refresh completed successfully")
+    except Exception as ex:
+        LOGGER.error("SolarEdge Optimizers: Initial coordinator refresh failed: %s", ex)
+        raise
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
