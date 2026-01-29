@@ -1,6 +1,8 @@
-""" My module """
+"""SolarEdge API client for Home Assistant integration."""
 import time
 import threading
+import re
+import os
 
 import requests
 import json
@@ -33,6 +35,28 @@ class solaredgeoptimizers:
         self._lifetime_energy_cache_time = None
         self._lifetime_energy_cache_ttl = timedelta(hours=1)
 
+    def get_lifetime_energy_cached(self):
+        """AJT: 25-Jan-2026: Return cached lifetime energy data as dict (refresh at most hourly)."""
+        now = datetime.now()
+        if (
+            self._lifetime_energy_cache is None
+            or self._lifetime_energy_cache_time is None
+            or (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl
+        ):
+            lifetime_energy_response = self.getLifeTimeEnergy()
+            if lifetime_energy_response.startswith("ERROR001"):
+                _LOGGER.error("Failed to get lifetime energy data: %s", lifetime_energy_response)
+                self._lifetime_energy_cache = {}
+            else:
+                try:
+                    self._lifetime_energy_cache = json.loads(lifetime_energy_response)
+                except json.JSONDecodeError as e:
+                    _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
+                    self._lifetime_energy_cache = {}
+            self._lifetime_energy_cache_time = now
+            _LOGGER.debug("Refreshed lifetime energy cache (cached accessor)")
+        return self._lifetime_energy_cache or {}
+
     def check_login(self):
         # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
         _LOGGER.info("SolarEdge Optimizers: Starting login check for site %s", self.siteid)
@@ -55,6 +79,7 @@ class solaredgeoptimizers:
                 _LOGGER.info("SolarEdge Optimizers: Login check completed - Status: %s", r.status_code)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("SolarEdge Optimizers: Login check response headers: %s", dict(r.headers))
+                    _LOGGER.debug("Login check response body length: %s bytes", len(r.text))
                 return r.status_code
         except requests.exceptions.Timeout as e:
             _LOGGER.error("SolarEdge Optimizers: Login check timed out after 30s: %s", e)
@@ -88,8 +113,9 @@ class solaredgeoptimizers:
             with requests.get(url, **kwargs) as r:
                 _LOGGER.info("SolarEdge Optimizers: Logical layout request completed - Status: %s, Content length: %s", r.status_code, len(r.text))
                 if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Endpoint (logical layout): %s", url)
                     _LOGGER.debug("SolarEdge Optimizers: Logical layout response headers: %s", dict(r.headers))
-                    _LOGGER.debug("Raw response from requestLogicalLayout (status %s): %s", r.status_code, r.text[:1000] if len(r.text) > 1000 else r.text)
+                    _LOGGER.debug("Response from requestLogicalLayout (status %s): %s", r.status_code, r.text[:2000] if len(r.text) > 2000 else r.text)
                 return r.text
         except requests.exceptions.Timeout as e:
             _LOGGER.error("SolarEdge Optimizers: Logical layout request timed out after 60s: %s", e)
@@ -144,10 +170,16 @@ class solaredgeoptimizers:
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-web/p/systemData?reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale=en_US&v={round(time.time() * 1000)}"
 
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Endpoint (single optimizer systemData): %s", url)
+
         kwargs = {}
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
         # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
         with requests.get(url, **kwargs) as r:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                resp_preview = r.text[:2000] if len(r.text) > 2000 else r.text
+                _LOGGER.debug("Response from systemData (optimizer %s, status %s): %s", itemId, r.status_code, resp_preview)
             if r.status_code == 200:
                 json_object = self.decodeResult(r.text)
                 # AJT: 22-Jan-2026: Log decoded JSON object for debugging
@@ -212,19 +244,19 @@ class solaredgeoptimizers:
             (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl):
             # AJT: 11-Jan-2026: Added error handling for getLifeTimeEnergy() response
             lifetime_energy_response = self.getLifeTimeEnergy()
-            # AJT: 22-Jan-2026: Log raw lifetime energy response for debugging
+            # AJT: 22-Jan-2026: Log raw lifetime energy response for debugging (endpoint already logged in getLifeTimeEnergy)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 response_preview = lifetime_energy_response[:2000] if len(lifetime_energy_response) > 2000 else lifetime_energy_response
-                _LOGGER.debug("Raw lifetime energy response: %s", response_preview)
+                _LOGGER.debug("Response from lifetime energy endpoint: %s", response_preview)
             if lifetime_energy_response.startswith("ERROR001"):
                 _LOGGER.error("Failed to get lifetime energy data: %s", lifetime_energy_response)
                 lifetimeenergy = {}
             else:
                 try:
                     lifetimeenergy = json.loads(lifetime_energy_response)
-                    # AJT: 22-Jan-2026: Log parsed lifetime energy JSON for debugging
+                    # AJT: 22-Jan-2026: Log parsed lifetime energy data returned from endpoint
                     if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug("Parsed lifetime energy JSON: %s", lifetimeenergy)
+                        _LOGGER.debug("Parsed lifetime energy data (by optimizer/string ID): %s", lifetimeenergy)
                 except json.JSONDecodeError as e:
                     _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
                     lifetimeenergy = {}
@@ -237,15 +269,22 @@ class solaredgeoptimizers:
             _LOGGER.debug("Using cached lifetime energy data")
 
         # AJT: 16-Jan-2026: Collect all optimizer IDs first for parallel processing
-        optimizer_ids = []
-        for inverter in solarsite.inverters:
-            for string in inverter.strings:
-                for optimizer in string.optimizers:
-                    optimizer_ids.append(optimizer.optimizerId)
+        # AJT: 27-Jan-2026: Use list comprehension for better performance than append in loop
+        optimizer_ids = [
+            optimizer.optimizerId
+            for inverter in solarsite.inverters
+            for string in inverter.strings
+            for optimizer in string.optimizers
+        ]
 
         # AJT: 16-Jan-2026: Parallelize API calls using ThreadPoolExecutor for 10-20x speedup
         data = []
-        max_workers = min(10, len(optimizer_ids))  # Limit concurrent requests to avoid overwhelming server
+        # AJT: 27-Jan-2026: Use adaptive worker count based on CPU cores for better performance
+        max_workers = min(
+            os.cpu_count() or 4,  # Use CPU count, fallback to 4
+            len(optimizer_ids),
+            10  # Cap at 10 to avoid overwhelming server
+        )
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all requests in parallel
@@ -265,7 +304,8 @@ class solaredgeoptimizers:
                         energy_data = lifetimeenergy.get(optimizer_id_str, {})
                         unscaled_energy = energy_data.get("unscaledEnergy")
                         if unscaled_energy is not None:
-                            info.lifetime_energy = float(unscaled_energy) / 1000
+                            # AJT: 27-Jan-2026: Round to 3 decimal places to avoid floating point precision issues
+                            info.lifetime_energy = round(float(unscaled_energy) / 1000, 3)
                         else:
                             _LOGGER.warning("Lifetime energy data missing for optimizer %s, setting to 0", optimizer_id)
                             info.lifetime_energy = 0.0
@@ -378,16 +418,19 @@ class solaredgeoptimizers:
             self._thread_local.session = Session()
             # Perform initial login setup
             # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
-            self._thread_local.session.head(
+            # AJT: 27-Jan-2026: Use context manager to ensure response is closed
+            with self._thread_local.session.head(
                 f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy",
                 headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
                          }
-            )
+            ) as r:
+                pass  # Response automatically closed by context manager
             url = "https://monitoring.solaredge.com/solaredge-web/p/login"
             self._thread_local.session.auth = (self.username, self.password)
-            r1 = self._thread_local.session.get(url)
-            if r1.status_code != 200:
-                _LOGGER.warning("Login request returned status %d", r1.status_code)
+            # AJT: 27-Jan-2026: Use context manager to ensure response is closed
+            with self._thread_local.session.get(url) as r1:
+                if r1.status_code != 200:
+                    _LOGGER.warning("Login request returned status %d", r1.status_code)
         
         return self._thread_local.session
 
@@ -405,7 +448,8 @@ class solaredgeoptimizers:
             thecrsftoken = ""
 
         # Build up the request.
-        response = session.request(
+        # AJT: 27-Jan-2026: Use context manager to ensure response is properly closed
+        with session.request(
             method=method,
             url=request_url,
             headers={
@@ -429,24 +473,44 @@ class solaredgeoptimizers:
                 "x-requested-with": "XMLHttpRequest",
             },
             data=data
-        )
-
-        # AJT: 22-Jan-2026: Log raw response data for debugging
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            response_preview = response.text[:2000] if len(response.text) > 2000 else response.text
-            _LOGGER.debug("Raw response from _doRequest %s %s (status %s): %s", 
-                         method, request_url, response.status_code, response_preview)
+        ) as response:
+            # AJT: 22-Jan-2026: Log endpoint and raw response data for debugging
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                response_preview = response.text[:2000] if len(response.text) > 2000 else response.text
+                _LOGGER.debug("Endpoint: %s %s | Status: %s | Response (preview): %s",
+                             method, request_url, response.status_code, response_preview)
+            
+            # Store response text before context manager closes
+            response_text = response.text
+            status_code = response.status_code
         
-        if response.status_code == 200:
-            return response.text
+        # Return result after response is closed
+        if status_code == 200:
+            return response_text
         else:
             # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
-            return f"ERROR001 - HTTP CODE: {response.status_code}"
+            return f"ERROR001 - HTTP CODE: {status_code}"
 
     def getLifeTimeEnergy(self):
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy?timeUnit=ALL"
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Endpoint (lifetime energy, whole site): %s", url)
         return self._doRequest("POST", url)
+
+    def close(self):
+        """AJT: 27-Jan-2026: Close all thread-local sessions to prevent file descriptor leaks.
+        
+        This should be called when the API client is no longer needed, e.g., during integration unload.
+        """
+        if hasattr(self._thread_local, 'session') and self._thread_local.session is not None:
+            try:
+                self._thread_local.session.close()
+                _LOGGER.debug("Closed thread-local session")
+            except Exception as e:
+                _LOGGER.warning("Error closing thread-local session: %s", e)
+            finally:
+                self._thread_local.session = None
 
     def getAlerts(self, only_open=False):
         # Note: this might require FULL_ACCESS rights in the SE portal, as opposed to DASHBOARD_AND_LAYOUT
@@ -465,12 +529,12 @@ class solaredgeoptimizers:
 
     def MakeStringFromCookie(self, cookies):
         # AJT: 16-Jan-2026: Optimize string concatenation using list and join() instead of += in loop
+        # AJT: 27-Jan-2026: Direct access to known keys instead of iterating all cookies
         cookie_parts = []
-        for cookie in cookies:
-            if cookie == "CSRF-TOKEN":
-                cookie_parts.append(f"{cookie}={cookies[cookie]};")
-            elif cookie == "JSESSIONID":
-                cookie_parts.append(f"{cookie}={cookies[cookie]};")
+        if "CSRF-TOKEN" in cookies:
+            cookie_parts.append(f"CSRF-TOKEN={cookies['CSRF-TOKEN']};")
+        if "JSESSIONID" in cookies:
+            cookie_parts.append(f"JSESSIONID={cookies['JSESSIONID']};")
 
         # AJT: 10-Jan-2025: Fixed typo "concent" to "consent" in cookie string
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
@@ -480,7 +544,7 @@ class solaredgeoptimizers:
 
     def decodeResult(self, result):
         # AJT: 22-Jan-2026: First try to extract JSON from SE.systemData = {...}; line (more specific and reliable)
-        import re
+        # AJT: 27-Jan-2026: Moved import to module level for better performance
         # Find SE.systemData = and extract the JSON object (handles nested braces)
         se_systemdata_match = re.search(r'SE\.systemData\s*=\s*', result)
         if se_systemdata_match:
@@ -541,9 +605,6 @@ class SolarEdgeSite:
             child_name = json_obj["logicalTree"]["children"][i]["data"]["name"]
             _LOGGER.debug("SolarEdge Optimizers: Processing child %d: %s", i, child_name)
 
-            # Blijkbaar kan er een powermeter tussen zitten. Checken of dit het geval is
-            # Production Meter -> moeten 1 niveau dieper
-            # Inverter 1 -> dit is 'normaal'
             if "PRODUCTION METER" not in child_name.upper():
                 _LOGGER.debug("SolarEdge Optimizers: Adding inverter at index %d", i)
                 inverters.append(SolarEdgeInverter(json_obj=json_obj, index=i))
@@ -648,15 +709,54 @@ class SolarlEdgeOptimizer:
         self.operationsKey = json_obj["data"]["operationsKey"]
 
 
+class SolarEdgeAggregatedData:
+    """Data class for aggregated SolarEdge measurements at string/inverter level."""
+    
+    # AJT: 27-Jan-2026: Use __slots__ to reduce memory overhead and improve attribute access speed
+    __slots__ = (
+        'panel_id', 'entity_type', 'serialnumber', 'panel_description', 'lastmeasurement',
+        'model', 'manufacturer', 'current', 'optimizer_voltage', 'power', 'voltage',
+        'lifetime_energy', 'child_count', 'active_optimizer_count'
+    )
+
+    def __init__(self, entity_id, entity_type, lifetime_energy=None):
+        self.panel_id = entity_id  # Will be string_id or inverter_id
+        self.entity_type = entity_type  # "string" or "inverter"
+        self.serialnumber = ""
+        self.panel_description = ""
+        self.lastmeasurement = None
+        self.model = ""
+        self.manufacturer = ""
+
+        # Aggregated measurements
+        self.current = 0.0
+        self.optimizer_voltage = 0.0  # Not used for aggregated
+        self.power = 0.0
+        self.voltage = 0.0
+
+        # Lifetime energy from API
+        self.lifetime_energy = lifetime_energy or 0.0
+
+        # Additional aggregated info
+        self.child_count = 0  # Number of optimizers in string, or strings in inverter
+        self.active_optimizer_count = 0  # Number of optimizers with recent data
+
+
 class SolarEdgeOptimizerData:
     """Data class for SolarEdge optimizer measurements and metadata."""
+    
+    # AJT: 27-Jan-2026: Use __slots__ to reduce memory overhead and improve attribute access speed
+    __slots__ = (
+        '_timezone', '_json_obj', 'serialnumber', 'panel_id', 'panel_description',
+        'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage',
+        'power', 'voltage', 'lifetime_energy'
+    )
 
     def __init__(self, panelid, json_object, timezone=None):
 
         # AJT: 18-Jan-2026: Store timezone for date parsing (default to UTC if not provided)
         self._timezone = timezone if timezone is not None else pytz.UTC
 
-        # Atributen die we willen zien:
         self.serialnumber = ""
         self.panel_id = ""
         # AJT: 16-Jan-2026: Fixed spelling from "paneel" to "panel"
@@ -665,7 +765,6 @@ class SolarEdgeOptimizerData:
         self.model = ""
         self.manufacturer = ""
 
-        # Warden
         self.current = ""
         self.optimizer_voltage = ""
         self.power = ""
@@ -677,7 +776,6 @@ class SolarEdgeOptimizerData:
         if panelid is not None:
             self._json_obj = json_object
 
-            # Atributen die we willen zien:
             self.serialnumber = json_object["serialNumber"]
             self.panel_id = panelid
             # AJT: 16-Jan-2026: Fixed spelling from "paneel" to "panel"
@@ -693,7 +791,7 @@ class SolarEdgeOptimizerData:
                 # This handles formats like "Fri Jan 23 16:04:21 GMT 2026" -> "Fri Jan 23 16:04:21 2026"
                 date_str = rawdate
                 # Remove timezone abbreviations that appear before the year
-                import re
+                # AJT: 27-Jan-2026: re is already imported at module level
                 date_str = re.sub(r'\s+(?:GMT|UTC|EST|CST|PST|EDT|CDT|PDT|[A-Z]{3})\s+', ' ', date_str)
 
                 # Parse as naive datetime (no timezone info)
@@ -733,15 +831,19 @@ class SolarEdgeOptimizerData:
             self.model = json_object.get("model", "")
             self.manufacturer = json_object.get("manufacturer", "")
 
-            # Warden - AJT: 11-Jan-2026: Fixed unsafe dictionary access using .get() with defaults
+            # AJT: 11-Jan-2026: Fixed unsafe dictionary access using .get() with defaults
             # AJT: 17-Jan-2026: Handle cases where measurements might be missing, null, or have different structure
             measurements = json_object.get("measurements", {})
             if not measurements or not isinstance(measurements, dict):
+                # AJT: 27-Jan-2026: Only build keys list if logging is enabled to reduce overhead
+                available_keys = None
+                if _LOGGER.isEnabledFor(logging.WARNING):
+                    available_keys = list(json_object.keys()) if isinstance(json_object, dict) else "N/A"
                 _LOGGER.warning(
                     "Missing or invalid measurements for optimizer %s (panel_id: %s). Available keys: %s",
                     panelid,
                     json_object.get("serialNumber", "unknown"),
-                    list(json_object.keys()) if isinstance(json_object, dict) else "N/A"
+                    available_keys or "N/A"
                 )
                 measurements = {}
             
