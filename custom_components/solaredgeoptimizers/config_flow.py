@@ -1,4 +1,4 @@
-"""Config flow for SolarEdge Optimizers Data integration."""
+"""Configuration flow for SolarEdge Optimizers Home Assistant integration."""
 from __future__ import annotations
 
 import logging
