@@ -1,4 +1,4 @@
-"""Constants for the SolarEdge Optimizers Data integration."""
+"""Constants and configuration for SolarEdge Optimizers Home Assistant integration."""
 from datetime import timedelta
 import logging
 
@@ -10,7 +10,8 @@ PANEL_DATA = "panel_data"
 
 LOGGER = logging.getLogger(__package__)
 
-UPDATE_DELAY = timedelta(minutes=15)
+# AJT: 25-Jan-2026: Coordinator tick interval. Actual portal load is controlled by adaptive polling in the coordinator.
+UPDATE_DELAY = timedelta(minutes=2)
 
 CHECK_TIME_DELTA = timedelta(hours=1, minutes=00)
 
@@ -21,12 +22,38 @@ SENSOR_TYPE_VOLTAGE = "Voltage"
 SENSOR_TYPE_ENERGY = "Lifetime_energy"
 SENSOR_TYPE_LASTMEASUREMENT = "Last_Measurement"
 SENSOR_TYPE_LASTPOLLED = "Last_Polled"
-SENSOR_TYPE = [
+SENSOR_TYPE_CHILD_COUNT = "Child_count"
+SENSOR_TYPE_ACTIVE_CHILD_COUNT = "Active_child_count"
+
+# Sensors for individual optimizers
+SENSOR_TYPE_INDIVIDUAL = [
     SENSOR_TYPE_CURRENT,
     SENSOR_TYPE_OPT_VOLTAGE,
     SENSOR_TYPE_POWER,
     SENSOR_TYPE_VOLTAGE,
     SENSOR_TYPE_ENERGY,
     SENSOR_TYPE_LASTMEASUREMENT,
-    SENSOR_TYPE_LASTPOLLED,
 ]
+
+# Sensors for aggregated entities (strings and inverters)
+SENSOR_TYPE_AGGREGATED_COMMON = [
+    SENSOR_TYPE_CURRENT,
+    SENSOR_TYPE_POWER,
+    SENSOR_TYPE_VOLTAGE,
+    SENSOR_TYPE_ENERGY,
+    SENSOR_TYPE_LASTMEASUREMENT,
+]
+
+SENSOR_TYPE_AGGREGATED_STRING = SENSOR_TYPE_AGGREGATED_COMMON + [
+    SENSOR_TYPE_CHILD_COUNT,  # For strings: optimizer count
+]
+
+SENSOR_TYPE_AGGREGATED_INVERTER = SENSOR_TYPE_AGGREGATED_COMMON + [
+    SENSOR_TYPE_CHILD_COUNT,  # For inverters: string count
+]
+
+SENSOR_TYPE_AGGREGATED_SITE = SENSOR_TYPE_AGGREGATED_COMMON + [
+    SENSOR_TYPE_CHILD_COUNT,  # For sites: inverter count
+]
+
+SENSOR_TYPE = SENSOR_TYPE_INDIVIDUAL  # For backwards compatibility
