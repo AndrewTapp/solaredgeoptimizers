@@ -1,82 +1,99 @@
 # SolarEdge Optimizers Integration
 
-<a href="https://github.com/AndrewTapp/solaredgeoptimizers/releases"><img src="https://img.shields.io/github/release/AndrewTapp/solaredgeoptimizers.svg"></a>
+[![Release](https://img.shields.io/github/release/AndrewTapp/solaredgeoptimizers.svg)](https://github.com/AndrewTapp/solaredgeoptimizers/releases)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.me/AndrewJTapp)
 [![Donate](https://img.shields.io/badge/Donate-BuyMeACoffee-green.svg)](https://buymeacoffee.com/andrewtapp)
 
-Integration to get optimizer information from the SolarEdge monitoring portal.
+This integration brings your SolarEdge optimizer data from the SolarEdge monitoring portal into Home Assistant. You can see current production, voltage, power, and lifetime energy at the level of individual optimizers, strings, inverters, or the whole site.
 
-This integration works by gathering information from the SolarEdge portal website. Current data per optimizer is gathered and shown in Home Assistant. The total lifetime energy produced per optimizer is also added as a sensor.
+## What You Need
 
-For this integration to work, you need to provide:
-- Your **Site ID**
-- Your **Username** 
+To set up the integration you will need:
+
+- Your **Site ID** (from the SolarEdge portal)
+- Your **Username**
 - Your **Password**
 
-## Available Sensors
+## How Your System Is Shown in Home Assistant
 
-For each optimizer, the following sensors are created:
+Your solar system is organised in a simple hierarchy:
 
-- **Voltage** - Panel voltage (V)
-- **Current** - Panel current (A)  
-- **Optimizer voltage** - Optimizer output voltage (V)
-- **Power** - Current power output (W)
-- **Lifetime energy** - Total cumulative energy produced (kWh) - always updates regardless of measurement age
-- **Last measurement** - Timestamp of the last measurement, parsed as local time using Home Assistant's configured timezone - obtained from the SolarEdge portal
-- **Last polled** - When the Home Assistant integration last queried the optimizer
+- **Site** – Your whole installation (e.g. Site 2nnnnnn).
+- **Inverters** – Shown as “Inverter 1”, “Inverter 2”, and so on.
+- **Strings** – Under each inverter, e.g. “String 1.1”, “String 1.2”.
+- **Optimizers** – Under each string, e.g. “Optimizer 1.1.1”, “Optimizer 1.1.2”.
 
-Sensor names are displayed in a user-friendly format (e.g., "Current 1.1.1", "Last measurement 1.1.1").
+In **Settings → Devices & services**, each device shows what it's **connected via** (e.g. an optimizer shows “String 1.1”, a string shows “Inverter 1”). This makes it easy to see how everything is linked.
 
-## Update Behavior
+## What Data You Get
 
-This integration updates its sensors every 15 minutes. More frequent updates are not useful because the SolarEdge portal only updates data every 15 minutes. See https://www.solaredge.com/uk/support/system-owner/mysolaredge-app-does-not-display-production-data and https://www.solaredge.com/us/support/system-owner/app-does-not-display-production-data
+### Per optimizer (each panel)
 
-**Important:** When an optimizer is offline or not reporting:
-- If the last measurement is **older than 1 hour**, non-cumulative sensors (Voltage, Current, Optimizer voltage, Power) will show **0**
-- **Lifetime energy** and **Last measurement** sensors will always show their actual values, regardless of measurement age
-- This ensures you can still see historical cumulative data even when the optimizer is temporarily offline
+- **Voltage**, **Current**, **Optimizer voltage**, **Power** – Live values when the optimizer is reporting.
+- **Lifetime energy** – Total energy produced (kWh); this only goes up over time.
+- **Last measurement** – When the portal last had a reading for this optimizer.
 
-## Error Handling
+### Per string, inverter, and site
 
-The integration includes robust error handling:
-- Temporary server errors (HTTP 5xx) from SolarEdge are handled gracefully with clear log messages
-- The integration will automatically retry on the next update cycle
-- File descriptor leaks have been fixed for long-running stability
+For each string, inverter, and the site you get combined (aggregated) sensors:
+
+- **Current (average)** and **Voltage (average)**
+- **Power** (total for that level)
+- **Lifetime energy** (total for that level)
+- **Last measurement**
+- **Optimizer count** (strings) / **String count** (inverters) / **Inverter count** (site)
+- **Last polled** (site device only) – When the integration last successfully fetched data from the SolarEdge portal. Handy for checking that updates are running.
+
+Names are kept short (e.g. “Current (average)”, “Power”) because the device name (e.g. “String 1.1” or “Inverter 1”) already tells you where the value comes from.
+
+## How Often Data Updates
+
+- The integration checks for new data every few minutes. When the SolarEdge portal has new readings, a full refresh runs so all sensors update.
+- **Lifetime energy** is only refreshed from the portal about once per hour, because that value changes slowly. Totals for strings, inverters, and the site are calculated from that data.
+
+So in normal use you see updates every few minutes when the portal has new data, and lifetime energy at most once per hour.
+
+## When an Optimizer Is Offline or Not Reporting
+
+- If the **last measurement** is older than one hour, **Voltage**, **Current**, **Optimizer voltage**, and **Power** are shown as **0** for that optimizer (and any aggregates that depend on it). This avoids showing stale “live” values.
+- **Lifetime energy** and **Last measurement** always show the last known values, so you can still see historical production even when a panel is temporarily offline.
+
+## Reliability and Errors
+
+- Temporary problems on SolarEdge’s servers (e.g. HTTP 5xx errors) are handled without crashing; the integration will try again on the next update.
+- Connections and sessions are closed properly when the integration is removed or reloaded, so it's safe to run for long periods.
 
 ## Installation
 
-Until this integration is adopted by Home Assistant Core, HACS is the recommended method to install as a custom repository.
+Until this integration is part of Home Assistant Core, installing via HACS is recommended.
 
-1. Add this repository as a custom repository to HACS:
-   - Go to **HACS** → Click the three dots in the upper right corner → Click **Custom repositories**
-   - In the repository field, enter: `https://github.com/AndrewTapp/solaredgeoptimizers`
-   - For type, select **Integration**
-   - Click **Add**
+1. **Add the repository in HACS**
+   - Go to **HACS** → click the three dots (top right) → **Custom repositories**.
+   - Repository URL: `https://github.com/AndrewTapp/solaredgeoptimizers`
+   - Category: **Integration** → **Add**.
 
-2. Install the integration:
-   - Go back to **HACS** → Select the **SolarEdge Optimizers** integration
-   - Click the blue **Download** button (bottom right) and install it
+2. **Install the integration**
+   - In HACS, open **SolarEdge Optimizers** and click **Download**.
 
-3. Restart Home Assistant
+3. **Restart Home Assistant.**
 
-4. Configure the integration:
-   - In Home Assistant, go to **Settings** → **Devices & services**
-   - Click **Add Integration** and search for **SolarEdge Optimizers**
-   - Enter your **Site ID**, **Username**, and **Password**
+4. **Configure**
+   - **Settings** → **Devices & services** → **Add Integration** → search for **SolarEdge Optimizers**.
+   - Enter your **Site ID**, **Username**, and **Password**.
 
-**Note:** The initial setup can take some time, especially if you have many optimizers. Please be patient.
-________________________________________________________________________
+The first load can take a while if you have many optimizers; the integration fetches and organises all of them.
 
-## Thanks to the following people
+---
 
-[@proudem](https://github.com/proudem)
-[@Mariusthvdb](https://github.com/Mariusthvdb)
-[@stepsolar](https://github.com/stepsolar)
-[@slyoldfox](https://github.com/slyoldfox)
+## Many thanks to the following people
+
+[@proudem](https://github.com/proudem) creator of the original integration.
+
+[@Mariusthvdb](https://github.com/Mariusthvdb) for his help getting me up and running with this fork of the original integration.
 
 ## Donators
 
-Thank you to the PayPal and Buy Me a Coffee donators
+Thank you to the PayPal and Buy Me a Coffee donators.
 
 |  |  |  |  | 
 |--------------------|--------------------|----------------------|----------------------|
