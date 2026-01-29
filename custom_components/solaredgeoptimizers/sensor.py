@@ -1,4 +1,4 @@
-"""Example integration using DataUpdateCoordinator."""
+"""Sensor entities for SolarEdge Optimizers Home Assistant integration."""
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -14,7 +14,6 @@ from homeassistant.components.sensor import (
 )
 
 from homeassistant.core import callback
-from homeassistant.util import dt as dt_util
 from datetime import datetime, timezone
 
 from homeassistant.helpers.update_coordinator import (
@@ -23,14 +22,17 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import (
     DOMAIN,
-    SENSOR_TYPE,
+    SENSOR_TYPE_INDIVIDUAL,
+    SENSOR_TYPE_AGGREGATED_STRING,
+    SENSOR_TYPE_AGGREGATED_INVERTER,
+    SENSOR_TYPE_AGGREGATED_SITE,
     SENSOR_TYPE_OPT_VOLTAGE,
     SENSOR_TYPE_CURRENT,
     SENSOR_TYPE_POWER,
     SENSOR_TYPE_VOLTAGE,
     SENSOR_TYPE_ENERGY,
     SENSOR_TYPE_LASTMEASUREMENT,
-    SENSOR_TYPE_LASTPOLLED,
+    SENSOR_TYPE_CHILD_COUNT,
     CHECK_TIME_DELTA,
 )
 
@@ -47,6 +49,7 @@ from homeassistant.const import (
 # AJT: 10-Jan-2025: Changed from absolute import to relative import to use local solaredgeoptimizers.py instead of site-packages version
 from .solaredgeoptimizers import (
     SolarEdgeOptimizerData,
+    SolarEdgeAggregatedData,
     SolarlEdgeOptimizer,
 )
 
@@ -67,17 +70,17 @@ async def async_setup_entry(
     _LOGGER.info("Found all information for site: %s", site.siteId)
     _LOGGER.info("Site has %s inverters", len(site.inverters))
     _LOGGER.info(
-        "Adding all optimizers (%s) found to Home Assistant",
+        "Setting up sensors for %s optimizers (plus string/inverter/site aggregations)",
         site.returnNumberOfOptimizers(),
     )
 
-    # AJT: 16-Jan-2026: Collect all optimizer/inverter pairs first for parallel processing
+    # AJT: 16-Jan-2026: Collect all optimizer/inverter/string tuples first for parallel processing
     optimizer_tasks = []
     for i, inverter in enumerate(site.inverters, start=1):
         _LOGGER.info("Adding all optimizers from inverter: %s", i)
         for string in inverter.strings:
             for optimizer in string.optimizers:
-                optimizer_tasks.append((optimizer, inverter))
+                optimizer_tasks.append((optimizer, inverter, string))
 
     # AJT: 16-Jan-2026: Parallelize API calls using asyncio.gather for 10-20x speedup
     _LOGGER.info("Fetching optimizer data in parallel...")
@@ -86,14 +89,14 @@ async def async_setup_entry(
             hass.async_add_executor_job(
                 coordinator.my_api.requestSystemData, opt.optimizerId
             )
-            for opt, _ in optimizer_tasks
+            for opt, _, _ in optimizer_tasks
         ],
         return_exceptions=True
     )
 
     # Process results and create sensors
     sensors_to_add = []
-    for (optimizer, inverter), info in zip(optimizer_tasks, results):
+    for (optimizer, inverter, string), info in zip(optimizer_tasks, results):
         if isinstance(info, Exception):
             _LOGGER.error(
                 "Error fetching data for optimizer %s: %s",
@@ -101,13 +104,13 @@ async def async_setup_entry(
                 info
             )
             continue
-        
+
         if info is not None:
             _LOGGER.debug(
                 "Added optimizer for panel_id: %s to Home Assistant",
                 optimizer.displayName,
             )
-            for sensortype in SENSOR_TYPE:
+            for sensortype in SENSOR_TYPE_INDIVIDUAL:
                 sensors_to_add.append(
                     SolarEdgeOptimizersSensor(
                         coordinator,
@@ -116,22 +119,301 @@ async def async_setup_entry(
                         info,
                         sensortype,
                         optimizer,
+                        inverter,
+                        string
+                    )
+                )
+
+    # Single integration-level "Last polled" sensor (one per config entry)
+    sensors_to_add.append(
+        SolarEdgeIntegrationLastPolledSensor(coordinator, hass, entry, site.siteId)
+    )
+
+    # AJT: 24-Jan-2026: Create aggregated sensors for strings and inverters
+    # Get the site structure from coordinator
+    site = coordinator._site_structure
+    if site:
+        # Create string-level aggregated sensors
+        for inverter in site.inverters:
+            for string in inverter.strings:
+                # Create aggregated data placeholder for sensor creation
+                string_aggregated = SolarEdgeAggregatedData(
+                    entity_id=f"string_{string.stringId}",
+                    entity_type="string"
+                )
+                string_aggregated.serialnumber = f"String_{string.stringId}"
+                string_aggregated.panel_description = string.displayName
+
+                _LOGGER.debug("Creating aggregated sensors for string: %s", string.displayName)
+                for sensortype in SENSOR_TYPE_AGGREGATED_STRING:
+                    sensors_to_add.append(
+                        SolarEdgeAggregatedSensor(
+                            coordinator,
+                            hass,
+                            entry,
+                            string_aggregated,
+                            sensortype,
+                            string,
+                            inverter
+                        )
+                    )
+
+        # Create inverter-level aggregated sensors
+        for inverter in site.inverters:
+            # Create aggregated data placeholder for sensor creation
+            inverter_aggregated = SolarEdgeAggregatedData(
+                entity_id=f"inverter_{inverter.inverterId}",
+                entity_type="inverter"
+            )
+            inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
+            inverter_aggregated.panel_description = inverter.displayName
+
+            _LOGGER.debug("Creating aggregated sensors for inverter: %s", inverter.displayName)
+            for sensortype in SENSOR_TYPE_AGGREGATED_INVERTER:
+                sensors_to_add.append(
+                    SolarEdgeAggregatedSensor(
+                        coordinator,
+                        hass,
+                        entry,
+                        inverter_aggregated,
+                        sensortype,
+                        None,  # No string for inverter level
                         inverter
                     )
                 )
 
+    # Create site-level aggregated sensors
+    # Create aggregated data placeholder for sensor creation
+    site_aggregated = SolarEdgeAggregatedData(
+        entity_id=f"site_{site.siteId}",
+        entity_type="site"
+    )
+    site_aggregated.serialnumber = f"Site_{site.siteId}"
+    site_aggregated.panel_description = f"Site {site.siteId}"
+
+    _LOGGER.debug("Creating aggregated sensors for site: %s", site.siteId)
+    for sensortype in SENSOR_TYPE_AGGREGATED_SITE:
+        sensors_to_add.append(
+            SolarEdgeAggregatedSensor(
+                coordinator,
+                hass,
+                entry,
+                site_aggregated,
+                sensortype,
+                None,  # No string for site level
+                None   # No inverter for site level
+            )
+        )
+
     # Add all sensors at once
     if sensors_to_add:
         async_add_entities(sensors_to_add, update_before_add=True)
+        individual_count = len(optimizer_tasks) * len(SENSOR_TYPE_INDIVIDUAL)
+        aggregated_count = len(sensors_to_add) - individual_count
         _LOGGER.info(
-            "Done adding all optimizers. Added %s sensors in total.",
-            len(sensors_to_add)
+            "Done adding all sensors. Added %s sensors in total (%s individual optimizers + %s aggregated sensors).",
+            len(sensors_to_add),
+            individual_count,
+            aggregated_count
         )
     else:
         _LOGGER.warning("No sensors were created - check for errors above")
 
 
+class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
+    """Single integration-level 'last polled' timestamp sensor."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_state_class = None
+
+    def __init__(
+        self,
+        coordinator: MyCoordinator,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        site_id: int,
+    ) -> None:
+        super().__init__(coordinator)
+        self._hass = hass
+        self._entry = entry
+        self._site_id = site_id
+
+        self._attr_unique_id = f"{entry.entry_id}_integration_last_polled"
+        self._attr_name = "Last polled"
+        # Attach to the site device so it shows once per site/integration
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"site_{site_id}")},
+            manufacturer="SolarEdge",
+            model=f"SITE {site_id}",
+            name=f"Site {site_id}",
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._attr_native_value = getattr(self.coordinator, "_integration_last_polled", None)
+        self.async_write_ha_state()
+
+
 # class MyEntity(CoordinatorEntity, SensorEntity):
+class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
+    """An entity for aggregated SolarEdge measurements at string/inverter level."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    
+    # AJT: 27-Jan-2026: Class-level constant for sensor attribute mapping to avoid recreating on every update
+    _SENSOR_ATTR_MAP = {
+        SENSOR_TYPE_VOLTAGE: "voltage",
+        SENSOR_TYPE_CURRENT: "current",
+        SENSOR_TYPE_POWER: "power",
+        SENSOR_TYPE_ENERGY: "lifetime_energy",
+        SENSOR_TYPE_LASTMEASUREMENT: "lastmeasurement",
+        SENSOR_TYPE_CHILD_COUNT: "child_count",
+    }
+
+    def __init__(
+        self,
+        coordinator,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        panel: SolarEdgeAggregatedData,
+        sensortype,
+        string=None,  # None for inverter level
+        inverter=None
+    ) -> None:
+        super().__init__(coordinator)
+        self._hass = hass
+        self._entry = entry
+        self._panelobject = panel
+        self._string = string
+        self._inverter = inverter
+        self._panel = panel.panel_description
+        self._attr_unique_id = f"{panel.panel_id}_{sensortype}"
+        self._sensor_type = sensortype
+
+        # AJT: 27-Jan-2026: Simplified sensor names - remove entity identifier, add (average) for current/voltage
+        if self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
+            display_type = "Last measurement"
+        elif self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
+            # Different display names based on entity type
+            if panel.entity_type == "string":
+                display_type = "Optimizer count"
+            elif panel.entity_type == "inverter":
+                display_type = "String count"
+            else:  # site
+                display_type = "Inverter count"
+        elif self._sensor_type is SENSOR_TYPE_CURRENT:
+            display_type = "Current (average)"
+        elif self._sensor_type is SENSOR_TYPE_VOLTAGE:
+            display_type = "Voltage (average)"
+        elif self._sensor_type is SENSOR_TYPE_ENERGY:
+            display_type = "Lifetime energy"
+        elif self._sensor_type is SENSOR_TYPE_POWER:
+            display_type = "Power"
+        else:
+            display_type = self._sensor_type.replace("_", " ")
+
+        self._attr_name = display_type
+
+        # Set device info based on entity type
+        if panel.entity_type == "string":
+            # String device
+            # AJT: 27-Jan-2026: Format string name with prefix
+            string_name = f"String {string.displayName}"
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"{entry.entry_id}_{string.stringId}")},
+                manufacturer="SolarEdge",
+                model=f"STRING {string.displayName}",
+                name=string_name,
+                via_device=(DOMAIN, inverter.serialNumber),
+            )
+        elif panel.entity_type == "inverter":
+            # AJT: 27-Jan-2026: Inverter device connected via site
+            # AJT: 27-Jan-2026: Format inverter name with prefix
+            inverter_name = f"Inverter {inverter.displayName}"
+            site_id = None
+            if self.coordinator._site_structure:
+                site_id = self.coordinator._site_structure.siteId
+            via_device = (DOMAIN, f"site_{site_id}") if site_id else None
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, inverter.serialNumber)},
+                name=inverter_name,
+                via_device=via_device,
+            )
+        else:  # site
+            # AJT: 27-Jan-2026: Site device shows site ID in name
+            site_id = panel.panel_id.split('_')[1] if '_' in panel.panel_id else None
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"site_{site_id}")},
+                name=f"Site {site_id}" if site_id else "Site",
+            )
+
+        # Set appropriate units and device classes based on sensor type
+        if self._sensor_type is SENSOR_TYPE_VOLTAGE:
+            self._attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
+            self._attr_device_class = SensorDeviceClass.VOLTAGE
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+        elif self._sensor_type is SENSOR_TYPE_CURRENT:
+            self._attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
+            self._attr_device_class = SensorDeviceClass.CURRENT
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+        elif self._sensor_type is SENSOR_TYPE_POWER:
+            self._attr_native_unit_of_measurement = UnitOfPower.WATT
+            self._attr_device_class = SensorDeviceClass.POWER
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+        elif self._sensor_type is SENSOR_TYPE_ENERGY:
+            self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+            self._attr_device_class = SensorDeviceClass.ENERGY
+            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
+        elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
+            self._attr_device_class = SensorDeviceClass.TIMESTAMP
+            self._attr_state_class = None
+        elif self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
+            # Number of child entities (optimizers for strings, strings for inverters)
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if self.coordinator.data is not None:
+            item = self.coordinator.data.get(self._panelobject.panel_id)
+            if item and hasattr(item, 'entity_type'):
+                # This is aggregated data, handle it directly
+                # AJT: 27-Jan-2026: Use class-level constant instead of creating dict on every update
+                attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
+                if attr_name:
+                    new_value = getattr(item, attr_name, 0)
+                    
+                    # AJT: 27-Jan-2026: For lifetime energy, ensure value never decreases (rounding/precision issues)
+                    if self._sensor_type is SENSOR_TYPE_ENERGY:
+                        # Round to 3 decimal places for consistency
+                        # AJT: 27-Jan-2026: Only convert to float if needed (may already be float)
+                        if new_value is not None:
+                            new_value = round(float(new_value), 3) if not isinstance(new_value, float) else round(new_value, 3)
+                        else:
+                            new_value = 0.0
+                        # Ensure value never decreases (use max of current and previous)
+                        if self._attr_native_value is not None:
+                            # AJT: 27-Jan-2026: Cache float conversion to avoid repeated calls
+                            previous_value = float(self._attr_native_value) if not isinstance(self._attr_native_value, float) else self._attr_native_value
+                            new_value = max(new_value, previous_value)
+                    
+                    self._attr_native_value = new_value
+
+                # Handle string conversion for numeric values
+                value = self._attr_native_value
+                if isinstance(value, str) and "," in value:
+                    try:
+                        self._attr_native_value = float(value.replace(",", ""))
+                    except ValueError:
+                        _LOGGER.warning("Could not convert value '%s' to float for sensor %s", value, self._attr_name)
+
+                self.async_write_ha_state()
+
+    @property
+    def device_info(self):
+        return self._attr_device_info
+
+
 class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
     """An entity using CoordinatorEntity.
 
@@ -144,6 +426,14 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
     """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
+    
+    # AJT: 27-Jan-2026: Class-level constant for sensor attribute mapping to avoid recreating on every update
+    _SENSOR_ATTR_MAP = {
+        SENSOR_TYPE_VOLTAGE: "voltage",
+        SENSOR_TYPE_CURRENT: "current",
+        SENSOR_TYPE_OPT_VOLTAGE: "optimizer_voltage",
+        SENSOR_TYPE_POWER: "power",
+    }
 
     def __init__(
         self,
@@ -153,7 +443,8 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         panel: SolarEdgeOptimizerData,
         sensortype,
         optimizer: SolarlEdgeOptimizer,
-        inverter
+        inverter,
+        string=None
     ) -> None:
         super().__init__(coordinator)
         self._hass = hass
@@ -161,17 +452,16 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         self._panelobject = panel
         self._optimizerobject = optimizer
         self._inverter = inverter
+        self._string = string
         # AJT: 16-Jan-2026: Fixed spelling from "paneel" to "panel"
         self._panel = panel.panel_description
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
         self._attr_unique_id = f"{panel.serialnumber}_{sensortype}"
         self._sensor_type = sensortype
         # AJT: 15-Jan-2026: Make sensor names display-friendly by replacing underscores with spaces
-        # AJT: 22-Jan-2026: Special-case last measurement and last polled to use lowercase
+        # AJT: 22-Jan-2026: Special-case last measurement to use lowercase
         if self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             display_type = "Last measurement"
-        elif self._sensor_type is SENSOR_TYPE_LASTPOLLED:
-            display_type = "Last polled"
         else:
             display_type = self._sensor_type.replace("_", " ")
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
@@ -205,23 +495,25 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             # AJT: 17-Jan-2026: Use TIMESTAMP instead of DATE to show both date and time
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
             self._attr_state_class = None
-        elif self._sensor_type is SENSOR_TYPE_LASTPOLLED:
-            # AJT: 22-Jan-2026: Track when the integration last polled this optimizer
-            self._attr_device_class = SensorDeviceClass.TIMESTAMP
-            self._attr_state_class = None
 
     @property
     def device_info(self):
+        # AJT: 27-Jan-2026: Connect optimizer via string instead of directly via inverter
+        via_device = None
+        if self._string:
+            via_device = (DOMAIN, f"{self._entry.entry_id}_{self._string.stringId}")
+        # AJT: 27-Jan-2026: Format optimizer name with prefix
+        optimizer_name = f"Optimizer {self._optimizerobject.displayName}"
         return {
             "identifiers": {
                 # Serial numbers are unique identifiers within a specific domain
                 (DOMAIN, self._panelobject.serialnumber)
             },
-            "name": self._optimizerobject.displayName,
+            "name": optimizer_name,
             "manufacturer": self._panelobject.manufacturer,
             "model": self._panelobject.model,
             "hw_version": self._panelobject.serialnumber,
-            "via_device": (DOMAIN, self._inverter.serialNumber),
+            "via_device": via_device,
         }
 
     @callback
@@ -230,15 +522,20 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
 
         if self.coordinator.data is not None:
             # AJT: 16-Jan-2026: Reduce debug logging overhead - only log if debug level is enabled
+            # AJT: 27-Jan-2026: Already using isEnabledFor check - this is optimal
             if _LOGGER.isEnabledFor(logging.DEBUG):
+                # AJT: 27-Jan-2026: Cache attribute access to avoid repeated lookups
+                panel_id = self._panelobject.panel_id
                 _LOGGER.debug(
                     "Update the sensor %s - %s with the info from the coordinator",
-                    self._panelobject.panel_id,
+                    panel_id,
                     self._sensor_type,
                 )
 
             # AJT: 16-Jan-2026: Use dictionary lookup (O(1)) instead of linear search (O(n))
-            item = self.coordinator.data.get(self._panelobject.panel_id)
+            # AJT: 27-Jan-2026: Cache panel_id to avoid repeated attribute access
+            panel_id = self._panelobject.panel_id
+            item = self.coordinator.data.get(panel_id)
             if item is not None:
                 # AJT: 16-Jan-2026: Use pre-computed timetocheck from coordinator (calculated once per update)
                 # Timestamp should be timezone-aware (converted in coordinator), but add safety check
@@ -256,33 +553,38 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                 measurement_too_old = ts <= timetocheck
                 
                 # AJT: 16-Jan-2026: Use dictionary mapping for sensor updates instead of long if/elif chain
-                # AJT: 22-Jan-2026: Lifetime energy, last measurement, and last polled always update regardless of age
+                # AJT: 22-Jan-2026: Lifetime energy and last measurement always update regardless of age
                 if self._sensor_type is SENSOR_TYPE_ENERGY:
-                    # AJT: 10-Jan-2025: Removed redundant else clause that assigned self._attr_native_value = self._attr_native_value
-                    if (
-                        self._attr_native_value is None
-                        or item.lifetime_energy >= self._attr_native_value
-                    ):
-                        self._attr_native_value = item.lifetime_energy
+                    # AJT: 27-Jan-2026: Round to 3 decimal places for consistency and ensure value never decreases
+                    lifetime_energy = item.lifetime_energy
+                    if lifetime_energy is not None:
+                        # AJT: 27-Jan-2026: Only convert to float if needed (may already be float)
+                        new_value = round(float(lifetime_energy), 3) if not isinstance(lifetime_energy, float) else round(lifetime_energy, 3)
+                    else:
+                        new_value = 0.0
+                    
+                    # AJT: 27-Jan-2026: Cache previous value conversion to avoid repeated float() calls
+                    if self._attr_native_value is None:
+                        self._attr_native_value = new_value
+                    else:
+                        prev_value = float(self._attr_native_value) if not isinstance(self._attr_native_value, float) else self._attr_native_value
+                        if new_value >= prev_value:
+                            self._attr_native_value = new_value
+                        else:
+                            # Value decreased (likely due to rounding), keep previous value
+                            if _LOGGER.isEnabledFor(logging.DEBUG):
+                                _LOGGER.debug(
+                                    "Lifetime energy decreased for %s (new: %s, previous: %s), keeping previous value",
+                                    self._attr_name,
+                                    new_value,
+                                    self._attr_native_value
+                                )
                 elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
                     self._attr_native_value = item.lastmeasurement
-                elif self._sensor_type is SENSOR_TYPE_LASTPOLLED:
-                    # AJT: 22-Jan-2026: Get the last polled time from the coordinator
-                    last_polled_time = self.coordinator._last_polled.get(self._panelobject.panel_id)
-                    if last_polled_time is not None:
-                        self._attr_native_value = last_polled_time
-                    else:
-                        # AJT: 22-Jan-2026: Fallback to current time if not tracked yet
-                        self._attr_native_value = datetime.now(timezone.utc)
                 else:
                     # AJT: 16-Jan-2026: Dictionary mapping for sensor type to attribute name
-                    sensor_attr_map = {
-                        SENSOR_TYPE_VOLTAGE: "voltage",
-                        SENSOR_TYPE_CURRENT: "current",
-                        SENSOR_TYPE_OPT_VOLTAGE: "optimizer_voltage",
-                        SENSOR_TYPE_POWER: "power",
-                    }
-                    attr_name = sensor_attr_map.get(self._sensor_type)
+                    # AJT: 27-Jan-2026: Use class-level constant instead of creating dict on every update
+                    attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
                     if attr_name:
                         # For other sensors: set to 0 if measurement is older than 1 hour, else use actual value
                         actual_value = getattr(item, attr_name, 0)
@@ -309,23 +611,24 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                                 )
                             self._attr_native_value = actual_value
         else:
-            # AJT: 22-Jan-2026: Set the value to zero. (BUT NOT FOR LIFETIME ENERGY, LAST MEASUREMENT, OR LAST POLLED)
+            # AJT: 22-Jan-2026: Set the value to zero. (BUT NOT FOR LIFETIME ENERGY OR LAST MEASUREMENT)
             # AJT: 10-Jan-2025: Fixed comparison syntax from "not self._sensor_type is" to "self._sensor_type is not"
             if (self._sensor_type is not SENSOR_TYPE_ENERGY) and (
                 self._sensor_type is not SENSOR_TYPE_LASTMEASUREMENT
-            ) and (self._sensor_type is not SENSOR_TYPE_LASTPOLLED):
+            ):
                 self._attr_native_value = 0
-            elif self._sensor_type is SENSOR_TYPE_LASTPOLLED:
-                # AJT: 22-Jan-2026: If no data available, use current time as fallback
-                self._attr_native_value = datetime.now(timezone.utc)
 
+        # AJT: 27-Jan-2026: Only process string conversion if value is actually a string
         value = self._attr_native_value
-        if isinstance(value, str) and "," in value:
-            # AJT: 11-Jan-2026: Added error handling for float conversion
-            try:
-                self._attr_native_value = float(value.replace(",", ""))
-            except ValueError:
-                _LOGGER.warning("Could not convert value '%s' to float for sensor %s", value, self._attr_name)
-                # Keep original value
+        if isinstance(value, str):
+            # AJT: 27-Jan-2026: Check for comma before calling replace to avoid unnecessary string operation
+            if "," in value:
+                # AJT: 11-Jan-2026: Added error handling for float conversion
+                try:
+                    self._attr_native_value = float(value.replace(",", ""))
+                except ValueError:
+                    if _LOGGER.isEnabledFor(logging.WARNING):
+                        _LOGGER.warning("Could not convert value '%s' to float for sensor %s", value, self._attr_name)
+                    # Keep original value
 
         self.async_write_ha_state()
