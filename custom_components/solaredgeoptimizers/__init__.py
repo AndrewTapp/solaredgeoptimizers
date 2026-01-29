@@ -1,4 +1,4 @@
-"""The SolarEdge Optimizers Data integration."""
+"""SolarEdge Optimizers integration for Home Assistant."""
 from requests import ConnectTimeout, HTTPError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -86,8 +86,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         # AJT: 11-Jan-2026: Added cleanup of coordinator resources
         coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
-        # Future: If API gets a close() method, call it here
-        # if coordinator and hasattr(coordinator, 'my_api'):
-        #     await hass.async_add_executor_job(coordinator.my_api.close)
+        # AJT: 27-Jan-2026: Close API sessions to prevent file descriptor leaks
+        if coordinator and hasattr(coordinator, 'my_api'):
+            try:
+                await hass.async_add_executor_job(coordinator.my_api.close)
+                LOGGER.debug("SolarEdge Optimizers: Closed API sessions during unload")
+            except Exception as e:
+                LOGGER.warning("SolarEdge Optimizers: Error closing API sessions: %s", e)
 
     return unload_ok
