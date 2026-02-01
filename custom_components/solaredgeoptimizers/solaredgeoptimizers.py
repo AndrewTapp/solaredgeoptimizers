@@ -178,8 +178,7 @@ class solaredgeoptimizers:
         # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
         with requests.get(url, **kwargs) as r:
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                resp_preview = r.text[:2000] if len(r.text) > 2000 else r.text
-                _LOGGER.debug("Response from systemData (optimizer %s, status %s): %s", itemId, r.status_code, resp_preview)
+                _LOGGER.debug("Response from systemData (optimizer %s, status %s)", itemId, r.status_code)
             if r.status_code == 200:
                 json_object = self.decodeResult(r.text)
                 # AJT: 22-Jan-2026: Log decoded JSON object for debugging
