@@ -36,7 +36,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     LOGGER.debug("SolarEdge Optimizers: Creating API instance")
     api = solaredgeoptimizers(
-        entry.data["siteid"], entry.data["username"], entry.data["password"], ha_timezone
+        entry.data["siteid"],
+        entry.data["username"],
+        entry.data["password"],
+        ha_timezone,
+        language=hass.config.language,
     )
 
     LOGGER.debug("SolarEdge Optimizers: Starting login check")
