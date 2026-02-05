@@ -35,5 +35,11 @@
       "string_count": {"name": "Antal strängar"},
       "inverter_count": {"name": "Antal växelriktare"}
     }
+  },
+  "device": {
+    "site_device": {"name": "Plats {site_id}"},
+    "inverter_device": {"name": "Växelriktare {display_name}"},
+    "string_device": {"name": "Sträng {display_name}"},
+    "optimizer_device": {"name": "Optimizer {display_name}"}
   }
 }
