@@ -1,21 +1,39 @@
 {
-    "config": {
-        "abort": {
-            "already_configured": "Device is already configured"
-        },
-        "error": {
-            "cannot_connect": "Failed to connect",
-            "invalid_auth": "Invalid authentication",
-            "unknown": "Unexpected error"
-        },
-        "step": {
-            "user": {
-                "data": {
-                    "siteid": "Site id",
-                    "password": "Password",
-                    "username": "Username"
-                }
-            }
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Device is already configured"
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "invalid_auth": "Invalid authentication",
+      "unknown": "Unexpected error"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "Site id",
+          "password": "Password",
+          "username": "Username"
         }
+      }
     }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Power"},
+      "voltage": {"name": "Voltage"},
+      "current": {"name": "Current"},
+      "optimizer_voltage": {"name": "Optimizer voltage"},
+      "lifetime_energy": {"name": "Lifetime energy"},
+      "last_measurement": {"name": "Last measurement"},
+      "last_polled": {"name": "Last polled"},
+      "current_average": {"name": "Current (average)"},
+      "voltage_average": {"name": "Voltage (average)"},
+      "optimizer_count": {"name": "Optimizer count"},
+      "string_count": {"name": "String count"},
+      "inverter_count": {"name": "Inverter count"}
+    }
+  }
 }
