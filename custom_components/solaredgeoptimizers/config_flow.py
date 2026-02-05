@@ -10,6 +10,7 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.translation import async_get_translations
 
 from .const import DOMAIN
 
@@ -49,7 +50,9 @@ class SolarEdgeWebAuth:
             return False
 
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+async def validate_input(
+    hass: HomeAssistant, data: dict[str, Any], translated_title: str
+) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
@@ -59,9 +62,8 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     if not await hub.authenticate(hass, data["username"], data["password"]):
         raise InvalidAuth
 
-    # Return info that you want to store in the config entry.
-    # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
-    return {"title": f"SolarEdge Site {data['siteid']}"}
+    # Return info that you want to store in the config entry (title uses translation).
+    return {"title": translated_title.format(siteid=data["siteid"])}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -81,8 +83,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         errors = {}
 
+        # Resolve config entry title in the user's language
+        translations = await async_get_translations(
+            self.hass, "config", self.hass.config.language, DOMAIN
+        )
+        title_template = translations.get(
+            "config.title_entry", "SolarEdge Site %(siteid)s"
+        )
+
         try:
-            info = await validate_input(self.hass, user_input)
+            info = await validate_input(self.hass, user_input, title_template)
         except CannotConnect:
             errors["base"] = "cannot_connect"
         except InvalidAuth:
