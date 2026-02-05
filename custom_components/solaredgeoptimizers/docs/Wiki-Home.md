@@ -323,8 +323,8 @@ Aggregations (string/inverter/site) are computed in the coordinator from optimiz
 - **Entity names**: Sensor names (Power, Voltage, Last measurement, etc.) use `translation_key` and are translated.  
 - **API**: `locale` and `Accept-Language` (and cookie `SolarEdge_Locale`) follow HA language (e.g. `en`, `de`, `nl`).
 
-Supported languages (code): **en**, **nl**, **de**, **fr**, **es**, **it**, **pl**, **pt**, **sv**.  
-Translation files: `translations/<code>.json` (config + entity sections). See `docs/internationalization.md` in the repo for details.
+Supported languages (code): **cs**, **da**, **de**, **el**, **en**, **es**, **fi**, **fr**, **hu**, **it**, **ja**, **nb**, **nl**, **pl**, **pt**, **ru**, **sv**, **tr**, **zh**.  
+Translation files: `translations/<code>.json` (config, entity, and device sections). See `docs/internationalization.md` in the repo for details.
 
 ---
 
