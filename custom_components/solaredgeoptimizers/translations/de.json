@@ -35,5 +35,11 @@
       "string_count": {"name": "Anzahl Strings"},
       "inverter_count": {"name": "Anzahl Wechselrichter"}
     }
+  },
+  "device": {
+    "site_device": {"name": "Standort {site_id}"},
+    "inverter_device": {"name": "Wechselrichter {display_name}"},
+    "string_device": {"name": "String {display_name}"},
+    "optimizer_device": {"name": "Optimizer {display_name}"}
   }
 }
