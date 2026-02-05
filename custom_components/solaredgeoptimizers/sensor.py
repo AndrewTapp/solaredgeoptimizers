@@ -225,6 +225,8 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
 
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_state_class = None
+    _attr_has_entity_name = True
+    _attr_translation_key = "last_polled"
 
     def __init__(
         self,
@@ -239,7 +241,6 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
         self._site_id = site_id
 
         self._attr_unique_id = f"{entry.entry_id}_integration_last_polled"
-        self._attr_name = "Last polled"
         # Attach to the site device so it shows once per site/integration
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"site_{site_id}")},
@@ -259,7 +260,8 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
     """An entity for aggregated SolarEdge measurements at string/inverter level."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
-    
+    _attr_has_entity_name = True
+
     # AJT: 27-Jan-2026: Class-level constant for sensor attribute mapping to avoid recreating on every update
     _SENSOR_ATTR_MAP = {
         SENSOR_TYPE_VOLTAGE: "voltage",
@@ -268,6 +270,15 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_LASTMEASUREMENT: "lastmeasurement",
         SENSOR_TYPE_CHILD_COUNT: "child_count",
+    }
+    # Translation keys for entity names (i18n)
+    _TRANSLATION_KEYS = {
+        SENSOR_TYPE_LASTMEASUREMENT: "last_measurement",
+        SENSOR_TYPE_CHILD_COUNT: None,  # Resolved per entity_type below
+        SENSOR_TYPE_CURRENT: "current_average",
+        SENSOR_TYPE_VOLTAGE: "voltage_average",
+        SENSOR_TYPE_ENERGY: "lifetime_energy",
+        SENSOR_TYPE_POWER: "power",
     }
 
     def __init__(
@@ -290,29 +301,21 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         self._attr_unique_id = f"{panel.panel_id}_{sensortype}"
         self._sensor_type = sensortype
 
-        # AJT: 27-Jan-2026: Simplified sensor names - remove entity identifier, add (average) for current/voltage
-        if self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
-            display_type = "Last measurement"
-        elif self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
-            # Different display names based on entity type
+        # Translation key for entity name (i18n)
+        if self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
             if panel.entity_type == "string":
-                display_type = "Optimizer count"
+                self._attr_translation_key = "optimizer_count"
             elif panel.entity_type == "inverter":
-                display_type = "String count"
-            else:  # site
-                display_type = "Inverter count"
-        elif self._sensor_type is SENSOR_TYPE_CURRENT:
-            display_type = "Current (average)"
-        elif self._sensor_type is SENSOR_TYPE_VOLTAGE:
-            display_type = "Voltage (average)"
-        elif self._sensor_type is SENSOR_TYPE_ENERGY:
-            display_type = "Lifetime energy"
-        elif self._sensor_type is SENSOR_TYPE_POWER:
-            display_type = "Power"
+                self._attr_translation_key = "string_count"
+            else:
+                self._attr_translation_key = "inverter_count"
         else:
-            display_type = self._sensor_type.replace("_", " ")
-
-        self._attr_name = display_type
+            self._attr_translation_key = self._TRANSLATION_KEYS.get(
+                self._sensor_type,
+                self._sensor_type.lower().replace(" ", "_"),
+            )
+        # Stable name for logging ( _attr_name may be unset when using translation_key )
+        self._log_name = f"{panel.panel_id}_{sensortype}"
 
         # Set device info based on entity type
         if panel.entity_type == "string":
@@ -405,7 +408,7 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
                     try:
                         self._attr_native_value = float(value.replace(",", ""))
                     except ValueError:
-                        _LOGGER.warning("Could not convert value '%s' to float for sensor %s", value, self._attr_name)
+                        _LOGGER.warning("Could not convert value '%s' to float for sensor %s", value, self._log_name)
 
                 self.async_write_ha_state()
 
@@ -426,13 +429,23 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
     """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
-    
+    _attr_has_entity_name = True
+
     # AJT: 27-Jan-2026: Class-level constant for sensor attribute mapping to avoid recreating on every update
     _SENSOR_ATTR_MAP = {
         SENSOR_TYPE_VOLTAGE: "voltage",
         SENSOR_TYPE_CURRENT: "current",
         SENSOR_TYPE_OPT_VOLTAGE: "optimizer_voltage",
         SENSOR_TYPE_POWER: "power",
+    }
+    # Translation keys for entity names (i18n)
+    _TRANSLATION_KEYS = {
+        SENSOR_TYPE_VOLTAGE: "voltage",
+        SENSOR_TYPE_CURRENT: "current",
+        SENSOR_TYPE_OPT_VOLTAGE: "optimizer_voltage",
+        SENSOR_TYPE_POWER: "power",
+        SENSOR_TYPE_ENERGY: "lifetime_energy",
+        SENSOR_TYPE_LASTMEASUREMENT: "last_measurement",
     }
 
     def __init__(
@@ -458,14 +471,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
         self._attr_unique_id = f"{panel.serialnumber}_{sensortype}"
         self._sensor_type = sensortype
-        # AJT: 15-Jan-2026: Make sensor names display-friendly by replacing underscores with spaces
-        # AJT: 22-Jan-2026: Special-case last measurement to use lowercase
-        if self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
-            display_type = "Last measurement"
-        else:
-            display_type = self._sensor_type.replace("_", " ")
-        # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
-        self._attr_name = f"{display_type} {optimizer.displayName}"
+        self._attr_translation_key = self._TRANSLATION_KEYS.get(
+            self._sensor_type, self._sensor_type.lower().replace(" ", "_")
+        )
+        # Stable name for logging ( _attr_name may be unset when using translation_key )
+        self._log_name = f"{self._sensor_type} {optimizer.displayName}"
 
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"{entry.entry_id}")},
@@ -575,7 +585,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                             if _LOGGER.isEnabledFor(logging.DEBUG):
                                 _LOGGER.debug(
                                     "Lifetime energy decreased for %s (new: %s, previous: %s), keeping previous value",
-                                    self._attr_name,
+                                    self._log_name,
                                     new_value,
                                     self._attr_native_value
                                 )
@@ -593,7 +603,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                             if actual_value != 0 and _LOGGER.isEnabledFor(logging.DEBUG):
                                 _LOGGER.debug(
                                     "Sensor %s (%s) set to 0: measurement too old (last: %s, threshold: %s)",
-                                    self._attr_name,
+                                    self._log_name,
                                     attr_name,
                                     ts,
                                     timetocheck
@@ -605,7 +615,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                                 _LOGGER.debug(
                                     "Sensor %s (%s) has zero value but measurement is recent (last: %s). "
                                     "This may indicate missing data in API response.",
-                                    self._attr_name,
+                                    self._log_name,
                                     attr_name,
                                     ts
                                 )
@@ -628,7 +638,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                     self._attr_native_value = float(value.replace(",", ""))
                 except ValueError:
                     if _LOGGER.isEnabledFor(logging.WARNING):
-                        _LOGGER.warning("Could not convert value '%s' to float for sensor %s", value, self._attr_name)
+                        _LOGGER.warning("Could not convert value '%s' to float for sensor %s", value, self._log_name)
                     # Keep original value
 
         self.async_write_ha_state()
