@@ -1,21 +1,39 @@
 {
-    "config": {
-        "abort": {
-            "already_configured": "Apparaat is al geconfigureerd"
-        },
-        "error": {
-            "cannot_connect": "Kan niet verbinden",
-            "invalid_auth": "Ongeldige authenticatie",
-            "unknown": "Onverwachte fout"
-        },
-        "step": {
-            "user": {
-                "data": {
-                    "siteid": "Site nummer",
-                    "password": "Wachtwoord",
-                    "username": "Gebruikersnaam (Email)"
-                }
-            }
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Apparaat is al geconfigureerd"
+    },
+    "error": {
+      "cannot_connect": "Kan niet verbinden",
+      "invalid_auth": "Ongeldige authenticatie",
+      "unknown": "Onverwachte fout"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "Site nummer",
+          "password": "Wachtwoord",
+          "username": "Gebruikersnaam (Email)"
         }
+      }
     }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Vermogen"},
+      "voltage": {"name": "Spanning"},
+      "current": {"name": "Stroom"},
+      "optimizer_voltage": {"name": "Optimizerspanning"},
+      "lifetime_energy": {"name": "Levensduur energie"},
+      "last_measurement": {"name": "Laatste meting"},
+      "last_polled": {"name": "Laatst opgehaald"},
+      "current_average": {"name": "Stroom (gemiddeld)"},
+      "voltage_average": {"name": "Spanning (gemiddeld)"},
+      "optimizer_count": {"name": "Aantal optimizers"},
+      "string_count": {"name": "Aantal strings"},
+      "inverter_count": {"name": "Aantal omvormers"}
+    }
+  }
 }
