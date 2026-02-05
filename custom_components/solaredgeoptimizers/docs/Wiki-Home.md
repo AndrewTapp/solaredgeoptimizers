@@ -1,0 +1,423 @@
+# SolarEdge Optimizers – Technical Documentation
+
+**Full documentation for the SolarEdge Optimizers Home Assistant integration.**  
+Use this as the main wiki page or copy sections into your GitHub wiki.
+
+---
+
+## Table of contents
+
+1. [Overview](#1-overview)
+2. [Architecture](#2-architecture)
+3. [Device and entity hierarchy](#3-device-and-entity-hierarchy)
+4. [Data flow and polling](#4-data-flow-and-polling)
+5. [Installation](#5-installation)
+6. [Configuration](#6-configuration)
+7. [Sensors and entities reference](#7-sensors-and-entities-reference)
+8. [Update behaviour and caches](#8-update-behaviour-and-caches)
+9. [Offline and stale data handling](#9-offline-and-stale-data-handling)
+10. [Internationalization (i18n)](#10-internationalization-i18n)
+11. [API client and SolarEdge portal](#11-api-client-and-solaredge-portal)
+12. [Troubleshooting and logging](#12-troubleshooting-and-logging)
+13. [File structure and constants](#13-file-structure-and-constants)
+14. [Credits and links](#14-credits-and-links)
+
+---
+
+## 1. Overview
+
+The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitoring portal into Home Assistant. It exposes:
+
+- **Per-optimizer (per-panel)** sensors: voltage, current, optimizer voltage, power, lifetime energy, last measurement.
+- **Aggregated** sensors at **string**, **inverter**, and **site** level: current (average), voltage (average), power, lifetime energy, last measurement, and child counts (optimizer/string/inverter count).
+- A single **Last polled** sensor on the site device for monitoring update health.
+
+### Features
+
+| Feature | Description |
+|--------|-------------|
+| **Config flow** | Single-step setup: Site ID, username, password. |
+| **Cloud polling** | Uses SolarEdge’s cloud API; no local hardware discovery. |
+| **Adaptive polling** | Lightweight checks (one optimizer) every ~2–15 minutes; full refresh only when new data is detected or on first boot. |
+| **Parallel API calls** | Optimizer data fetched in parallel for faster initial load. |
+| **Caching** | Logical layout (1 h) and lifetime energy (1 h) cached to reduce API load. |
+| **Multi-language** | Config flow and entity names translated; API locale follows HA language. |
+| **Stale handling** | Live values (V, I, P) zeroed when last measurement is older than 1 hour. |
+
+### Requirements
+
+- **Home Assistant** (tested with recent versions).
+- **SolarEdge monitoring account**: Site ID, username (email), password.
+- **Network**: Outbound HTTPS to `monitoring.solaredge.com`.
+- **Python dependency**: `jsonfinder==0.4.2` (in `manifest.json`).
+
+---
+
+## 2. Architecture
+
+High-level components and how they interact:
+
+```mermaid
+flowchart TB
+    subgraph HA["Home Assistant"]
+        CF[Config Flow]
+        INIT[__init__.py]
+        COORD[DataUpdateCoordinator]
+        SENSOR[sensor platform]
+    end
+
+    subgraph INT["Integration (solaredgeoptimizers)"]
+        API[solaredgeoptimizers API client]
+    end
+
+    subgraph SE["SolarEdge Cloud"]
+        GW[API Gateway]
+        WEB[Web / systemData]
+    end
+
+    U((User)) --> CF
+    CF -->|Validate credentials| API
+    API -->|HTTPS| GW
+    INIT -->|Create API + Coordinator| COORD
+    COORD -->|Poll data| API
+    API -->|Layout, systemData, energy| GW
+    API -->|systemData (per optimizer)| WEB
+    COORD -->|Data dict| SENSOR
+    SENSOR -->|Entities| U
+```
+
+### Component roles
+
+| Component | Role |
+|-----------|------|
+| **Config flow** | Collects Site ID, username, password; validates via `check_login()`; creates config entry with translated title. |
+| **`__init__.py`** | Sets up API client (with HA timezone and language), runs login check, creates coordinator, runs first refresh, forwards to sensor platform. |
+| **Coordinator** | Runs every `UPDATE_DELAY` (2 min); implements adaptive polling (light check vs full refresh); builds data dict (optimizers + aggregated string/inverter/site); exposes data to sensors. |
+| **Sensor platform** | Creates one device per site, inverter, string, optimizer; creates sensors (individual + aggregated); uses coordinator data and translation keys for names. |
+| **API client** | Session-based requests to SolarEdge; layout and lifetime energy cached; parallel `requestSystemData` for full refresh; locale/language from HA. |
+
+---
+
+## 3. Device and entity hierarchy
+
+How the physical layout maps to Home Assistant devices and entities:
+
+```mermaid
+flowchart TD
+    subgraph Site["Site device (e.g. Site 12345)"]
+        LP[Last polled]
+        S_P[Power]
+        S_V[Voltage average]
+        S_C[Current average]
+        S_E[Lifetime energy]
+        S_L[Last measurement]
+        S_I[Inverter count]
+    end
+
+    subgraph Inv["Inverter device (e.g. Inverter 1)"]
+        I_P[Power]
+        I_V[Voltage average]
+        I_C[Current average]
+        I_E[Lifetime energy]
+        I_L[Last measurement]
+        I_S[String count]
+    end
+
+    subgraph Str["String device (e.g. String 1.1)"]
+        R_P[Power]
+        R_V[Voltage average]
+        R_C[Current average]
+        R_E[Lifetime energy]
+        R_L[Last measurement]
+        R_O[Optimizer count]
+    end
+
+    subgraph Opt["Optimizer device (e.g. Optimizer 1.1.1)"]
+        O_P[Power]
+        O_V[Voltage]
+        O_C[Current]
+        O_OV[Optimizer voltage]
+        O_E[Lifetime energy]
+        O_L[Last measurement]
+    end
+
+    Site --> Inv
+    Inv --> Str
+    Str --> Opt
+```
+
+- **Site** → **Inverters** → **Strings** → **Optimizers**.  
+- In **Settings → Devices & services**, “Connected via” shows the parent (e.g. optimizer → string, string → inverter).  
+- Entity names are translated (e.g. “Power”, “Last measurement”) and combined with the device name (e.g. “Optimizer 1.1.1 Power”).
+
+---
+
+## 4. Data flow and polling
+
+### Setup (first load)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant HA as Home Assistant
+    participant C as Coordinator
+    participant API as API client
+    participant SE as SolarEdge
+
+    U->>HA: Add integration (Site ID, user, pass)
+    HA->>API: check_login()
+    API->>SE: GET layout/logical
+    SE-->>API: 200 + layout
+    API-->>HA: 200
+    HA->>C: Create coordinator, first refresh
+    C->>API: requestListOfAllPanels() [layout cache]
+    API->>SE: GET layout/logical (if cache miss)
+    SE-->>API: layout JSON
+    API-->>C: SolarEdgeSite (inverters/strings/optimizers)
+    C->>HA: Register site/inverter/string devices
+    HA->>C: async_setup_entry → sensor platform
+    C->>API: requestAllData()
+    API->>SE: getLifeTimeEnergy (cached 1h)
+    API->>SE: requestSystemData(opt_id) × N (parallel)
+    SE-->>API: per-optimizer data
+    API-->>C: list of SolarEdgeOptimizerData + lifetime
+    C->>C: _calculate_aggregated_data()
+    C-->>HA: data_dict (panel_id → data)
+    HA->>U: Sensors appear
+```
+
+### Ongoing updates (adaptive polling)
+
+```mermaid
+flowchart LR
+    subgraph Every 2 min
+        TICK[Coordinator tick]
+    end
+
+    TICK --> FIRST{First boot or no data?}
+    FIRST -->|Yes| FULL[Full refresh: requestAllData]
+    FIRST -->|No| LIGHT{Time for light check?}
+    LIGHT -->|No| REUSE[Reuse existing data]
+    LIGHT -->|Yes| ONE[Request 1 optimizer systemData]
+    ONE --> NEW{New data?}
+    NEW -->|Yes| FULL
+    NEW -->|No| REUSE
+    FULL --> AGG[Aggregate string/inverter/site]
+    REUSE --> AGG
+    AGG --> LAST[Update last_polled]
+```
+
+- **Light check interval**: ~2 minutes when data is recent; ~15 minutes when data is old or missing.  
+- **Full refresh**: All optimizers + lifetime energy (from cache when possible).  
+- **Lifetime energy** from API is cached for 1 hour; aggregations are computed from that cache.
+
+---
+
+## 5. Installation
+
+### Via HACS (recommended)
+
+1. **HACS** → **Custom repositories** → add `https://github.com/AndrewTapp/solaredgeoptimizers` as **Integration**.  
+2. **Integrations** → find **SolarEdge Optimizers** → **Download**.  
+3. **Restart Home Assistant.**  
+4. **Settings** → **Devices & services** → **Add Integration** → search **SolarEdge Optimizers**.
+
+### Manual
+
+1. Clone or download the repo into `custom_components/solaredgeoptimizers/`.  
+2. Restart Home Assistant.  
+3. Add the integration as above.
+
+Ensure `custom_components/solaredgeoptimizers/` contains at least: `__init__.py`, `config_flow.py`, `const.py`, `coordinator.py`, `manifest.json`, `sensor.py`, `solaredgeoptimizers.py`, `strings.json`, and the `translations/` folder.
+
+---
+
+## 6. Configuration
+
+- **Single step**: Site ID, Username (email), Password.  
+- **Validation**: Calls SolarEdge `GET .../layout/logical` with HTTP Basic Auth; success = 200.  
+- **Config entry title**: Translated, e.g. “SolarEdge Site 12345” (from `config.title_entry` with `%(siteid)s`).  
+- **Errors**: “Failed to connect”, “Invalid authentication”, “Unexpected error” (keys `cannot_connect`, `invalid_auth`, `unknown`); all translatable.  
+- **Abort**: “Device is already configured” when the same device is already set up.
+
+No YAML configuration is required; all configuration is via the config flow.
+
+---
+
+## 7. Sensors and entities reference
+
+### Per-optimizer (individual panel)
+
+| Sensor | Device class | Unit | Description |
+|--------|--------------|------|-------------|
+| Power | power | W | Instantaneous power. |
+| Voltage | voltage | V | Panel voltage. |
+| Current | current | A | Panel current. |
+| Optimizer voltage | voltage | V | Optimizer output voltage. |
+| Lifetime energy | energy | kWh | Total energy (monotonic). |
+| Last measurement | timestamp | — | Time of last measurement from portal. |
+
+- **Stale rule**: If last measurement is older than 1 hour, **Power, Voltage, Current, Optimizer voltage** are shown as **0**. Lifetime energy and Last measurement always show last known value.
+
+### Per-string (aggregated)
+
+| Sensor | Description |
+|--------|--------------|
+| Power | Sum of optimizer power (with recent data). |
+| Current (average) | Average current of optimizers with recent data. |
+| Voltage (average) | Average voltage of optimizers with recent data. |
+| Lifetime energy | Sum of optimizer lifetime energy (from API, by string). |
+| Last measurement | Latest last measurement among optimizers in the string. |
+| Optimizer count | Number of optimizers in the string. |
+
+### Per-inverter (aggregated)
+
+| Sensor | Description |
+|--------|--------------|
+| Power | Sum of string power. |
+| Current (average) / Voltage (average) | Averages over strings with recent data. |
+| Lifetime energy | Sum of string lifetime energy. |
+| Last measurement | Latest among strings. |
+| String count | Number of strings under the inverter. |
+
+### Per-site (aggregated)
+
+| Sensor | Description |
+|--------|--------------|
+| Same as inverter | But over all inverters. |
+| Inverter count | Number of inverters. |
+| **Last polled** | (Site device only.) When the integration last successfully finished an update. |
+
+All aggregated sensors use the same naming pattern (e.g. “Power”, “Current (average)”) with the device name indicating the level (String X, Inverter X, Site X).
+
+---
+
+## 8. Update behaviour and caches
+
+| Item | Interval / TTL | Notes |
+|------|----------------|--------|
+| Coordinator tick | 2 minutes | `UPDATE_DELAY` in `const.py`. |
+| Light check | 2 min (recent data) or 15 min (old/none) | Single optimizer `requestSystemData` to see if portal has new data. |
+| Full refresh | When light check sees new data, or first boot / no data | `requestAllData()`: all optimizers + lifetime energy. |
+| Layout (panels) cache | 1 hour | `requestListOfAllPanels()` → `requestLogicalLayout()`. |
+| Lifetime energy cache | 1 hour | `get_lifetime_energy_cached()` → `getLifeTimeEnergy()`. |
+| Full-refresh cooldown | 2 minutes | Avoids back-to-back full refreshes. |
+
+Aggregations (string/inverter/site) are computed in the coordinator from optimizer data and cached lifetime energy; they are not separate API calls.
+
+---
+
+## 9. Offline and stale data handling
+
+- **Threshold**: `CHECK_TIME_DELTA` = 1 hour (in `const.py`).  
+- **Rule**: For each optimizer, if `lastmeasurement` is older than 1 hour:
+  - **Voltage, Current, Optimizer voltage, Power** → reported as **0** (so dashboards don’t show stale “live” values).
+  - **Lifetime energy** and **Last measurement** → always last known value (historical view still possible).
+- Aggregated sensors (string/inverter/site) only include optimizers with **recent** measurements in power/current/voltage; lifetime energy and last measurement still aggregate from all.
+
+---
+
+## 10. Internationalization (i18n)
+
+- **Config flow**: Labels (Site id, Username, Password), errors, abort message, and config entry title are translated.  
+- **Entity names**: Sensor names (Power, Voltage, Last measurement, etc.) use `translation_key` and are translated.  
+- **API**: `locale` and `Accept-Language` (and cookie `SolarEdge_Locale`) follow HA language (e.g. `en`, `de`, `nl`).
+
+Supported languages (code): **en**, **nl**, **de**, **fr**, **es**, **it**, **pl**, **pt**, **sv**.  
+Translation files: `translations/<code>.json` (config + entity sections). See `docs/internationalization.md` in the repo for details.
+
+---
+
+## 11. API client and SolarEdge portal
+
+### Endpoints used
+
+| Purpose | Method | Endpoint (concept) |
+|---------|--------|---------------------|
+| Login check / layout | GET | `.../api/sites/{siteid}/layout/logical` |
+| Per-optimizer data | GET | `.../solaredge-web/p/systemData?reporterId={id}&...&locale={locale}` |
+| Lifetime energy | POST | `.../api/sites/{siteid}/layout/energy` (and energy cache) |
+| Session / CSRF | GET/POST | `.../solaredge-web/p/login`, etc. |
+
+- **Auth**: HTTP Basic Auth (username/password) for layout and systemData; web session (cookies + CSRF) for energy endpoint.  
+- **Locale**: From HA language (e.g. `en` → `en_US`); used in `systemData` and request headers/cookies.
+
+### Caching
+
+- **Layout**: 1 h TTL; keyed by time; avoids repeated layout calls during setup and polling.  
+- **Lifetime energy**: 1 h TTL; used by `requestAllData()` and coordinator aggregation.  
+- **Panels list**: Same as layout (returned by `requestListOfAllPanels()`).
+
+### Data models (conceptual)
+
+- **SolarEdgeSite**: `siteId`, `inverters[]`.  
+- **SolarEdgeInverter**: `inverterId`, `serialNumber`, `displayName`, `strings[]`.  
+- **SolarEdgeString**: `stringId`, `displayName`, `optimizers[]`.  
+- **SolarlEdgeOptimizer**: `optimizerId`, `serialNumber`, `displayName`.  
+- **SolarEdgeOptimizerData**: `panel_id`, `voltage`, `current`, `power`, `optimizer_voltage`, `lifetime_energy`, `lastmeasurement`, etc.  
+- **SolarEdgeAggregatedData**: `panel_id`, `entity_type` (string/inverter/site), same measurement fields plus `child_count`, etc.
+
+---
+
+## 12. Troubleshooting and logging
+
+- **Log namespace**: `logging.getLogger(__package__)` (integration package).  
+- **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures.  
+- **Enable debug**: In HA, set logger level for `custom_components.solaredgeoptimizers` to **Debug**, then restart or reload.
+
+Common issues:
+
+| Symptom | What to check |
+|--------|----------------|
+| “Invalid authentication” | Correct Site ID, email, password; account can log in at monitoring.solaredge.com. |
+| “Failed to connect” | Network, firewall, DNS; outbound HTTPS to monitoring.solaredge.com. |
+| Config entry not loading | Logs for `ConfigEntryNotReady`; first refresh may fail if API is slow or returns errors. |
+| Sensors stay 0 | Last measurement age (1 h rule); check “Last measurement” and “Last polled”; debug logs for API responses. |
+| Slow first load | Many optimizers → many parallel requests; layout and lifetime energy cached after first run. |
+
+- **5xx from SolarEdge**: Logged as temporary; coordinator retries on next cycle.  
+- **Unload**: Coordinator is removed and API client `close()` is called to release sessions.
+
+---
+
+## 13. File structure and constants
+
+### Repo layout (relevant files)
+
+```
+solaredgeoptimizers/
+├── __init__.py           # Entry point, setup, API + coordinator creation
+├── config_flow.py        # Config flow, validation, translated title
+├── const.py              # DOMAIN, intervals, sensor type constants
+├── coordinator.py        # DataUpdateCoordinator, adaptive polling, aggregation
+├── manifest.json         # Domain, version, requirements
+├── sensor.py             # Sensor entities (optimizer, aggregated, last polled)
+├── solaredgeoptimizers.py # API client, data models, SolarEdge API calls
+├── strings.json          # Config flow strings (references to common keys)
+├── translations/         # en.json, nl.json, de.json, ...
+└── docs/
+    ├── internationalization.md
+    └── Wiki-Home.md      # This file
+```
+
+### Main constants (`const.py`)
+
+| Constant | Value | Meaning |
+|----------|--------|--------|
+| `DOMAIN` | `"solaredgeoptimizers"` | Integration domain. |
+| `UPDATE_DELAY` | 2 minutes | Coordinator update interval. |
+| `CHECK_TIME_DELTA` | 1 hour | Age threshold for zeroing live values. |
+| `SENSOR_TYPE_*` | e.g. `Current`, `Power`, `Voltage` | Sensor type identifiers for individual and aggregated sensors. |
+
+---
+
+## 14. Credits and links
+
+- **Repository**: [github.com/AndrewTapp/solaredgeoptimizers](https://github.com/AndrewTapp/solaredgeoptimizers)  
+- **Issues**: [GitHub Issues](https://github.com/AndrewTapp/solaredgeoptimizers/issues)  
+- **Original integration**: [@proudem](https://github.com/proudem)  
+- **Thanks**: [@Mariusthvdb](https://github.com/Mariusthvdb) for help with this fork  
+
+---
+
+*This document is the main technical reference for the SolarEdge Optimizers Home Assistant integration. For end-user installation and feature summary, see the main [README](https://github.com/AndrewTapp/solaredgeoptimizers/blob/main/README.md).*
