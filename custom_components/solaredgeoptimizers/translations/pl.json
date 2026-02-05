@@ -35,5 +35,11 @@
       "string_count": {"name": "Liczba stringów"},
       "inverter_count": {"name": "Liczba falowników"}
     }
+  },
+  "device": {
+    "site_device": {"name": "Obiekt {site_id}"},
+    "inverter_device": {"name": "Falownik {display_name}"},
+    "string_device": {"name": "String {display_name}"},
+    "optimizer_device": {"name": "Optymalizator {display_name}"}
   }
 }
