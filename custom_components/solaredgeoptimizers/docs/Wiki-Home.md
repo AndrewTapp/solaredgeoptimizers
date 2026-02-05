@@ -81,7 +81,7 @@ flowchart TB
     INIT -->|Create API + Coordinator| COORD
     COORD -->|Poll data| API
     API -->|Layout, systemData, energy| GW
-    API -->|systemData (per optimizer)| WEB
+    API -->|systemData per optimizer| WEB
     COORD -->|Data dict| SENSOR
     SENSOR -->|Entities| U
 ```
@@ -104,7 +104,7 @@ How the physical layout maps to Home Assistant devices and entities:
 
 ```mermaid
 flowchart TD
-    subgraph Site["Site device (e.g. Site 12345)"]
+    subgraph Site[Site device]
         LP[Last polled]
         S_P[Power]
         S_V[Voltage average]
@@ -114,7 +114,7 @@ flowchart TD
         S_I[Inverter count]
     end
 
-    subgraph Inv["Inverter device (e.g. Inverter 1)"]
+    subgraph Inv[Inverter device]
         I_P[Power]
         I_V[Voltage average]
         I_C[Current average]
@@ -123,7 +123,7 @@ flowchart TD
         I_S[String count]
     end
 
-    subgraph Str["String device (e.g. String 1.1)"]
+    subgraph Str[String device]
         R_P[Power]
         R_V[Voltage average]
         R_C[Current average]
@@ -132,7 +132,7 @@ flowchart TD
         R_O[Optimizer count]
     end
 
-    subgraph Opt["Optimizer device (e.g. Optimizer 1.1.1)"]
+    subgraph Opt[Optimizer device]
         O_P[Power]
         O_V[Voltage]
         O_C[Current]
