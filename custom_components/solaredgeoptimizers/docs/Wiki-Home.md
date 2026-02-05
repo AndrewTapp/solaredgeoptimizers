@@ -362,10 +362,21 @@ Translation files: `translations/<code>.json` (config + entity sections). See `d
 ## 12. Troubleshooting and logging
 
 - **Log namespace**: `logging.getLogger(__package__)` (integration package).  
-- **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures.  
-- **Enable debug**: In HA, set logger level for `custom_components.solaredgeoptimizers` to **Debug**, then restart or reload.
+- **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures.
 
-Common issues:
+### Logging
+
+To enable debug logging for this integration, add the following to your `configuration.yaml` and restart Home Assistant (or use **Developer tools** → **YAML** → **Reload** after saving):
+
+```yaml
+# Logging
+logger:
+  default: warning
+  logs:
+    custom_components.solaredgeoptimizers: debug
+```
+
+### Common issues
 
 | Symptom | What to check |
 |--------|----------------|
