@@ -35,5 +35,11 @@
       "string_count": {"name": "Nombre de strings"},
       "inverter_count": {"name": "Nombre d'onduleurs"}
     }
+  },
+  "device": {
+    "site_device": {"name": "Site {site_id}"},
+    "inverter_device": {"name": "Onduleur {display_name}"},
+    "string_device": {"name": "Chaîne {display_name}"},
+    "optimizer_device": {"name": "Optimiseur {display_name}"}
   }
 }
