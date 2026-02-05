@@ -30,7 +30,9 @@ class solaredgeoptimizers:
         self._locale_map = {
             "en": "en_US", "nl": "nl_NL", "de": "de_DE", "fr": "fr_FR",
             "es": "es_ES", "it": "it_IT", "pl": "pl_PL", "pt": "pt_PT",
-            "sv": "sv_SE",
+            "sv": "sv_SE", "cs": "cs_CZ", "tr": "tr_TR", "el": "el_GR",
+            "hu": "hu_HU", "ru": "ru_RU", "zh": "zh_CN", "ja": "ja_JP",
+            "da": "da_DK", "nb": "nb_NO", "fi": "fi_FI",
         }
         # AJT: 16-Jan-2026: Thread-local storage for session reuse (one session per thread)
         self._thread_local = threading.local()
