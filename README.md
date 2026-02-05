@@ -6,6 +6,8 @@
 
 This integration brings your SolarEdge optimizer data from the SolarEdge monitoring portal into Home Assistant. You can see current production, voltage, power, and lifetime energy at the level of individual optimizers, strings, inverters, or the whole site.
 
+**📖 [Technical documentation (Wiki)](https://github.com/AndrewTapp/solaredgeoptimizers/wiki)** — architecture, data flow, sensors reference, troubleshooting, and more.
+
 ## What You Need
 
 To set up the integration you will need:
