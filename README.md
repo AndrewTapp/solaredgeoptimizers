@@ -83,6 +83,26 @@ Until this integration is part of Home Assistant Core, installing via HACS is re
 
 The first load can take a while if you have many optimizers; the integration fetches and organises all of them.
 
+## Translations
+
+The integration is localized for multiple languages: config flow (labels, errors, entry title), sensor and device names, and API locale follow the user’s Home Assistant language where supported. See [Internationalization (i18n)](docs/internationalization.md) for details.
+
+The config flow (add-integration setup) is translated into:
+
+| Code | Language   |
+|------|------------|
+| en   | English    |
+| nl   | Nederlands |
+| de   | Deutsch    |
+| fr   | Français   |
+| es   | Español    |
+| it   | Italiano   |
+| pl   | Polski     |
+| pt   | Português  |
+| sv   | Svenska    |
+
+To add another language, add a `translations/<code>.json` file with the same structure as `en.json` (config step labels and error/abort messages).
+
 ---
 
 ## Many thanks to the following people
