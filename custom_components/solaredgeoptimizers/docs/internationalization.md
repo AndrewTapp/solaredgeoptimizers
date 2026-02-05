@@ -15,7 +15,7 @@ This document describes how the SolarEdge Optimizers integration supports multip
 ### Entities and devices
 
 - **Sensor entity names**: Power, Voltage, Current, Last measurement, Lifetime energy, Optimizer voltage, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Last polled — from `entity.sensor.<translation_key>.name`.
-- **Device names**: "Site", "Inverter", "String", "Optimizer" are currently built in code; the numeric/ID part comes from the API. Entity names are translated via `translation_key`.
+- **Device names**: Site, Inverter, String, Optimizer device names use `device.site_device`, `device.inverter_device`, `device.string_device`, `device.optimizer_device` with placeholders `{site_id}` or `{display_name}` so labels (e.g. "Site", "Wechselrichter") are translated; the ID/display name comes from the API.
 
 ### API requests
 
@@ -29,13 +29,13 @@ This document describes how the SolarEdge Optimizers integration supports multip
 
 ## Supported languages
 
-See the [Translations](../../README.md#translations) section in the main README for the list of language codes and languages (en, nl, de, fr, es, it, pl, pt, sv).
+See the [Translations](../../README.md#translations) section in the main README for the full list of language codes (en, nl, de, fr, es, it, pl, pt, sv, cs, tr, el, hu, ru, zh, ja, da, nb, fi).
 
 ## Adding a new language
 
 1. Copy `translations/en.json` to `translations/<code>.json` (e.g. `cs.json` for Czech).
 2. Translate all string values. Keep the same JSON structure and keys.
-3. Ensure every key present in `en.json` exists in the new file (config + entity sections).
+3. Ensure every key present in `en.json` exists in the new file (config, entity, and device sections).
 4. Run the project’s checks (e.g. Hassfest) to validate translation files.
 
 ## Validation
