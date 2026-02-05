@@ -18,12 +18,20 @@ from jsonfinder import jsonfinder
 _LOGGER = logging.getLogger(__name__)
 
 class solaredgeoptimizers:
-    def __init__(self, siteid, username, password, timezone=None):
+    def __init__(self, siteid, username, password, timezone=None, language=None):
         self.siteid = siteid
         self.username = username
         self.password = password
         # AJT: 18-Jan-2026: Store timezone for date parsing (default to UTC if not provided)
         self._timezone = timezone if timezone is not None else pytz.UTC
+        # Language for API locale/accept-language (e.g. "en", "de"); default "en"
+        self._language = (language or "en").split("-")[0].lower()
+        # Map HA language code to SolarEdge locale (language_COUNTRY)
+        self._locale_map = {
+            "en": "en_US", "nl": "nl_NL", "de": "de_DE", "fr": "fr_FR",
+            "es": "es_ES", "it": "it_IT", "pl": "pl_PL", "pt": "pt_PT",
+            "sv": "sv_SE",
+        }
         # AJT: 16-Jan-2026: Thread-local storage for session reuse (one session per thread)
         self._thread_local = threading.local()
         # AJT: 16-Jan-2026: Cache for requestListOfAllPanels() result (TTL: 1 hour)
@@ -34,6 +42,16 @@ class solaredgeoptimizers:
         self._lifetime_energy_cache = None
         self._lifetime_energy_cache_time = None
         self._lifetime_energy_cache_ttl = timedelta(hours=1)
+
+    def _locale_from_language(self):
+        """Return SolarEdge locale string for the configured language."""
+        return self._locale_map.get(self._language, "en_US")
+
+    def _accept_language_header(self):
+        """Return Accept-Language header value for the configured language."""
+        locale = self._locale_from_language()
+        primary = locale.replace("_", "-")
+        return f"{primary},{self._language};q=0.9,en;q=0.8"
 
     def get_lifetime_energy_cached(self):
         """AJT: 25-Jan-2026: Return cached lifetime energy data as dict (refresh at most hourly)."""
@@ -168,7 +186,8 @@ class solaredgeoptimizers:
         # AJT: 10-Jan-2025: Fixed endpoint URL - changed from monitoringpublic.solaredge.com/publicSystemData to monitoring.solaredge.com/systemData,
         # changed isPublic=true to false, added locale parameter, and added v parameter with timestamp
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
-        url = f"https://monitoring.solaredge.com/solaredge-web/p/systemData?reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale=en_US&v={round(time.time() * 1000)}"
+        locale = self._locale_from_language()
+        url = f"https://monitoring.solaredge.com/solaredge-web/p/systemData?reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale={locale}&v={round(time.time() * 1000)}"
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("Endpoint (single optimizer systemData): %s", url)
@@ -454,7 +473,7 @@ class solaredgeoptimizers:
             headers={
                 "authority": "monitoring.solaredge.com",
                 "accept": "*/*",
-                "accept-language": "en-US,en;q=0.9,nl;q=0.8",
+                "accept-language": self._accept_language_header(),
                 "content-type": "application/json",
                 "cookie": therightcookie,
                 "origin": "https://monitoring.solaredge.com",
@@ -537,7 +556,8 @@ class solaredgeoptimizers:
 
         # AJT: 10-Jan-2025: Fixed typo "concent" to "consent" in cookie string
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
-        cookie_parts.append(f"SolarEdge_Locale=nl_NL; SolarEdge_Locale=nl_NL; solaredge_cookie_consent=1;SolarEdge_Field_ID={self.siteid}")
+        locale = self._locale_from_language()
+        cookie_parts.append(f"SolarEdge_Locale={locale}; SolarEdge_Locale={locale}; solaredge_cookie_consent=1;SolarEdge_Field_ID={self.siteid}")
 
         return "".join(cookie_parts)
 
