@@ -376,6 +376,24 @@ logger:
     custom_components.solaredgeoptimizers: debug
 ```
 
+**How to edit `configuration.yaml` directly**
+
+- **File Editor add-on** (recommended): Install **File editor** from the Add-on Store (Settings → Apps). Open it from the sidebar, then open `configuration.yaml` in the config folder. Add or merge the `logger:` block (see below), save, and restart or reload YAML.
+- **SSH & Terminal**: If you use the **SSH** or **Terminal & SSH** add-on, you can edit with `nano /config/configuration.yaml` (or `vi`). Save and exit, then restart Home Assistant or reload the logger from Developer tools.
+- **Other editors**: Any method that gives you access to the Home Assistant config directory (e.g. Samba share, Studio Code Server) works the same way: edit `configuration.yaml`, save, then restart or reload.
+
+**If you already have a `logger:` section**, add only the `logs:` entry under it instead of duplicating the whole block:
+
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.solaredgeoptimizers: debug
+    # other integrations can be listed here too
+```
+
+After changing `configuration.yaml`, use **Developer tools** → **YAML** → **Reload** to apply logger changes without a full restart, or restart Home Assistant to be sure.
+
 ### Common issues
 
 | Symptom | What to check |
