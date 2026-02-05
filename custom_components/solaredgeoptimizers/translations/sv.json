@@ -1,0 +1,39 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Enheten är redan konfigurerad"
+    },
+    "error": {
+      "cannot_connect": "Kunde inte ansluta",
+      "invalid_auth": "Ogiltig autentisering",
+      "unknown": "Oväntat fel"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "Plats-ID",
+          "password": "Lösenord",
+          "username": "Användarnamn (e-post)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Effekt"},
+      "voltage": {"name": "Spänning"},
+      "current": {"name": "Ström"},
+      "optimizer_voltage": {"name": "Optimizerspänning"},
+      "lifetime_energy": {"name": "Energi totalt"},
+      "last_measurement": {"name": "Senast mätt"},
+      "last_polled": {"name": "Senast uppdaterad"},
+      "current_average": {"name": "Ström (medel)"},
+      "voltage_average": {"name": "Spänning (medel)"},
+      "optimizer_count": {"name": "Antal optimizers"},
+      "string_count": {"name": "Antal strängar"},
+      "inverter_count": {"name": "Antal växelriktare"}
+    }
+  }
+}

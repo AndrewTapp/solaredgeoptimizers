@@ -1,0 +1,39 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Urządzenie jest już skonfigurowane"
+    },
+    "error": {
+      "cannot_connect": "Nie można połączyć",
+      "invalid_auth": "Nieprawidłowe uwierzytelnienie",
+      "unknown": "Nieoczekiwany błąd"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "ID witryny",
+          "password": "Hasło",
+          "username": "Nazwa użytkownika (e-mail)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Moc"},
+      "voltage": {"name": "Napięcie"},
+      "current": {"name": "Prąd"},
+      "optimizer_voltage": {"name": "Napięcie optymalizera"},
+      "lifetime_energy": {"name": "Energia całkowita"},
+      "last_measurement": {"name": "Ostatni pomiar"},
+      "last_polled": {"name": "Ostatnie odświeżenie"},
+      "current_average": {"name": "Prąd (średnia)"},
+      "voltage_average": {"name": "Napięcie (średnia)"},
+      "optimizer_count": {"name": "Liczba optymalizatorów"},
+      "string_count": {"name": "Liczba stringów"},
+      "inverter_count": {"name": "Liczba falowników"}
+    }
+  }
+}
