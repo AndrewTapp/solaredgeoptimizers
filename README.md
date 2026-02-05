@@ -93,17 +93,27 @@ The config flow (add-integration setup) is translated into:
 
 | Code | Language   |
 |------|------------|
-| en   | English    |
-| nl   | Nederlands |
+| cs   | Čeština    |
+| da   | Dansk      |
 | de   | Deutsch    |
-| fr   | Français   |
+| el   | Ελληνικά   |
+| en   | English    |
 | es   | Español    |
+| fi   | Suomi      |
+| fr   | Français   |
+| hu   | Magyar     |
 | it   | Italiano   |
+| ja   | 日本語     |
+| nb   | Norsk      |
+| nl   | Nederlands |
 | pl   | Polski     |
-| pt   | Português  |
+| pt   | Português   |
+| ru   | Русский    |
 | sv   | Svenska    |
+| tr   | Türkçe     |
+| zh   | 中文       |
 
-To add another language, add a `translations/<code>.json` file with the same structure as `en.json` (config step labels and error/abort messages).
+To add another language, add a `translations/<code>.json` file with the same structure as `en.json` (config, entity, and device sections).
 
 ---
 
