@@ -35,5 +35,11 @@
       "string_count": {"name": "String count"},
       "inverter_count": {"name": "Inverter count"}
     }
+  },
+  "device": {
+    "site_device": {"name": "Site {site_id}"},
+    "inverter_device": {"name": "Inverter {display_name}"},
+    "string_device": {"name": "String {display_name}"},
+    "optimizer_device": {"name": "Optimizer {display_name}"}
   }
 }
