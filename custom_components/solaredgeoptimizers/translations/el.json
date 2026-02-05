@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Η συσκευή είναι ήδη ρυθμισμένη"
+    },
+    "error": {
+      "cannot_connect": "Αποτυχία σύνδεσης",
+      "invalid_auth": "Μη έγκυρη επαλήθευση",
+      "unknown": "Απροσδόκητο σφάλμα"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "Αναγνωριστικό τοποθεσίας",
+          "password": "Κωδικός πρόσβασης",
+          "username": "Όνομα χρήστη (email)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Ισχύς"},
+      "voltage": {"name": "Τάση"},
+      "current": {"name": "Ρεύμα"},
+      "optimizer_voltage": {"name": "Τάση βελτιστοποιητή"},
+      "lifetime_energy": {"name": "Συνολική ενέργεια"},
+      "last_measurement": {"name": "Τελευταία μέτρηση"},
+      "last_polled": {"name": "Τελευταία ενημέρωση"},
+      "current_average": {"name": "Ρεύμα (μέσο)"},
+      "voltage_average": {"name": "Τάση (μέσο)"},
+      "optimizer_count": {"name": "Αριθμός βελτιστοποιητών"},
+      "string_count": {"name": "Αριθμός strings"},
+      "inverter_count": {"name": "Αριθμός inverters"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "Τοποθεσία {site_id}"},
+    "inverter_device": {"name": "Inverter {display_name}"},
+    "string_device": {"name": "String {display_name}"},
+    "optimizer_device": {"name": "Βελτιστοποιητής {display_name}"}
+  }
+}

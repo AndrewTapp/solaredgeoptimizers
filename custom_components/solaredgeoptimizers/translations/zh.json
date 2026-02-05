@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "设备已配置"
+    },
+    "error": {
+      "cannot_connect": "连接失败",
+      "invalid_auth": "验证失败",
+      "unknown": "意外错误"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "站点 ID",
+          "password": "密码",
+          "username": "用户名（电子邮箱）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "功率"},
+      "voltage": {"name": "电压"},
+      "current": {"name": "电流"},
+      "optimizer_voltage": {"name": "优化器电压"},
+      "lifetime_energy": {"name": "总发电量"},
+      "last_measurement": {"name": "最后测量"},
+      "last_polled": {"name": "最后更新"},
+      "current_average": {"name": "电流（平均）"},
+      "voltage_average": {"name": "电压（平均）"},
+      "optimizer_count": {"name": "优化器数量"},
+      "string_count": {"name": "组串数量"},
+      "inverter_count": {"name": "逆变器数量"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "站点 {site_id}"},
+    "inverter_device": {"name": "逆变器 {display_name}"},
+    "string_device": {"name": "组串 {display_name}"},
+    "optimizer_device": {"name": "优化器 {display_name}"}
+  }
+}

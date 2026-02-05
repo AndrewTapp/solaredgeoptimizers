@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Laite on jo määritetty"
+    },
+    "error": {
+      "cannot_connect": "Yhteys epäonnistui",
+      "invalid_auth": "Virheellinen tunnistautuminen",
+      "unknown": "Odottamaton virhe"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "Kohteen tunnus",
+          "password": "Salasana",
+          "username": "Käyttäjätunnus (sähköposti)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Teho"},
+      "voltage": {"name": "Jännite"},
+      "current": {"name": "Virta"},
+      "optimizer_voltage": {"name": "Optimointilaitteen jännite"},
+      "lifetime_energy": {"name": "Kokonaisenergia"},
+      "last_measurement": {"name": "Viimeisin mittaus"},
+      "last_polled": {"name": "Viimeksi päivitetty"},
+      "current_average": {"name": "Virta (keskiarvo)"},
+      "voltage_average": {"name": "Jännite (keskiarvo)"},
+      "optimizer_count": {"name": "Optimointilaitteiden määrä"},
+      "string_count": {"name": "Stringien määrä"},
+      "inverter_count": {"name": "Inverttereiden määrä"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "Kohde {site_id}"},
+    "inverter_device": {"name": "Inverteri {display_name}"},
+    "string_device": {"name": "Stringi {display_name}"},
+    "optimizer_device": {"name": "Optimointilaite {display_name}"}
+  }
+}

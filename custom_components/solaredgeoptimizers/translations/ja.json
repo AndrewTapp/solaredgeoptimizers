@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "デバイスは既に設定されています"
+    },
+    "error": {
+      "cannot_connect": "接続に失敗しました",
+      "invalid_auth": "認証が無効です",
+      "unknown": "予期しないエラー"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "サイト ID",
+          "password": "パスワード",
+          "username": "ユーザー名（メール）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "電力"},
+      "voltage": {"name": "電圧"},
+      "current": {"name": "電流"},
+      "optimizer_voltage": {"name": "オプティマイザー電圧"},
+      "lifetime_energy": {"name": "累計発電量"},
+      "last_measurement": {"name": "最終測定"},
+      "last_polled": {"name": "最終更新"},
+      "current_average": {"name": "電流（平均）"},
+      "voltage_average": {"name": "電圧（平均）"},
+      "optimizer_count": {"name": "オプティマイザー数"},
+      "string_count": {"name": "ストリング数"},
+      "inverter_count": {"name": "インバーター数"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "サイト {site_id}"},
+    "inverter_device": {"name": "インバーター {display_name}"},
+    "string_device": {"name": "ストリング {display_name}"},
+    "optimizer_device": {"name": "オプティマイザー {display_name}"}
+  }
+}

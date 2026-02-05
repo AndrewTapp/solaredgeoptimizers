@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Enheden er allerede konfigureret"
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke forbinde",
+      "invalid_auth": "Ugyldig godkendelse",
+      "unknown": "Uventet fejl"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "Placering-ID",
+          "password": "Adgangskode",
+          "username": "Brugernavn (e-mail)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Effekt"},
+      "voltage": {"name": "Spænding"},
+      "current": {"name": "Strøm"},
+      "optimizer_voltage": {"name": "Optimizer-spænding"},
+      "lifetime_energy": {"name": "Samlet energi"},
+      "last_measurement": {"name": "Sidste måling"},
+      "last_polled": {"name": "Sidst opdateret"},
+      "current_average": {"name": "Strøm (gennemsnit)"},
+      "voltage_average": {"name": "Spænding (gennemsnit)"},
+      "optimizer_count": {"name": "Antal optimizers"},
+      "string_count": {"name": "Antal strenge"},
+      "inverter_count": {"name": "Antal omformere"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "Placering {site_id}"},
+    "inverter_device": {"name": "Omformer {display_name}"},
+    "string_device": {"name": "Streng {display_name}"},
+    "optimizer_device": {"name": "Optimizer {display_name}"}
+  }
+}

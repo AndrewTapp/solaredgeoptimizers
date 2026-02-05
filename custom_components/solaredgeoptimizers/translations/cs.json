@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Zařízení je již nakonfigurováno"
+    },
+    "error": {
+      "cannot_connect": "Nepodařilo se připojit",
+      "invalid_auth": "Neplatné ověření",
+      "unknown": "Neočekávaná chyba"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "ID lokality",
+          "password": "Heslo",
+          "username": "Uživatelské jméno (e-mail)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Výkon"},
+      "voltage": {"name": "Napětí"},
+      "current": {"name": "Proud"},
+      "optimizer_voltage": {"name": "Napětí optimizéru"},
+      "lifetime_energy": {"name": "Celková energie"},
+      "last_measurement": {"name": "Poslední měření"},
+      "last_polled": {"name": "Naposledy načteno"},
+      "current_average": {"name": "Proud (průměr)"},
+      "voltage_average": {"name": "Napětí (průměr)"},
+      "optimizer_count": {"name": "Počet optimizérů"},
+      "string_count": {"name": "Počet stringů"},
+      "inverter_count": {"name": "Počet měničů"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "Lokalita {site_id}"},
+    "inverter_device": {"name": "Měnič {display_name}"},
+    "string_device": {"name": "String {display_name}"},
+    "optimizer_device": {"name": "Optimizér {display_name}"}
+  }
+}

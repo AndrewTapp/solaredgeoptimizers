@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Cihaz zaten yapılandırılmış"
+    },
+    "error": {
+      "cannot_connect": "Bağlantı kurulamadı",
+      "invalid_auth": "Geçersiz kimlik doğrulama",
+      "unknown": "Beklenmeyen hata"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "Site kimliği",
+          "password": "Parola",
+          "username": "Kullanıcı adı (e-posta)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Güç"},
+      "voltage": {"name": "Gerilim"},
+      "current": {"name": "Akım"},
+      "optimizer_voltage": {"name": "Optimizer gerilimi"},
+      "lifetime_energy": {"name": "Toplam enerji"},
+      "last_measurement": {"name": "Son ölçüm"},
+      "last_polled": {"name": "Son güncelleme"},
+      "current_average": {"name": "Akım (ortalama)"},
+      "voltage_average": {"name": "Gerilim (ortalama)"},
+      "optimizer_count": {"name": "Optimizer sayısı"},
+      "string_count": {"name": "String sayısı"},
+      "inverter_count": {"name": "İnvertör sayısı"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "Site {site_id}"},
+    "inverter_device": {"name": "İnvertör {display_name}"},
+    "string_device": {"name": "String {display_name}"},
+    "optimizer_device": {"name": "Optimizer {display_name}"}
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Enheten er allerede konfigurert"
+    },
+    "error": {
+      "cannot_connect": "Kunne ikke koble til",
+      "invalid_auth": "Ugyldig godkjenning",
+      "unknown": "Uventet feil"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "Steds-ID",
+          "password": "Passord",
+          "username": "Brukernavn (e-post)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Effekt"},
+      "voltage": {"name": "Spenning"},
+      "current": {"name": "Strøm"},
+      "optimizer_voltage": {"name": "Optimizerspenning"},
+      "lifetime_energy": {"name": "Total energi"},
+      "last_measurement": {"name": "Siste måling"},
+      "last_polled": {"name": "Sist oppdatert"},
+      "current_average": {"name": "Strøm (gjennomsnitt)"},
+      "voltage_average": {"name": "Spenning (gjennomsnitt)"},
+      "optimizer_count": {"name": "Antall optimizers"},
+      "string_count": {"name": "Antall strenger"},
+      "inverter_count": {"name": "Antall omformere"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "Sted {site_id}"},
+    "inverter_device": {"name": "Omformer {display_name}"},
+    "string_device": {"name": "Streng {display_name}"},
+    "optimizer_device": {"name": "Optimizer {display_name}"}
+  }
+}

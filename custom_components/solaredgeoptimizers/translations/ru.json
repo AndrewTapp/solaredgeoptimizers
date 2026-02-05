@@ -1,0 +1,45 @@
+{
+  "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
+    "abort": {
+      "already_configured": "Устройство уже настроено"
+    },
+    "error": {
+      "cannot_connect": "Ошибка подключения",
+      "invalid_auth": "Неверная аутентификация",
+      "unknown": "Неожиданная ошибка"
+    },
+    "step": {
+      "user": {
+        "data": {
+          "siteid": "ID объекта",
+          "password": "Пароль",
+          "username": "Имя пользователя (email)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {"name": "Мощность"},
+      "voltage": {"name": "Напряжение"},
+      "current": {"name": "Ток"},
+      "optimizer_voltage": {"name": "Напряжение оптимизатора"},
+      "lifetime_energy": {"name": "Суммарная энергия"},
+      "last_measurement": {"name": "Последнее измерение"},
+      "last_polled": {"name": "Последнее обновление"},
+      "current_average": {"name": "Ток (среднее)"},
+      "voltage_average": {"name": "Напряжение (среднее)"},
+      "optimizer_count": {"name": "Количество оптимизаторов"},
+      "string_count": {"name": "Количество строк"},
+      "inverter_count": {"name": "Количество инверторов"}
+    }
+  },
+  "device": {
+    "site_device": {"name": "Объект {site_id}"},
+    "inverter_device": {"name": "Инвертор {display_name}"},
+    "string_device": {"name": "Строка {display_name}"},
+    "optimizer_device": {"name": "Оптимизатор {display_name}"}
+  }
+}
