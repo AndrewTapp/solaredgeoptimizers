@@ -246,7 +246,8 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
             identifiers={(DOMAIN, f"site_{site_id}")},
             manufacturer="SolarEdge",
             model=f"SITE {site_id}",
-            name=f"Site {site_id}",
+            translation_key="site_device",
+            translation_placeholders={"site_id": str(site_id)},
         )
 
     @callback
@@ -317,37 +318,33 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         # Stable name for logging ( _attr_name may be unset when using translation_key )
         self._log_name = f"{panel.panel_id}_{sensortype}"
 
-        # Set device info based on entity type
+        # Set device info based on entity type (names from device translations)
         if panel.entity_type == "string":
-            # String device
-            # AJT: 27-Jan-2026: Format string name with prefix
-            string_name = f"String {string.displayName}"
             self._attr_device_info = DeviceInfo(
                 identifiers={(DOMAIN, f"{entry.entry_id}_{string.stringId}")},
                 manufacturer="SolarEdge",
                 model=f"STRING {string.displayName}",
-                name=string_name,
+                translation_key="string_device",
+                translation_placeholders={"display_name": str(string.displayName)},
                 via_device=(DOMAIN, inverter.serialNumber),
             )
         elif panel.entity_type == "inverter":
-            # AJT: 27-Jan-2026: Inverter device connected via site
-            # AJT: 27-Jan-2026: Format inverter name with prefix
-            inverter_name = f"Inverter {inverter.displayName}"
             site_id = None
             if self.coordinator._site_structure:
                 site_id = self.coordinator._site_structure.siteId
             via_device = (DOMAIN, f"site_{site_id}") if site_id else None
             self._attr_device_info = DeviceInfo(
                 identifiers={(DOMAIN, inverter.serialNumber)},
-                name=inverter_name,
+                translation_key="inverter_device",
+                translation_placeholders={"display_name": str(inverter.displayName)},
                 via_device=via_device,
             )
         else:  # site
-            # AJT: 27-Jan-2026: Site device shows site ID in name
-            site_id = panel.panel_id.split('_')[1] if '_' in panel.panel_id else None
+            site_id = panel.panel_id.split('_')[1] if '_' in panel.panel_id else ""
             self._attr_device_info = DeviceInfo(
                 identifiers={(DOMAIN, f"site_{site_id}")},
-                name=f"Site {site_id}" if site_id else "Site",
+                translation_key="site_device",
+                translation_placeholders={"site_id": site_id or "—"},
             )
 
         # Set appropriate units and device classes based on sensor type
@@ -512,19 +509,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         via_device = None
         if self._string:
             via_device = (DOMAIN, f"{self._entry.entry_id}_{self._string.stringId}")
-        # AJT: 27-Jan-2026: Format optimizer name with prefix
-        optimizer_name = f"Optimizer {self._optimizerobject.displayName}"
-        return {
-            "identifiers": {
-                # Serial numbers are unique identifiers within a specific domain
-                (DOMAIN, self._panelobject.serialnumber)
-            },
-            "name": optimizer_name,
-            "manufacturer": self._panelobject.manufacturer,
-            "model": self._panelobject.model,
-            "hw_version": self._panelobject.serialnumber,
-            "via_device": via_device,
-        }
+        return DeviceInfo(
+            identifiers={(DOMAIN, self._panelobject.serialnumber)},
+            manufacturer=self._panelobject.manufacturer,
+            model=self._panelobject.model,
+            hw_version=self._panelobject.serialnumber,
+            via_device=via_device,
+            translation_key="optimizer_device",
+            translation_placeholders={"display_name": str(self._optimizerobject.displayName)},
+        )
 
     @callback
     def _handle_coordinator_update(self) -> None:
