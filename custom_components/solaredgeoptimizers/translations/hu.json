@@ -15,7 +15,7 @@
           "password": "Jelszó",
           "username": "Felhasználónév (e-mail)",
           "entity_id_prefix": "Entitás ID előtag (opcionális)",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "Helyszín azonosító belefoglalása az entitás azonosítóba"
         }
       }
     }
