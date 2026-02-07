@@ -15,7 +15,7 @@
           "password": "Adgangskode",
           "username": "Brugernavn (e-mail)",
           "entity_id_prefix": "Entity-ID-præfiks (valgfri)",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "Inkluder sted-ID i enheds-ID"
         }
       }
     }
