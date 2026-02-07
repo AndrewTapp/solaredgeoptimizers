@@ -14,7 +14,8 @@
           "siteid": "Kohteen tunnus",
           "password": "Salasana",
           "username": "Käyttäjätunnus (sähköposti)",
-          "entity_id_prefix": "Entiteetin ID-etuliite (valinnainen)"
+          "entity_id_prefix": "Entiteetin ID-etuliite (valinnainen)",
+          "include_site_id_in_entity_id": "Include SiteID in EntityID"
         }
       }
     }
