@@ -6,7 +6,7 @@ This document describes how the SolarEdge Optimizers integration supports multip
 
 ### Config flow (add-integration)
 
-- **Form labels**: Site id, Username, Password — from `config.step.user.data.*` in each `translations/<code>.json`.
+- **Form labels**: Site id, Username, Password, Entity ID prefix (optional) — from `config.step.user.data.*` in each `translations/<code>.json`.
 - **Errors**: "Failed to connect", "Invalid authentication", "Unexpected error" — from `config.error.*`.
 - **Abort**: "Device is already configured" — from `config.abort.already_configured`.
 - **Config entry title**: The name of the integration instance in Devices & services (e.g. "SolarEdge Site 12345") — from `config.title_entry` (supports `%(siteid)s`).
@@ -15,11 +15,11 @@ This document describes how the SolarEdge Optimizers integration supports multip
 ### Entities and devices
 
 - **Sensor entity names**: Power, Voltage, Current, Last measurement, Lifetime energy, Optimizer voltage, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Last polled — from `entity.sensor.<translation_key>.name`.
-- **Device names**: Site, Inverter, String, Optimizer device names use `device.site_device`, `device.inverter_device`, `device.string_device`, `device.optimizer_device` with placeholders `{site_id}` or `{display_name}` so labels (e.g. "Site", "Wechselrichter") are translated; the ID/display name comes from the API.
+- **Device names**: Site, Inverter, String, Optimizer device names use `device.site_device`, `device.inverter_device`, `device.string_device`, `device.optimizer_device` with placeholders `{site_id}` or `{display_name}`. Display names follow the hierarchy Site [site], Inverter [site].[i], String [site].[i].[s], Optimizer [site].[i].[s].[o] so multiple sites stay distinct; labels (e.g. "Site", "Wechselrichter") are translated.
 
 ### API requests
 
-- **Locale**: The SolarEdge API client uses the Home Assistant language (e.g. `en`, `de`) to set the `locale` and `accept-language` request parameters where applicable, so portal responses can follow the user’s language when the API supports it.
+- **Locale**: The SolarEdge API client uses the Home Assistant language (e.g. `en`, `de`) to set the `locale` and `accept-language` request parameters where applicable, so portal responses can follow the user’s language when the API supports it. When the API returns localized measurement keys (e.g. “Leistung [W]” in German), the integration recognises multiple locale variants and normalises decimal separators so power/current/voltage work in all supported languages.
 
 ## What is not translated (by design)
 
