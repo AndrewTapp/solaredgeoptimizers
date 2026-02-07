@@ -15,7 +15,7 @@
           "password": "Wachtwoord",
           "username": "Gebruikersnaam (Email)",
           "entity_id_prefix": "Entity-ID-voorvoegsel (optioneel)",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "Site-ID opnemen in entiteits-ID"
         }
       }
     }
