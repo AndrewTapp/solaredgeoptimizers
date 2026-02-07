@@ -17,6 +17,89 @@ from jsonfinder import jsonfinder
 # AJT: 10-Jan-2025: Added logger setup to replace print statements with proper logging
 _LOGGER = logging.getLogger(__name__)
 
+# SolarEdge API returns measurement keys in the user's locale (e.g. "Power [W]" in EN, "Leistung [W]" in DE).
+# Try all known locale variants so power/current/voltage work regardless of HA language.
+MEASUREMENT_KEYS = {
+    "power": [
+        "Power [W]", "Leistung [W]", "Puissance [W]", "Potencia [W]", "Potenza [W]",
+        "Vermogen [W]", "Effekt [W]", "Moc [W]", "Výkon [W]", "Teljesítmény [W]",
+        "Ισχύς [W]", "Güç [W]", "Мощность [W]", "功率 [W]", "電力 [W]", "Teho [W]",
+    ],
+    "current": [
+        "Current [A]", "Strom [A]", "Courant [A]", "Corriente [A]", "Corrente [A]",
+        "Stroom [A]", "Strøm [A]", "Ström [A]", "Prąd [A]", "Proud [A]", "Áram [A]",
+        "Ρεύμα [A]", "Akım [A]", "Ток [A]", "电流 [A]", "電流 [A]", "Virta [A]",
+    ],
+    "voltage": [
+        "Voltage [V]", "Spannung [V]", "Tension [V]", "Tensión [V]", "Tensione [V]",
+        "Spanning [V]", "Spänning [V]", "Spænding [V]", "Spenning [V]", "Napięcie [V]",
+        "Napětí [V]", "Feszültség [V]", "Τάση [V]", "Gerilim [V]", "Напряжение [V]",
+        "电压 [V]", "電圧 [V]", "Jännite [V]",
+    ],
+    "optimizer_voltage": [
+        "Optimizer Voltage [V]", "Optimierer-Spannung [V]", "Optimizer-Spannung [V]",
+    ],
+}
+
+
+def _normalize_measurement_key(key):
+    """Normalize measurement key so API keys with Unicode variants (dash, space) match our key list."""
+    if not key or not isinstance(key, str):
+        return key
+    # Replace common Unicode variants with ASCII so API keys match MEASUREMENT_KEYS
+    key = key.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")  # en/em dash, minus
+    key = key.replace("\u2010", "-").replace("\u2011", "-")  # hyphen, non-breaking hyphen
+    key = key.replace("\u00a0", " ")  # non-breaking space
+    return key.strip()
+
+
+def _get_measurement_value(measurements, key_list):
+    """Return the first value found for any of the given keys. Used for locale-independent API parsing.
+    Keys are normalized so API responses with Unicode variants (e.g. de_DE returning different hyphen)
+    still match our known key names."""
+    if not measurements or not isinstance(measurements, dict):
+        return None
+    # Build normalized key -> value mapping so locale/Unicode variants match
+    norm_to_value = {}
+    for k, v in measurements.items():
+        norm_to_value[_normalize_measurement_key(k)] = v
+    for key in key_list:
+        norm_key = _normalize_measurement_key(key)
+        if norm_key in norm_to_value:
+            return norm_to_value[norm_key]
+    return None
+
+
+def _lifetime_energy_to_kwh(energy_data):
+    """Convert layout/energy API entry to kWh.
+
+    Uses unscaledEnergy (always in Wh) so lifetime energy updates correctly.
+    The 'units' field applies only to the display values 'energy' and 'moduleEnergy';
+    unscaledEnergy is the raw accumulating value in Wh.
+    """
+    if not energy_data or not isinstance(energy_data, dict):
+        return None
+    try:
+        raw = energy_data.get("unscaledEnergy")
+        if raw is not None:
+            return round(float(raw) / 1000.0, 3)  # Wh -> kWh
+        # Fallback if API omits unscaledEnergy: derive from energy + units
+        units = energy_data.get("units") or "Wh"
+        energy = energy_data.get("energy")
+        if energy is None:
+            return None
+        energy = float(energy)
+        if units == "kWh":
+            return round(energy, 3)
+        if units == "MWh":
+            return round(energy * 1000.0, 3)
+        # Wh
+        return round(energy / 1000.0, 3)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 class solaredgeoptimizers:
     def __init__(self, siteid, username, password, timezone=None, language=None):
         self.siteid = siteid
@@ -56,25 +139,34 @@ class solaredgeoptimizers:
         return f"{primary},{self._language};q=0.9,en;q=0.8"
 
     def get_lifetime_energy_cached(self):
-        """AJT: 25-Jan-2026: Return cached lifetime energy data as dict (refresh at most hourly)."""
+        """Return cached lifetime energy data as dict (refresh at most hourly)."""
         now = datetime.now()
         if (
             self._lifetime_energy_cache is None
             or self._lifetime_energy_cache_time is None
             or (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl
         ):
-            lifetime_energy_response = self.getLifeTimeEnergy()
-            if lifetime_energy_response.startswith("ERROR001"):
-                _LOGGER.error("Failed to get lifetime energy data: %s", lifetime_energy_response)
-                self._lifetime_energy_cache = {}
-            else:
-                try:
-                    self._lifetime_energy_cache = json.loads(lifetime_energy_response)
-                except json.JSONDecodeError as e:
-                    _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
+            try:
+                lifetime_energy_response = self.getLifeTimeEnergy()
+                if lifetime_energy_response.startswith("ERROR001"):
+                    _LOGGER.error("Failed to get lifetime energy data: %s", lifetime_energy_response)
                     self._lifetime_energy_cache = {}
-            self._lifetime_energy_cache_time = now
-            _LOGGER.debug("Refreshed lifetime energy cache (cached accessor)")
+                else:
+                    try:
+                        self._lifetime_energy_cache = json.loads(lifetime_energy_response)
+                    except json.JSONDecodeError as e:
+                        _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
+                        self._lifetime_energy_cache = {}
+                self._lifetime_energy_cache_time = now
+                _LOGGER.debug("Refreshed lifetime energy cache (cached accessor)")
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                # Transient DNS/network errors: keep previous cache, do not update cache time
+                _LOGGER.warning(
+                    "SolarEdge API unreachable (lifetime energy): %s. Using cached data if available.",
+                    e,
+                )
+                if self._lifetime_energy_cache is None:
+                    self._lifetime_energy_cache = {}
         return self._lifetime_energy_cache or {}
 
     def check_login(self):
@@ -319,13 +411,13 @@ class solaredgeoptimizers:
                 try:
                     info = future.result()
                     if info is not None:
-                        # AJT: 16-Jan-2026: Optimize lifetime energy lookup using pre-converted string and .get() with defaults
+                        # Look up by string key (JSON keys are strings); fallback to int for robustness
                         optimizer_id_str = str(optimizer_id)
-                        energy_data = lifetimeenergy.get(optimizer_id_str, {})
-                        unscaled_energy = energy_data.get("unscaledEnergy")
-                        if unscaled_energy is not None:
-                            # AJT: 27-Jan-2026: Round to 3 decimal places to avoid floating point precision issues
-                            info.lifetime_energy = round(float(unscaled_energy) / 1000, 3)
+                        energy_data = lifetimeenergy.get(optimizer_id_str) or lifetimeenergy.get(optimizer_id) or {}
+                        # Convert to kWh using API 'units' so we never show power (W) scale as energy (kWh)
+                        kWh = _lifetime_energy_to_kwh(energy_data)
+                        if kWh is not None:
+                            info.lifetime_energy = kWh
                         else:
                             _LOGGER.warning("Lifetime energy data missing for optimizer %s, setting to 0", optimizer_id)
                             info.lifetime_energy = 0.0
@@ -519,7 +611,7 @@ class solaredgeoptimizers:
         return self._doRequest("POST", url)
 
     def close(self):
-        """AJT: 27-Jan-2026: Close all thread-local sessions to prevent file descriptor leaks.
+        """Close all thread-local sessions to prevent file descriptor leaks.
         
         This should be called when the API client is no longer needed, e.g., during integration unload.
         """
@@ -732,17 +824,17 @@ class SolarlEdgeOptimizer:
 
 class SolarEdgeAggregatedData:
     """Data class for aggregated SolarEdge measurements at string/inverter level."""
-    
-    # AJT: 27-Jan-2026: Use __slots__ to reduce memory overhead and improve attribute access speed
+
     __slots__ = (
-        'panel_id', 'entity_type', 'serialnumber', 'panel_description', 'lastmeasurement',
-        'model', 'manufacturer', 'current', 'optimizer_voltage', 'power', 'voltage',
-        'lifetime_energy', 'child_count', 'active_optimizer_count'
+        'panel_id', 'entity_type', 'entity_id_path', 'serialnumber', 'panel_description',
+        'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage', 'power',
+        'voltage', 'lifetime_energy', 'child_count', 'active_optimizer_count'
     )
 
-    def __init__(self, entity_id, entity_type, lifetime_energy=None):
-        self.panel_id = entity_id  # Will be string_id or inverter_id
-        self.entity_type = entity_type  # "string" or "inverter"
+    def __init__(self, entity_id, entity_type, lifetime_energy=None, entity_id_path=None):
+        self.panel_id = entity_id  # Used for coordinator data lookup (e.g. site_2065855, inverter_123, string_1_1)
+        self.entity_type = entity_type  # "string", "inverter", or "site"
+        self.entity_id_path = entity_id_path or ()  # (site,) or (site, i) or (site, i, s) for entity_id generation
         self.serialnumber = ""
         self.panel_description = ""
         self.lastmeasurement = None
@@ -868,20 +960,22 @@ class SolarEdgeOptimizerData:
                 )
                 measurements = {}
             
-            # AJT: 17-Jan-2026: Handle null values and convert to float safely
+            # Handle null values and convert to float safely. Normalize locale decimal separator (e.g. "26,18" -> 26.18).
             def safe_float(value, default=0.0):
-                """Safely convert value to float, handling None, empty strings, and invalid types."""
+                """Safely convert value to float, handling None, empty strings, comma decimals, and invalid types."""
                 if value is None or value == "":
                     return default
+                if isinstance(value, str):
+                    value = value.replace(",", ".")
                 try:
                     return float(value)
                 except (ValueError, TypeError):
                     return default
-            
-            self.current = safe_float(measurements.get("Current [A]"), 0.0)
-            self.optimizer_voltage = safe_float(measurements.get("Optimizer Voltage [V]"), 0.0)
-            self.power = safe_float(measurements.get("Power [W]"), 0.0)
-            self.voltage = safe_float(measurements.get("Voltage [V]"), 0.0)
+
+            self.current = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["current"]), 0.0)
+            self.optimizer_voltage = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["optimizer_voltage"]), 0.0)
+            self.power = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["power"]), 0.0)
+            self.voltage = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["voltage"]), 0.0)
             
             # AJT: 17-Jan-2026: Log if all measurements are zero to help diagnose API response issues
             if self.current == 0.0 and self.power == 0.0 and self.voltage == 0.0 and self.optimizer_voltage == 0.0:
