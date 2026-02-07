@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "Gerät ist bereits konfiguriert"
-    },
+    "abort": {"already_configured": "Gerät ist bereits konfiguriert"},
     "error": {
       "cannot_connect": "Verbindung fehlgeschlagen",
       "invalid_auth": "Ungültige Anmeldung",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "Standort-ID",
           "password": "Passwort",
-          "username": "Benutzername (E-Mail)"
+          "username": "Benutzername (E-Mail)",
+          "entity_id_prefix": "Entity-ID-Präfix (optional)"
         }
       }
     }
