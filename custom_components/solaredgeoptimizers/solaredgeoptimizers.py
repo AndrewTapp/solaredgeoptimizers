@@ -100,6 +100,30 @@ def _lifetime_energy_to_kwh(energy_data):
     return None
 
 
+def _site_lifetime_kwh_from_layout_energy(lifetime_energy_data):
+    """Compute site total lifetime energy (kWh) from layout/energy API response.
+
+    Sums unscaledEnergy (Wh) across all entries in the response. Works when the
+    response contains per-optimizer data (sum = site total) or a mix of panel and
+    inverter/string entries (inverter entries dominate; panel values are negligible).
+    """
+    if not lifetime_energy_data or not isinstance(lifetime_energy_data, dict):
+        return None
+    total_wh = 0.0
+    for _key, entry in lifetime_energy_data.items():
+        if not isinstance(entry, dict):
+            continue
+        raw = entry.get("unscaledEnergy")
+        if raw is not None:
+            try:
+                total_wh += float(raw)
+            except (TypeError, ValueError):
+                pass
+    if total_wh == 0.0 and lifetime_energy_data:
+        return None
+    return round(total_wh / 1000.0, 3)
+
+
 class solaredgeoptimizers:
     def __init__(self, siteid, username, password, timezone=None, language=None):
         self.siteid = siteid
