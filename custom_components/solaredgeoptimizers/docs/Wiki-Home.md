@@ -149,7 +149,7 @@ flowchart TD
 
 - **Site** → **Inverters** → **Strings** → **Optimizers**.  
 - **Device names** include the site so multiple sites don’t clash: **Site [site]**, **Inverter [site].[i]**, **String [site].[i].[s]**, **Optimizer [site].[i].[s].[o]** (e.g. Site 9999999, Inverter 9999999.1, String 9999999.1.1, Optimizer 9999999.1.1.1).  
-- **Entity IDs** follow the same path: `sensor.[base]power_[site]`, `sensor.[base]power_[site]_[i]`, `sensor.[base]power_[site]_[i]_[s]`, `sensor.[base]power_[site]_[i]_[s]_[o]` (and similarly for other sensor types). *[base]* is the optional Entity ID prefix from config (blank if not set). Entity IDs have no device-name prefix (e.g. `sensor.xyz_power_2065855_1_1` for a string, `sensor.xyz_power_2065855_1_1_7` for an optimizer). This avoids duplicate entity IDs when you have more than one site.  
+- **Entity IDs** follow a path that may or may not include the site ID, depending on **Include SiteID in EntityID** (default off). When off: site level always has the site ID (e.g. `sensor.[base]power_[site]`); inverter/string/optimizer levels omit it (e.g. `sensor.[base]power_[i]_[s]_[o]`). When on: all levels include the site ID (e.g. `sensor.[base]power_[site]_[i]_[s]_[o]`). *[base]* is the optional Entity ID prefix from config (blank if not set). Entity IDs have no device-name prefix. This keeps entity IDs short by default while still unique per site.  
 - In **Settings → Devices & services**, “Connected via” shows the parent (e.g. optimizer → string, string → inverter). Optimizers are grouped under their string device.  
 - Entity names are translated (e.g. “Power”, “Last measurement”) and combined with the device name.
 
@@ -237,8 +237,9 @@ Ensure `custom_components/solaredgeoptimizers/` contains at least: `__init__.py`
 
 ## 6. Configuration
 
-- **Single step**: Site ID, Username (email), Password, and optional **Entity ID prefix**.  
+- **Single step**: Site ID, Username (email), Password, optional **Entity ID prefix**, and optional **Include SiteID in EntityID** (default **off**).  
 - **Entity ID prefix**: Optional. If set (e.g. `se_`), all entity IDs start with that prefix (e.g. `sensor.se_power_9999999`). Normalised to lowercase with spaces as underscores. Leave blank for no prefix. Useful when running multiple sites or avoiding clashes with other integrations.  
+- **Include SiteID in EntityID**: Optional, default **off**. When off, inverter/string/optimizer entity IDs omit the site ID (e.g. `sensor.power_1_1`); site level always includes the actual site ID (e.g. `sensor.power_2065855`). When on, all levels include the site ID in the path.  
 - **Validation**: Calls SolarEdge `GET .../layout/logical` with HTTP Basic Auth; success = 200.  
 - **Config entry title**: Translated, e.g. “SolarEdge Site 12345” (from `config.title_entry` with `%(siteid)s`).  
 - **Errors**: “Failed to connect”, “Invalid authentication”, “Unexpected error” (keys `cannot_connect`, `invalid_auth`, `unknown`); all translatable.  
@@ -258,7 +259,7 @@ No YAML configuration is required; all configuration is via the config flow.
 | Voltage | voltage | V | Panel voltage. |
 | Current | current | A | Panel current. |
 | Optimizer voltage | voltage | V | Optimizer output voltage. |
-| Lifetime energy | energy | kWh | Total energy (monotonic). Sourced from the API’s `unscaledEnergy` (Wh); the portal’s `units` field applies only to display values `energy` and `moduleEnergy`. |
+| Lifetime energy | energy | kWh | Total energy (monotonic). Sourced from the API’s `unscaledEnergy` (Wh); the portal’s `units` field applies only to display values `energy` and `moduleEnergy`. At site level, when aggregated optimizer data is unreliable (e.g. very small total while portal has a real total), the site uses the portal’s total (sum of all `unscaledEnergy` from layout/energy) instead of aggregating. |
 | Last measurement | timestamp | — | Time of last measurement from portal. |
 
 - **Stale rule**: If last measurement is older than 1 hour, **Power, Voltage, Current, Optimizer voltage** are shown as **0**. Lifetime energy and Last measurement always show last known value.
@@ -270,7 +271,7 @@ No YAML configuration is required; all configuration is via the config flow.
 | Power | Sum of optimizer power (with recent data). |
 | Current (average) | Average current of optimizers with recent data. |
 | Voltage (average) | Average voltage of optimizers with recent data. |
-| Lifetime energy | Sum of optimizer lifetime energy (from API, by string; uses `unscaledEnergy` in Wh). |
+| Lifetime energy | Sum of optimizer lifetime energy (from API, by string; uses `unscaledEnergy` in Wh). Site level: when reliable, sum of inverters; when unreliable (aggregated &lt; 100 kWh and portal total ≥ 100 kWh), uses portal total (sum of all `unscaledEnergy` from layout/energy). |
 | Last measurement | Latest last measurement among optimizers in the string. |
 | Optimizer count | Number of optimizers in the string. |
 
@@ -292,15 +293,15 @@ No YAML configuration is required; all configuration is via the config flow.
 | Inverter count | Number of inverters. |
 | **Last polled** | (Site device only.) When the integration last successfully finished an update. |
 
-All aggregated sensors use the same naming pattern (e.g. “Power”, “Current (average)”) with the device name indicating the level. Entity IDs include the path so they are unique across sites:
+All aggregated sensors use the same naming pattern (e.g. “Power”, “Current (average)”) with the device name indicating the level. Entity IDs include the path so they are unique. When **Include SiteID in EntityID** is **off** (default), inverter/string/optimizer IDs omit the site; site level and Last polled always show the site ID. When **on**, all levels include the site ID.
 
-| Level    | Example entity ID (prefix blank)     | Example with prefix `se_`            |
-|----------|--------------------------------------|--------------------------------------|
-| Site     | `sensor.power_9999999`               | `sensor.se_power_9999999`            |
-| Inverter | `sensor.power_9999999_1`             | `sensor.se_power_9999999_1`          |
-| String   | `sensor.power_9999999_1_1`           | `sensor.se_power_9999999_1_1`        |
-| Optimizer| `sensor.power_9999999_1_1_1`         | `sensor.se_power_9999999_1_1_1`      |
-| Last polled | `sensor.last_polled_9999999`      | `sensor.se_last_polled_9999999`      |
+| Level    | Example (prefix blank, Include SiteID **off**) | Example (prefix blank, Include SiteID **on**) |
+|----------|------------------------------------------------|-----------------------------------------------|
+| Site     | `sensor.power_9999999`                         | `sensor.power_9999999`                        |
+| Inverter | `sensor.power_1`                               | `sensor.power_9999999_1`                      |
+| String   | `sensor.power_1_1`                             | `sensor.power_9999999_1_1`                    |
+| Optimizer| `sensor.power_1_1_1`                           | `sensor.power_9999999_1_1_1`                  |
+| Last polled | `sensor.last_polled`                        | `sensor.last_polled_9999999`                  |
 
 Child-count sensors: `inverter_count` at site level, `child_count` at inverter (string count) and string (optimizer count) level, with the same path suffix.
 
@@ -317,7 +318,7 @@ Child-count sensors: `inverter_count` at site level, `child_count` at inverter (
 | Lifetime energy cache | 1 hour | `get_lifetime_energy_cached()` → `getLifeTimeEnergy()`. Converted to kWh from `unscaledEnergy` (Wh); `units` applies only to display fields. |
 | Full-refresh cooldown | 2 minutes | Avoids back-to-back full refreshes. |
 
-Aggregations (string/inverter/site) are computed in the coordinator from optimizer data and cached lifetime energy; they are not separate API calls.
+Aggregations (string/inverter/site) are computed in the coordinator from optimizer data and cached lifetime energy; they are not separate API calls. **Site lifetime energy** uses aggregated data when reliable; when aggregated is very small (&lt; 100 kWh) and the portal total (sum of all `unscaledEnergy` from layout/energy) is large (≥ 100 kWh), the site uses the portal total so installations with unreliable per-optimizer lifetime data still get a correct site total.
 
 ---
 
@@ -333,7 +334,7 @@ Aggregations (string/inverter/site) are computed in the coordinator from optimiz
 
 ## 10. Internationalization (i18n)
 
-- **Config flow**: Labels (Site id, Username, Password, **Entity ID prefix (optional)**), errors, abort message, and config entry title are translated.  
+- **Config flow**: Labels (Site id, Username, Password, **Entity ID prefix (optional)**, **Include SiteID in EntityID**), errors, abort message, and config entry title are translated.  
 - **Entity names**: Sensor names (Power, Voltage, Last measurement, etc.) use `translation_key` and are translated.  
 - **API**: `locale` and `Accept-Language` (and cookie `SolarEdge_Locale`) follow HA language (e.g. `en`, `de`, `nl`). The SolarEdge API may return measurement keys in the user’s language (e.g. “Leistung [W]” in German); the integration recognises multiple locale variants and normalises decimal separators (e.g. comma to dot) so power/current/voltage work in all supported languages.
 
@@ -376,7 +377,7 @@ Translation files: `translations/<code>.json` (config, entity, and device sectio
 | Lifetime energy | POST | `.../api/sites/{siteid}/layout/energy` (and energy cache) |
 | Session / CSRF | GET/POST | `.../solaredge-web/p/login`, etc. |
 
-The layout/energy response returns per-optimizer (and per-string) entries with `energy`, `moduleEnergy`, `unscaledEnergy`, and `units`. The integration converts lifetime energy to kWh from **`unscaledEnergy`** (always in Wh) so values update correctly; the **`units`** field applies only to the display values `energy` and `moduleEnergy`.
+The layout/energy response returns per-optimizer (and per-string) entries with `energy`, `moduleEnergy`, `unscaledEnergy`, and `units`. The integration converts lifetime energy to kWh from **`unscaledEnergy`** (always in Wh) so values update correctly; the **`units`** field applies only to the display values `energy` and `moduleEnergy`. The coordinator also computes a **site total** (sum of all `unscaledEnergy` in the response) and uses it for the site-level lifetime energy sensor when aggregated optimizer data is unreliable (e.g. mixed or missing per-optimizer data).
 
 - **Auth**: HTTP Basic Auth (username/password) for layout and systemData; web session (cookies + CSRF) for energy endpoint.  
 - **Locale**: From HA language (e.g. `en` → `en_US`); used in `systemData` and request headers/cookies.
@@ -464,6 +465,7 @@ solaredgeoptimizers/
 |----------|--------|--------|
 | `DOMAIN` | `"solaredgeoptimizers"` | Integration domain. |
 | `CONF_ENTITY_PREFIX` | `"entity_id_prefix"` | Optional config key for entity ID prefix (e.g. `se_`). |
+| `CONF_INCLUDE_SITE_ID_IN_ENTITY_ID` | `"include_site_id_in_entity_id"` | Optional config key; when true, entity IDs for inverter/string/optimizer include the site ID (default false). Site level always includes site ID. |
 | `UPDATE_DELAY` | 2 minutes | Coordinator update interval. |
 | `CHECK_TIME_DELTA` | 1 hour | Age threshold for zeroing live values. |
 | `SENSOR_TYPE_*` | e.g. `Current`, `Power`, `Voltage` | Sensor type identifiers for individual and aggregated sensors. |
