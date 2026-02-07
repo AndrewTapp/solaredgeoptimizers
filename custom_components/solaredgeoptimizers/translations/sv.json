@@ -14,7 +14,8 @@
           "siteid": "Plats-ID",
           "password": "Lösenord",
           "username": "Användarnamn (e-post)",
-          "entity_id_prefix": "Enhets-ID-prefix (valfritt)"
+          "entity_id_prefix": "Enhets-ID-prefix (valfritt)",
+          "include_site_id_in_entity_id": "Include SiteID in EntityID"
         }
       }
     }
