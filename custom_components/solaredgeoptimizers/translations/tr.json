@@ -15,7 +15,7 @@
           "password": "Parola",
           "username": "Kullanıcı adı (e-posta)",
           "entity_id_prefix": "Varlık ID öneki (isteğe bağlı)",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et"
         }
       }
     }
