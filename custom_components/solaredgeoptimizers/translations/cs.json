@@ -15,7 +15,7 @@
           "password": "Heslo",
           "username": "Uživatelské jméno (e-mail)",
           "entity_id_prefix": "Prefix ID entity (nepovinné)",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "Zahrnout ID lokality do ID entity"
         }
       }
     }
