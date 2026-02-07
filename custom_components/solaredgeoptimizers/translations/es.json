@@ -15,7 +15,7 @@
           "password": "Contraseña",
           "username": "Usuario (correo electrónico)",
           "entity_id_prefix": "Prefijo de ID de entidad (opcional)",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "Incluir ID de sitio en ID de entidad"
         }
       }
     }
