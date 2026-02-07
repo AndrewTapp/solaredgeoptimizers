@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "Enheden er allerede konfigureret"
-    },
+    "abort": {"already_configured": "Enheden er allerede konfigureret"},
     "error": {
       "cannot_connect": "Kunne ikke forbinde",
       "invalid_auth": "Ugyldig godkendelse",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "Placering-ID",
           "password": "Adgangskode",
-          "username": "Brugernavn (e-mail)"
+          "username": "Brugernavn (e-mail)",
+          "entity_id_prefix": "Entity-ID-præfiks (valgfri)"
         }
       }
     }
