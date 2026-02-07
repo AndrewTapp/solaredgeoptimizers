@@ -14,7 +14,8 @@
           "siteid": "站点 ID",
           "password": "密码",
           "username": "用户名（电子邮箱）",
-          "entity_id_prefix": "实体 ID 前缀（可选）"
+          "entity_id_prefix": "实体 ID 前缀（可选）",
+          "include_site_id_in_entity_id": "Include SiteID in EntityID"
         }
       }
     }
