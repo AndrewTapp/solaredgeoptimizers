@@ -16,6 +16,7 @@ To set up the integration you will need:
 - Your **Username**
 - Your **Password**
 - **Entity ID prefix** (optional) – If you run more than one site or want to avoid clashes with other integrations, you can set a short prefix (e.g. `se_`). All entity IDs will then start with that prefix (e.g. `sensor.se_power_9999999`). Leave blank for no prefix.
+- **Include SiteID in EntityID** (optional, default **off**) – When off, entity IDs for inverter, string, and optimizer levels omit the site ID (e.g. `sensor.power_1_1`, `sensor.power_1_1_1`). The site level always shows the actual site ID (e.g. `sensor.power_2065855`). Turn on to include the site ID in every level (e.g. `sensor.power_2065855_1_1_1`).
 
 ## How Your System Is Shown in Home Assistant
 
@@ -26,14 +27,14 @@ Your solar system is organised in a simple hierarchy. Device and entity names in
 - **String [site].[i].[s]** – e.g. “String 9999999.1.1”. Entity IDs: `sensor.[prefix]power_9999999_1_1`, etc.
 - **Optimizer [site].[i].[s].[o]** – e.g. “Optimizer 9999999.1.1.1”. Entity IDs: `sensor.[prefix]power_9999999_1_1_1`, etc.
 
-*[prefix]* is your optional Entity ID prefix (blank if not set). Entity IDs are path-based only (no device-name prefix), e.g. `sensor.xyz_power_2065855_1_1` for a string or `sensor.xyz_power_2065855_1_1_7` for an optimizer. The device hierarchy is **Site → Inverter → String → Optimizer**; optimizers are grouped under their string. In **Settings → Devices & services**, each device shows what it's **connected via** (e.g. an optimizer shows its string, a string shows its inverter). Friendly names and “connected via” use this same hierarchy so the layout is easy to follow. The integration entry title shows your site (e.g. "SolarEdge Site 2065855").
+*[prefix]* is your optional Entity ID prefix (blank if not set). By default, **Include SiteID in EntityID** is off, so inverter/string/optimizer entity IDs are shorter; the site level always shows the actual site ID. Entity IDs are path-based only (no device-name prefix), e.g. `sensor.xyz_power_2065855_1_1` for a string or `sensor.xyz_power_2065855_1_1_7` for an optimizer. The device hierarchy is **Site → Inverter → String → Optimizer**; optimizers are grouped under their string. In **Settings → Devices & services**, each device shows what it's **connected via** (e.g. an optimizer shows its string, a string shows its inverter). Friendly names and “connected via” use this same hierarchy so the layout is easy to follow. The integration entry title shows your site (e.g. "SolarEdge Site 2065855").
 
 ## What Data You Get
 
 ### Per optimizer (each panel)
 
 - **Voltage**, **Current**, **Optimizer voltage**, **Power** – Live values when the optimizer is reporting.
-- **Lifetime energy** – Total energy produced (kWh); this only goes up over time. The integration uses the API’s raw energy value (unscaledEnergy, in Wh) so it updates correctly regardless of how the portal displays units (Wh/kWh/MWh).
+- **Lifetime energy** – Total energy produced (kWh); this only goes up over time. The integration uses the API’s raw energy value (unscaledEnergy, in Wh) so it updates correctly regardless of how the portal displays units (Wh/kWh/MWh). When optimizer-level lifetime data is reliable, site lifetime is the sum of optimizers; when it is not (e.g. mixed or missing data), the site uses the portal’s total directly.
 - **Last measurement** – When the portal last had a reading for this optimizer.
 
 ### Per string, inverter, and site
@@ -84,6 +85,7 @@ Until this integration is part of Home Assistant Core, installing via HACS is re
    - **Settings** → **Devices & services** → **Add Integration** → search for **SolarEdge Optimizers**.
    - Enter your **Site ID**, **Username**, and **Password**.
    - Optionally set **Entity ID prefix** (e.g. `se_`) so all entity IDs start with that prefix; leave blank for no prefix.
+   - Optionally enable **Include SiteID in EntityID** (default off) to include the site ID in inverter/string/optimizer entity IDs; site-level entities always show the site ID.
 
 The first load can take a while if you have many optimizers; the integration fetches and organises all of them.
 
