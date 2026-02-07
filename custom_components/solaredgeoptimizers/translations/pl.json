@@ -14,7 +14,8 @@
           "siteid": "ID witryny",
           "password": "Hasło",
           "username": "Nazwa użytkownika (e-mail)",
-          "entity_id_prefix": "Prefiks ID encji (opcjonalny)"
+          "entity_id_prefix": "Prefiks ID encji (opcjonalny)",
+          "include_site_id_in_entity_id": "Include SiteID in EntityID"
         }
       }
     }
