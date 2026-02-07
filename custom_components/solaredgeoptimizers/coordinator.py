@@ -15,6 +15,7 @@ from .const import (
     DOMAIN,
     UPDATE_DELAY,
     CHECK_TIME_DELTA,
+    CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
 )
 
 # AJT: 10-Jan-2025: Changed from absolute import to relative import to use local solaredgeoptimizers.py instead of site-packages version
@@ -22,6 +23,7 @@ from .solaredgeoptimizers import (
     solaredgeoptimizers,
     SolarEdgeAggregatedData,
     _lifetime_energy_to_kwh,
+    _site_lifetime_kwh_from_layout_energy,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,6 +55,8 @@ class MyCoordinator(DataUpdateCoordinator):
         self._last_full_fetch_utc = None
         self._last_light_check_utc = None
         self._representative_optimizer_id = None
+        # Whether to include site ID in entity_id_path (for entity IDs). Default True when key missing (existing configs).
+        self._include_site_id_in_entity = bool(config_entry and config_entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, True))
 
     async def _async_setup(self) -> None:
         """Set up the coordinator.
@@ -129,8 +133,23 @@ class MyCoordinator(DataUpdateCoordinator):
                 )
                 _LOGGER.debug("Created device for string: %s", string_name)
 
-    def _calculate_aggregated_data(self, data_dict, current_utc, timetocheck, lifetime_energy_data, site_id):
-        """Calculate aggregated data at site, inverter, and string levels."""
+    def _calculate_aggregated_data(
+        self,
+        data_dict,
+        current_utc,
+        timetocheck,
+        lifetime_energy_data,
+        site_id,
+        portal_site_lifetime_kwh=None,
+        include_site_id_in_entity_id=False,
+    ):
+        """Calculate aggregated data at site, inverter, and string levels.
+
+        Site lifetime energy uses aggregated optimizer data when reliable. When
+        aggregated is unreliable (e.g. very small while portal has a real total),
+        site-level uses the portal total (sum of unscaledEnergy from layout/energy).
+        include_site_id_in_entity_id: when False, entity_id_path omits site_id (shorter entity IDs).
+        """
         # AJT: 27-Jan-2026: Pre-build lifetime energy lookup with string keys to avoid repeated conversions
         # AJT: 27-Jan-2026: Use dict comprehension for better performance
         lifetime_energy_lookup = {}
@@ -220,11 +239,12 @@ class MyCoordinator(DataUpdateCoordinator):
                 inverter_lifetime_energy = round(inverter_lifetime_energy + string_lifetime_energy, 3)
 
                 # Create aggregated string data (always, so values can reset to 0)
+                string_entity_path = (site_id_str, inv_idx, str_idx) if include_site_id_in_entity_id else (inv_idx, str_idx)
                 string_aggregated = SolarEdgeAggregatedData(
                     entity_id=f"string_{string.stringId}",
                     entity_type="string",
                     lifetime_energy=string_lifetime_energy,
-                    entity_id_path=(site_id_str, inv_idx, str_idx),
+                    entity_id_path=string_entity_path,
                 )
                 # AJT: 27-Jan-2026: Cache divisor to avoid repeated checks and enable faster division
                 if string_active_optimizers > 0:
@@ -259,11 +279,12 @@ class MyCoordinator(DataUpdateCoordinator):
                     inverter_last_measurement = string_last_measurement
 
             # Create aggregated inverter data (always, so values can reset to 0)
+            inverter_entity_path = (site_id_str, inv_idx) if include_site_id_in_entity_id else (inv_idx,)
             inverter_aggregated = SolarEdgeAggregatedData(
                 entity_id=f"inverter_{inverter.inverterId}",
                 entity_type="inverter",
                 lifetime_energy=round(inverter_lifetime_energy, 3),
-                entity_id_path=(site_id_str, inv_idx),
+                entity_id_path=inverter_entity_path,
             )
             # AJT: 27-Jan-2026: Cache divisor to avoid repeated checks and enable faster division
             if inverter_active_strings > 0:
@@ -303,11 +324,21 @@ class MyCoordinator(DataUpdateCoordinator):
                 site_last_measurement = inverter_last_measurement
 
         # Create site-level aggregated data (always)
+        # Use portal site total only when aggregated optimizer data is unreliable (e.g. all Wh, no real total)
+        _RELIABLE_THRESHOLD_KWH = 100.0
+        if (
+            portal_site_lifetime_kwh is not None
+            and portal_site_lifetime_kwh >= _RELIABLE_THRESHOLD_KWH
+            and site_lifetime_energy < _RELIABLE_THRESHOLD_KWH
+        ):
+            site_lifetime_energy = portal_site_lifetime_kwh
+        # Site level always uses actual site ID in entity ID (e.g. sensor.power_2065855)
+        site_entity_path = (site_id_str,)
         site_aggregated = SolarEdgeAggregatedData(
             entity_id=f"site_{site_id}",
             entity_type="site",
             lifetime_energy=round(site_lifetime_energy, 3),
-            entity_id_path=(site_id_str,),
+            entity_id_path=site_entity_path,
         )
         # AJT: 27-Jan-2026: Cache divisor to avoid repeated checks and enable faster division
         if site_active_inverters > 0:
@@ -457,7 +488,17 @@ class MyCoordinator(DataUpdateCoordinator):
                             e,
                         )
                         lifetime_energy_data = {}
-                    self._calculate_aggregated_data(data_dict, current_utc, self._timetocheck, lifetime_energy_data, site_id)
+                    # Portal site total (sum of unscaledEnergy); used for site only when aggregated is unreliable
+                    portal_site_lifetime_kwh = _site_lifetime_kwh_from_layout_energy(lifetime_energy_data)
+                    self._calculate_aggregated_data(
+                        data_dict,
+                        current_utc,
+                        self._timetocheck,
+                        lifetime_energy_data,
+                        site_id,
+                        portal_site_lifetime_kwh=portal_site_lifetime_kwh,
+                        include_site_id_in_entity_id=self._include_site_id_in_entity,
+                    )
 
                 # Update integration-level last polled timestamp *after* all calculations
                 self._integration_last_polled = current_utc
