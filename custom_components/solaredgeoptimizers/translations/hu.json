@@ -14,7 +14,8 @@
           "siteid": "Település azonosító",
           "password": "Jelszó",
           "username": "Felhasználónév (e-mail)",
-          "entity_id_prefix": "Entitás ID előtag (opcionális)"
+          "entity_id_prefix": "Entitás ID előtag (opcionális)",
+          "include_site_id_in_entity_id": "Include SiteID in EntityID"
         }
       }
     }
