@@ -15,7 +15,7 @@
           "password": "Passwort",
           "username": "Benutzername (E-Mail)",
           "entity_id_prefix": "Entity-ID-Präfix (optional)",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "Standon-ID in Entitäts-ID einbeziehen"
         }
       }
     }
