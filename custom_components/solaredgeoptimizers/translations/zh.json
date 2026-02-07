@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "设备已配置"
-    },
+    "abort": {"already_configured": "设备已配置"},
     "error": {
       "cannot_connect": "连接失败",
       "invalid_auth": "验证失败",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "站点 ID",
           "password": "密码",
-          "username": "用户名（电子邮箱）"
+          "username": "用户名（电子邮箱）",
+          "entity_id_prefix": "实体 ID 前缀（可选）"
         }
       }
     }
