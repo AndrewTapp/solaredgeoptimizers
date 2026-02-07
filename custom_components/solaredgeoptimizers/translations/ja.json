@@ -15,7 +15,7 @@
           "password": "パスワード",
           "username": "ユーザー名（メール）",
           "entity_id_prefix": "エンティティ ID プレフィックス（任意）",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "エンティティ ID にサイト ID を含める"
         }
       }
     }
