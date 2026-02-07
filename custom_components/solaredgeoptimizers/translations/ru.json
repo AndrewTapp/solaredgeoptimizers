@@ -14,7 +14,8 @@
           "siteid": "ID объекта",
           "password": "Пароль",
           "username": "Имя пользователя (email)",
-          "entity_id_prefix": "Префикс ID сущности (необязательно)"
+          "entity_id_prefix": "Префикс ID сущности (необязательно)",
+          "include_site_id_in_entity_id": "Include SiteID in EntityID"
         }
       }
     }
