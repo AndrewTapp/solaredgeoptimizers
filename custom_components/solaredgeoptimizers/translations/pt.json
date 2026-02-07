@@ -14,7 +14,8 @@
           "siteid": "ID do site",
           "password": "Senha",
           "username": "Nome de utilizador (e-mail)",
-          "entity_id_prefix": "Prefixo de ID da entidade (opcional)"
+          "entity_id_prefix": "Prefixo de ID da entidade (opcional)",
+          "include_site_id_in_entity_id": "Include SiteID in EntityID"
         }
       }
     }
