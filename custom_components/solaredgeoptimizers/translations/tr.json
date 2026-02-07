@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "Cihaz zaten yapılandırılmış"
-    },
+    "abort": {"already_configured": "Cihaz zaten yapılandırılmış"},
     "error": {
       "cannot_connect": "Bağlantı kurulamadı",
       "invalid_auth": "Geçersiz kimlik doğrulama",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "Site kimliği",
           "password": "Parola",
-          "username": "Kullanıcı adı (e-posta)"
+          "username": "Kullanıcı adı (e-posta)",
+          "entity_id_prefix": "Varlık ID öneki (isteğe bağlı)"
         }
       }
     }
