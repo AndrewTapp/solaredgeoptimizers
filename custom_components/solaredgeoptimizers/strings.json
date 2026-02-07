@@ -5,17 +5,19 @@
         "data": {
           "siteid": "[%key:common::config_flow::data::siteid%]",
           "username": "[%key:common::config_flow::data::username%]",
-          "password": "[%key:common::config_flow::data::password%]"
+          "password": "[%key:common::config_flow::data::password%]",
+          "entity_id_prefix": "Entity ID prefix (optional)",
+          "include_site_id_in_entity_id": "Include Site ID in Entity ID"
         }
       }
-    },
-    "error": {
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-      "unknown": "[%key:common::config_flow::error::unknown%]"
-    },
-    "abort": {
-      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
     }
+  },
+  "error": {
+    "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+    "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+    "unknown": "[%key:common::config_flow::error::unknown%]"
+  },
+  "abort": {
+    "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
   }
 }
