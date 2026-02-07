@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "デバイスは既に設定されています"
-    },
+    "abort": {"already_configured": "デバイスは既に設定されています"},
     "error": {
       "cannot_connect": "接続に失敗しました",
       "invalid_auth": "認証が無効です",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "サイト ID",
           "password": "パスワード",
-          "username": "ユーザー名（メール）"
+          "username": "ユーザー名（メール）",
+          "entity_id_prefix": "エンティティ ID プレフィックス（任意）"
         }
       }
     }
