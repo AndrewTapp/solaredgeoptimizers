@@ -5,6 +5,7 @@ import logging
 DOMAIN = "solaredgeoptimizers"
 CONF_SITE_ID = "siteid"
 CONF_ENTITY_PREFIX = "entity_id_prefix"  # Optional prefix for entity_id (e.g. "se_" -> sensor.se_power_2065855)
+CONF_INCLUDE_SITE_ID_IN_ENTITY_ID = "include_site_id_in_entity_id"  # If True, entity IDs include site ID (e.g. power_2065855_1_1_1); default False
 DATA_API_CLIENT = "api_client"
 
 PANEL_DATA = "panel_data"
