@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 
 import logging
 import async_timeout
+import requests
 
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import (
@@ -20,6 +21,7 @@ from .const import (
 from .solaredgeoptimizers import (
     solaredgeoptimizers,
     SolarEdgeAggregatedData,
+    _lifetime_energy_to_kwh,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -92,36 +94,31 @@ class MyCoordinator(DataUpdateCoordinator):
 
         device_registry = dr.async_get(self.hass)
 
-        # AJT: 25-Jan-2026: Create site device once for aggregated sensors
+        site_id = str(site.siteId)
         device_registry.async_get_or_create(
             config_entry_id=self.config_entry.entry_id,
             identifiers={(DOMAIN, f"site_{site.siteId}")},
             manufacturer="SolarEdge",
             model=f"SITE {site.siteId}",
-            name=f"Site {site.siteId}",
+            name=f"Site {site_id}",
         )
-        _LOGGER.debug("Created device for site: %s", site.siteId)
+        _LOGGER.debug("Created device for site: %s", site_id)
 
-        # AJT: 16-Jan-2026: Use enumerate instead of manual counter variable
-        for i, inverter in enumerate(site.inverters, start=1):
-            _LOGGER.info("Adding all optimizers from inverter: %s", i)
-
-            # Create inverter device
-            # AJT: 27-Jan-2026: Format inverter name with prefix
-            inverter_name = f"Inverter {inverter.displayName}"
+        for inv_idx, inverter in enumerate(site.inverters, start=1):
+            _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
+            inverter_name = f"Inverter {site_id}.{inv_idx}"
             device_registry.async_get_or_create(
                 config_entry_id=self.config_entry.entry_id,
                 identifiers={(DOMAIN, inverter.serialNumber)},
                 manufacturer="SolarEdge",
                 model=f"{inverter.type} {inverter.displayName}",
                 name=inverter_name,
-                hw_version=inverter.serialNumber,  # Add serial number as hardware version
+                hw_version=inverter.serialNumber,
+                via_device=(DOMAIN, f"site_{site.siteId}"),
             )
 
-            # AJT: 24-Jan-2026: Create string devices for aggregated sensors
-            for string in inverter.strings:
-                # AJT: 27-Jan-2026: Format string name with prefix
-                string_name = f"String {string.displayName}"
+            for str_idx, string in enumerate(inverter.strings, start=1):
+                string_name = f"String {site_id}.{inv_idx}.{str_idx}"
                 device_registry.async_get_or_create(
                     config_entry_id=self.config_entry.entry_id,
                     identifiers={(DOMAIN, f"{self.config_entry.entry_id}_{string.stringId}")},
@@ -155,8 +152,9 @@ class MyCoordinator(DataUpdateCoordinator):
         # AJT: 25-Jan-2026: Site lifetime energy is derived from aggregated inverters
         site_lifetime_energy = 0.0
 
+        site_id_str = str(site_id)
         # Process each inverter
-        for inverter in self._site_structure.inverters:
+        for inv_idx, inverter in enumerate(self._site_structure.inverters, start=1):
             inverter_current = 0.0
             inverter_power = 0.0
             inverter_voltage_sum = 0.0
@@ -168,7 +166,7 @@ class MyCoordinator(DataUpdateCoordinator):
             inverter_lifetime_energy = 0.0
 
             # Process each string in the inverter
-            for string in inverter.strings:
+            for str_idx, string in enumerate(inverter.strings, start=1):
                 string_current = 0.0
                 string_power = 0.0
                 string_voltage_sum = 0.0
@@ -210,13 +208,12 @@ class MyCoordinator(DataUpdateCoordinator):
                             string_active_optimizers += 1
 
                 # Get lifetime energy from API data (always, even if no active optimizers)
-                # AJT: 27-Jan-2026: Use pre-built lookup to avoid repeated string conversions
                 string_lifetime_energy = 0.0
                 energy_data = lifetime_energy_lookup.get(string.stringId)
-                # AJT: 27-Jan-2026: Skip isinstance check - we control the data structure
-                if energy_data and 'unscaledEnergy' in energy_data:
-                    # AJT: 27-Jan-2026: Round to 3 decimal places to avoid floating point precision issues
-                    string_lifetime_energy = round(float(energy_data['unscaledEnergy']) / 1000, 3)  # Convert to kWh
+                if energy_data:
+                    kWh = _lifetime_energy_to_kwh(energy_data)
+                    if kWh is not None:
+                        string_lifetime_energy = kWh
 
                 # AJT: 25-Jan-2026: Accumulate inverter lifetime energy from string lifetime energy
                 # AJT: 27-Jan-2026: Round after accumulation to maintain precision
@@ -226,7 +223,8 @@ class MyCoordinator(DataUpdateCoordinator):
                 string_aggregated = SolarEdgeAggregatedData(
                     entity_id=f"string_{string.stringId}",
                     entity_type="string",
-                    lifetime_energy=string_lifetime_energy
+                    lifetime_energy=string_lifetime_energy,
+                    entity_id_path=(site_id_str, inv_idx, str_idx),
                 )
                 # AJT: 27-Jan-2026: Cache divisor to avoid repeated checks and enable faster division
                 if string_active_optimizers > 0:
@@ -261,11 +259,11 @@ class MyCoordinator(DataUpdateCoordinator):
                     inverter_last_measurement = string_last_measurement
 
             # Create aggregated inverter data (always, so values can reset to 0)
-            # AJT: 27-Jan-2026: Round inverter lifetime energy to maintain precision
             inverter_aggregated = SolarEdgeAggregatedData(
                 entity_id=f"inverter_{inverter.inverterId}",
                 entity_type="inverter",
-                lifetime_energy=round(inverter_lifetime_energy, 3)
+                lifetime_energy=round(inverter_lifetime_energy, 3),
+                entity_id_path=(site_id_str, inv_idx),
             )
             # AJT: 27-Jan-2026: Cache divisor to avoid repeated checks and enable faster division
             if inverter_active_strings > 0:
@@ -305,12 +303,11 @@ class MyCoordinator(DataUpdateCoordinator):
                 site_last_measurement = inverter_last_measurement
 
         # Create site-level aggregated data (always)
-        # AJT: 27-Jan-2026: Round site lifetime energy to maintain precision
-        # AJT: 27-Jan-2026: Use cached site_id instead of accessing attribute
         site_aggregated = SolarEdgeAggregatedData(
             entity_id=f"site_{site_id}",
             entity_type="site",
-            lifetime_energy=round(site_lifetime_energy, 3)
+            lifetime_energy=round(site_lifetime_energy, 3),
+            entity_id_path=(site_id_str,),
         )
         # AJT: 27-Jan-2026: Cache divisor to avoid repeated checks and enable faster division
         if site_active_inverters > 0:
@@ -389,7 +386,7 @@ class MyCoordinator(DataUpdateCoordinator):
                     self._last_light_check_utc = now_utc
                     try:
                         _LOGGER.debug(
-                            "AJT: 25-Jan-2026: Adaptive polling lightweight check (opt_id=%s, interval=%s, latest=%s)",
+                            "Adaptive polling lightweight check (opt_id=%s, interval=%s, latest=%s)",
                             self._representative_optimizer_id,
                             desired_check_interval,
                             latest_measurement,
@@ -404,7 +401,7 @@ class MyCoordinator(DataUpdateCoordinator):
                             # Portal has new data; refresh, but avoid hammering if multiple checks happen quickly
                             if self._last_full_fetch_utc is None or (now_utc - self._last_full_fetch_utc) >= timedelta(minutes=2):
                                 _LOGGER.debug(
-                                    "AJT: 25-Jan-2026: Adaptive polling detected new data (rep_last=%s > latest=%s); scheduling full refresh",
+                                    "Adaptive polling detected new data (rep_last=%s > latest=%s); scheduling full refresh",
                                     rep_lm,
                                     latest_measurement,
                                 )
@@ -414,7 +411,7 @@ class MyCoordinator(DataUpdateCoordinator):
 
                 data_list = None
                 if do_full_refresh:
-                    _LOGGER.debug("AJT: 25-Jan-2026: Performing full refresh (requestAllData)")
+                    _LOGGER.debug("Performing full refresh (requestAllData)")
                     data_list = await self.hass.async_add_executor_job(self.my_api.requestAllData)
                     self._last_full_fetch_utc = now_utc
 
@@ -452,7 +449,14 @@ class MyCoordinator(DataUpdateCoordinator):
                     # AJT: 25-Jan-2026: Use cached lifetime energy (refresh at most hourly) to avoid frequent portal calls
                     # AJT: 27-Jan-2026: Cache site_id once to avoid repeated attribute access
                     site_id = self._site_structure.siteId
-                    lifetime_energy_data = await self.hass.async_add_executor_job(self.my_api.get_lifetime_energy_cached)
+                    try:
+                        lifetime_energy_data = await self.hass.async_add_executor_job(self.my_api.get_lifetime_energy_cached)
+                    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                        _LOGGER.warning(
+                            "SolarEdge API unreachable when fetching lifetime energy: %s. Using empty data for this update.",
+                            e,
+                        )
+                        lifetime_energy_data = {}
                     self._calculate_aggregated_data(data_dict, current_utc, self._timetocheck, lifetime_energy_data, site_id)
 
                 # Update integration-level last polled timestamp *after* all calculations
