@@ -14,7 +14,8 @@
           "siteid": "Site id",
           "password": "Password",
           "username": "Username",
-          "entity_id_prefix": "Entity ID prefix (optional)"
+          "entity_id_prefix": "Entity ID prefix (optional)",
+          "include_site_id_in_entity_id": "Include SiteID in EntityID"
         }
       }
     }
