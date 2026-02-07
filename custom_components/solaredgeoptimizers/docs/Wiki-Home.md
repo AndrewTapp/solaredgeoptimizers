@@ -237,9 +237,9 @@ Ensure `custom_components/solaredgeoptimizers/` contains at least: `__init__.py`
 
 ## 6. Configuration
 
-- **Single step**: Site ID, Username (email), Password, optional **Entity ID prefix**, and optional **Include SiteID in EntityID** (default **off**).  
+- **Single step**: Site ID, Username (email), Password, optional **Entity ID prefix**, and optional **Include Site ID in Entity ID** (default **off**).  
 - **Entity ID prefix**: Optional. If set (e.g. `se_`), all entity IDs start with that prefix (e.g. `sensor.se_power_9999999`). Normalised to lowercase with spaces as underscores. Leave blank for no prefix. Useful when running multiple sites or avoiding clashes with other integrations.  
-- **Include SiteID in EntityID**: Optional, default **off**. When off, inverter/string/optimizer entity IDs omit the site ID (e.g. `sensor.power_1_1`); site level always includes the actual site ID (e.g. `sensor.power_2065855`). When on, all levels include the site ID in the path.  
+- **Include Site ID in Entity ID**: Optional, default **off**. When off, inverter/string/optimizer entity IDs omit the site ID (e.g. `sensor.power_1_1`); site level always includes the actual site ID (e.g. `sensor.power_2065855`). When on, all levels include the site ID in the path.  
 - **Validation**: Calls SolarEdge `GET .../layout/logical` with HTTP Basic Auth; success = 200.  
 - **Config entry title**: Translated, e.g. “SolarEdge Site 12345” (from `config.title_entry` with `%(siteid)s`).  
 - **Errors**: “Failed to connect”, “Invalid authentication”, “Unexpected error” (keys `cannot_connect`, `invalid_auth`, `unknown`); all translatable.  
@@ -293,7 +293,7 @@ No YAML configuration is required; all configuration is via the config flow.
 | Inverter count | Number of inverters. |
 | **Last polled** | (Site device only.) When the integration last successfully finished an update. |
 
-All aggregated sensors use the same naming pattern (e.g. “Power”, “Current (average)”) with the device name indicating the level. Entity IDs include the path so they are unique. When **Include SiteID in EntityID** is **off** (default), inverter/string/optimizer IDs omit the site; site level and Last polled always show the site ID. When **on**, all levels include the site ID.
+All aggregated sensors use the same naming pattern (e.g. “Power”, “Current (average)”) with the device name indicating the level. Entity IDs include the path so they are unique. When **Include Site ID in Entity ID** is **off** (default), inverter/string/optimizer IDs omit the site; site level and Last polled always show the site ID. When **on**, all levels include the site ID.
 
 | Level    | Example (prefix blank, Include SiteID **off**) | Example (prefix blank, Include SiteID **on**) |
 |----------|------------------------------------------------|-----------------------------------------------|
@@ -334,7 +334,7 @@ Aggregations (string/inverter/site) are computed in the coordinator from optimiz
 
 ## 10. Internationalization (i18n)
 
-- **Config flow**: Labels (Site id, Username, Password, **Entity ID prefix (optional)**, **Include SiteID in EntityID**), errors, abort message, and config entry title are translated.  
+- **Config flow**: Labels (Site id, Username, Password, **Entity ID prefix (optional)**, **Include Site ID in Entity ID**), errors, abort message, and config entry title are translated.  
 - **Entity names**: Sensor names (Power, Voltage, Last measurement, etc.) use `translation_key` and are translated.  
 - **API**: `locale` and `Accept-Language` (and cookie `SolarEdge_Locale`) follow HA language (e.g. `en`, `de`, `nl`). The SolarEdge API may return measurement keys in the user’s language (e.g. “Leistung [W]” in German); the integration recognises multiple locale variants and normalises decimal separators (e.g. comma to dot) so power/current/voltage work in all supported languages.
 
