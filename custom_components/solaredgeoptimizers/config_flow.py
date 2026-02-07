@@ -24,6 +24,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required("siteid"): str,
         vol.Required("username"): str,
         vol.Required("password"): str,
+        vol.Optional("entity_id_prefix", default=""): str,
     }
 )
 
@@ -63,7 +64,8 @@ async def validate_input(
         raise InvalidAuth
 
     # Return info that you want to store in the config entry (title uses translation).
-    return {"title": translated_title.format(siteid=data["siteid"])}
+    # Translations use %(siteid)s placeholder, so use %-formatting not .format()
+    return {"title": translated_title % {"siteid": data["siteid"]}}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -84,11 +86,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors = {}
 
         # Resolve config entry title in the user's language
+        # async_get_translations(hass, language, category, integrations)
+        # integrations must be an iterable (e.g. [DOMAIN]), not a string, or
+        # set("solaredgeoptimizers") becomes single-letter "integrations"
         translations = await async_get_translations(
-            self.hass, "config", self.hass.config.language, DOMAIN
+            self.hass, self.hass.config.language, "config", [DOMAIN]
         )
+        # HA returns keys as component.<domain>.<category>.<key> for single integration
+        full_key = f"component.{DOMAIN}.config.title_entry"
         title_template = translations.get(
-            "config.title_entry", "SolarEdge Site %(siteid)s"
+            full_key, translations.get("config.title_entry", "SolarEdge Site %(siteid)s")
         )
 
         try:
