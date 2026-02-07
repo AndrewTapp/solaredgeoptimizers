@@ -15,7 +15,7 @@
           "password": "Κωδικός πρόσβασης",
           "username": "Όνομα χρήστη (email)",
           "entity_id_prefix": "Πρόθεμα ID οντοτήτων (προαιρετικό)",
-          "include_site_id_in_entity_id": "Include SiteID in EntityID"
+          "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων"
         }
       }
     }
