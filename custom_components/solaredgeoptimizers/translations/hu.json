@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "Az eszköz már konfigurálva van"
-    },
+    "abort": {"already_configured": "Az eszköz már konfigurálva van"},
     "error": {
       "cannot_connect": "Sikertelen csatlakozás",
       "invalid_auth": "Érvénytelen hitelesítés",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "Település azonosító",
           "password": "Jelszó",
-          "username": "Felhasználónév (e-mail)"
+          "username": "Felhasználónév (e-mail)",
+          "entity_id_prefix": "Entitás ID előtag (opcionális)"
         }
       }
     }
