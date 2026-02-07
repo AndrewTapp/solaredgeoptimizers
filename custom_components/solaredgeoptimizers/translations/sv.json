@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "Enheten är redan konfigurerad"
-    },
+    "abort": {"already_configured": "Enheten är redan konfigurerad"},
     "error": {
       "cannot_connect": "Kunde inte ansluta",
       "invalid_auth": "Ogiltig autentisering",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "Plats-ID",
           "password": "Lösenord",
-          "username": "Användarnamn (e-post)"
+          "username": "Användarnamn (e-post)",
+          "entity_id_prefix": "Enhets-ID-prefix (valfritt)"
         }
       }
     }
