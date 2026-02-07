@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "Zařízení je již nakonfigurováno"
-    },
+    "abort": {"already_configured": "Zařízení je již nakonfigurováno"},
     "error": {
       "cannot_connect": "Nepodařilo se připojit",
       "invalid_auth": "Neplatné ověření",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "ID lokality",
           "password": "Heslo",
-          "username": "Uživatelské jméno (e-mail)"
+          "username": "Uživatelské jméno (e-mail)",
+          "entity_id_prefix": "Prefix ID entity (nepovinné)"
         }
       }
     }
