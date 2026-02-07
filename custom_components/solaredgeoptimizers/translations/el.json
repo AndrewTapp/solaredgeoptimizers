@@ -2,9 +2,7 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {
-      "already_configured": "Η συσκευή είναι ήδη ρυθμισμένη"
-    },
+    "abort": {"already_configured": "Η συσκευή είναι ήδη ρυθμισμένη"},
     "error": {
       "cannot_connect": "Αποτυχία σύνδεσης",
       "invalid_auth": "Μη έγκυρη επαλήθευση",
@@ -15,7 +13,8 @@
         "data": {
           "siteid": "Αναγνωριστικό τοποθεσίας",
           "password": "Κωδικός πρόσβασης",
-          "username": "Όνομα χρήστη (email)"
+          "username": "Όνομα χρήστη (email)",
+          "entity_id_prefix": "Πρόθεμα ID οντοτήτων (προαιρετικό)"
         }
       }
     }
