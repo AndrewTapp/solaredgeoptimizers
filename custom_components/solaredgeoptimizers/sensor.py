@@ -21,6 +21,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import (
+    CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
     DOMAIN,
     CONF_ENTITY_PREFIX,
     SENSOR_TYPE_INDIVIDUAL,
@@ -83,6 +84,8 @@ async def async_setup_entry(
 
     base_name = _entity_prefix(entry)
     site_id = str(site.siteId)
+    # Default True when key missing so existing configs keep current entity IDs
+    include_site_id = entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, True)
     optimizer_tasks = []
     for inv_idx, inverter in enumerate(site.inverters, start=1):
         _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
@@ -130,13 +133,13 @@ async def async_setup_entry(
                         string,
                         base_name=base_name,
                         site_id=site_id,
-                        entity_id_path=(site_id, inv_idx, str_idx, opt_idx),
+                        entity_id_path=(site_id, inv_idx, str_idx, opt_idx) if include_site_id else (inv_idx, str_idx, opt_idx),
                     )
                 )
 
     sensors_to_add.append(
         SolarEdgeIntegrationLastPolledSensor(
-            coordinator, hass, entry, site_id, base_name=base_name
+            coordinator, hass, entry, site_id, base_name=base_name, include_site_id_in_entity_id=include_site_id
         )
     )
 
@@ -147,7 +150,7 @@ async def async_setup_entry(
                 string_aggregated = SolarEdgeAggregatedData(
                     entity_id=f"string_{string.stringId}",
                     entity_type="string",
-                    entity_id_path=(site_id, inv_idx, str_idx),
+                    entity_id_path=(site_id, inv_idx, str_idx) if include_site_id else (inv_idx, str_idx),
                 )
                 string_aggregated.serialnumber = f"String_{string.stringId}"
                 string_aggregated.panel_description = string.displayName
@@ -171,7 +174,7 @@ async def async_setup_entry(
             inverter_aggregated = SolarEdgeAggregatedData(
                 entity_id=f"inverter_{inverter.inverterId}",
                 entity_type="inverter",
-                entity_id_path=(site_id, inv_idx),
+                entity_id_path=(site_id, inv_idx) if include_site_id else (inv_idx,),
             )
             inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
             inverter_aggregated.panel_description = inverter.displayName
@@ -194,7 +197,7 @@ async def async_setup_entry(
         site_aggregated = SolarEdgeAggregatedData(
             entity_id=f"site_{site_struct.siteId}",
             entity_type="site",
-            entity_id_path=(site_id,),
+            entity_id_path=(site_id,),  # Site level always uses actual site ID in entity ID
         )
         site_aggregated.serialnumber = f"Site_{site_struct.siteId}"
         site_aggregated.panel_description = f"Site {site_struct.siteId}"
@@ -244,14 +247,16 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
         entry: ConfigEntry,
         site_id: str,
         base_name: str = "",
+        include_site_id_in_entity_id: bool = False,
     ) -> None:
         super().__init__(coordinator)
         self._hass = hass
         self._entry = entry
         self._site_id = site_id
         self._base_name = (base_name + "_") if base_name else ""
+        self._include_site_id_in_entity_id = include_site_id_in_entity_id
 
-        self._attr_unique_id = f"{entry.entry_id}_last_polled_{site_id}"
+        self._attr_unique_id = f"{entry.entry_id}_last_polled_{site_id}" if include_site_id_in_entity_id else f"{entry.entry_id}_last_polled"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"site_{site_id}")},
             manufacturer="SolarEdge",
@@ -262,8 +267,10 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def suggested_object_id(self) -> str | None:
-        """Suggest entity object_id: [base]last_polled_[site] for unique entity_id per site."""
-        return f"{self._base_name}last_polled_{self._site_id}"
+        """Suggest entity object_id: [base]last_polled_[site] or [base]last_polled when site ID excluded."""
+        if self._include_site_id_in_entity_id:
+            return f"{self._base_name}last_polled_{self._site_id}"
+        return f"{self._base_name}last_polled"
 
     @callback
     def _handle_coordinator_update(self) -> None:
