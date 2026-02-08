@@ -84,8 +84,8 @@ async def async_setup_entry(
 
     base_name = _entity_prefix(entry)
     site_id = str(site.siteId)
-    # Default True when key missing so existing configs keep current entity IDs
-    include_site_id = entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, True)
+    # Default False when key missing (e.g. upgraded from old version without these options)
+    include_site_id = entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, False)
     optimizer_tasks = []
     for inv_idx, inverter in enumerate(site.inverters, start=1):
         _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
@@ -116,10 +116,11 @@ async def async_setup_entry(
             continue
 
         if info is not None:
-            _LOGGER.debug(
-                "Added optimizer for panel_id: %s to Home Assistant",
-                optimizer.displayName,
-            )
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "Added optimizer for panel_id: %s to Home Assistant",
+                    optimizer.displayName,
+                )
             for sensortype in SENSOR_TYPE_INDIVIDUAL:
                 sensors_to_add.append(
                     SolarEdgeOptimizersSensor(
@@ -155,7 +156,8 @@ async def async_setup_entry(
                 string_aggregated.serialnumber = f"String_{string.stringId}"
                 string_aggregated.panel_description = string.displayName
 
-                _LOGGER.debug("Creating aggregated sensors for string: %s", string.displayName)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Creating aggregated sensors for string: %s", string.displayName)
                 for sensortype in SENSOR_TYPE_AGGREGATED_STRING:
                     sensors_to_add.append(
                         SolarEdgeAggregatedSensor(
@@ -179,7 +181,8 @@ async def async_setup_entry(
             inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
             inverter_aggregated.panel_description = inverter.displayName
 
-            _LOGGER.debug("Creating aggregated sensors for inverter: %s", inverter.displayName)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Creating aggregated sensors for inverter: %s", inverter.displayName)
             for sensortype in SENSOR_TYPE_AGGREGATED_INVERTER:
                 sensors_to_add.append(
                     SolarEdgeAggregatedSensor(
@@ -202,7 +205,8 @@ async def async_setup_entry(
         site_aggregated.serialnumber = f"Site_{site_struct.siteId}"
         site_aggregated.panel_description = f"Site {site_struct.siteId}"
 
-        _LOGGER.debug("Creating aggregated sensors for site: %s", site_id)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Creating aggregated sensors for site: %s", site_id)
         for sensortype in SENSOR_TYPE_AGGREGATED_SITE:
             sensors_to_add.append(
                 SolarEdgeAggregatedSensor(
@@ -257,6 +261,9 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
         self._include_site_id_in_entity_id = include_site_id_in_entity_id
 
         self._attr_unique_id = f"{entry.entry_id}_last_polled_{site_id}" if include_site_id_in_entity_id else f"{entry.entry_id}_last_polled"
+        # Full object_id so HA does not prefix with device name (e.g. avoid sensor.site_123_last_polled_123)
+        obj_id = f"{self._base_name}last_polled_{self._site_id}" if include_site_id_in_entity_id else f"{self._base_name}last_polled"
+        self.internal_integration_suggested_object_id = obj_id
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, f"site_{site_id}")},
             manufacturer="SolarEdge",
@@ -267,10 +274,10 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def suggested_object_id(self) -> str | None:
-        """Suggest entity object_id: [base]last_polled_[site] or [base]last_polled when site ID excluded."""
-        if self._include_site_id_in_entity_id:
-            return f"{self._base_name}last_polled_{self._site_id}"
-        return f"{self._base_name}last_polled"
+        """Suggest full entity object_id (no device prefix)."""
+        return getattr(self, "internal_integration_suggested_object_id", None) or (
+            f"{self._base_name}last_polled_{self._site_id}" if self._include_site_id_in_entity_id else f"{self._base_name}last_polled"
+        )
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -328,10 +335,11 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         slug = self._slug_for_sensortype()
         self._attr_unique_id = f"{entry.entry_id}_{slug}_{path_str}" if path_str else f"{entry.entry_id}_{slug}_{panel.panel_id}"
 
-        # Force HA to use our object_id as suggested_object_id (no device-name prefix).
-        # Otherwise entity_ids get prefixed with device name (e.g. sensor.string_1_1_xyz_power_2065855_1_1).
-        if slug:
-            object_id = f"{self._base_name}{slug}_{path_str}" if path_str else f"{self._base_name}{slug}_{panel.panel_id}"
+        # Force HA to use our full object_id (no device-name prefix like "site_123_" or "inverter_1_").
+        # Always set both so entity_id is sensor.[prefix]slug_path (e.g. sensor.power_2065855) regardless
+        # of locale/timezone; some HA setups otherwise prefix with device name (e.g. sensor.site_2065855_power_2065855).
+        object_id = f"{self._base_name}{slug}_{path_str}" if path_str else f"{self._base_name}{slug}_{panel.panel_id}"
+        if object_id.strip("_"):  # avoid setting empty or underscore-only
             self.internal_integration_suggested_object_id = object_id
 
         # Translation key for entity name (i18n)
@@ -418,7 +426,10 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def suggested_object_id(self) -> str | None:
-        """Suggest entity object_id: [base]slug_[site]_[i]_[s] so entity_ids are unique across multiple sites."""
+        """Suggest full entity object_id (no device prefix). Return same as internal_integration_suggested_object_id when set."""
+        # Prefer our precomputed full id so HA does not combine with device name (avoids sensor.site_123_power_123)
+        if getattr(self, "internal_integration_suggested_object_id", None):
+            return self.internal_integration_suggested_object_id
         slug = self._slug_for_sensortype()
         if not slug:
             return None
@@ -439,9 +450,11 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
                 attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
                 if attr_name:
                     new_value = getattr(item, attr_name, 0)
-                    
+                    # Inverter count, string count, optimizer count must be integers
+                    if self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
+                        new_value = int(new_value) if new_value is not None else 0
                     # AJT: 27-Jan-2026: For lifetime energy, ensure value never decreases (rounding/precision issues)
-                    if self._sensor_type is SENSOR_TYPE_ENERGY:
+                    elif self._sensor_type is SENSOR_TYPE_ENERGY:
                         # Round to 3 decimal places for consistency
                         # AJT: 27-Jan-2026: Only convert to float if needed (may already be float)
                         if new_value is not None:
@@ -463,6 +476,9 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
                         self._attr_native_value = float(value.replace(",", ""))
                     except ValueError:
                         _LOGGER.warning("Could not convert value '%s' to float for sensor %s", value, self._log_name)
+                # Inverter/string/optimizer count must always be integer
+                if self._sensor_type is SENSOR_TYPE_CHILD_COUNT and self._attr_native_value is not None:
+                    self._attr_native_value = int(self._attr_native_value)
 
                 self.async_write_ha_state()
 
@@ -538,10 +554,8 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         self._log_name = f"{self._sensor_type} {optimizer.displayName}"
         self._optimizer_display_name = f"{site_id}.{'.'.join(map(str, entity_id_path[1:]))}" if len(entity_id_path) >= 4 else str(optimizer.displayName)
 
-        # Force HA to use our object_id as suggested_object_id (not object_id_base).
-        # Otherwise suggested_object_id is treated as object_id_base and the registry
-        # prefixes the device name ("optimizer_[site]_[inv]_[str]_[opt]_"), giving
-        # entity_ids like sensor.optimizer_2065855_1_1_1_xyz_power_2065855_1_1_1.
+        # Force HA to use our full object_id (no device prefix like "optimizer_1_1_1_").
+        # Always set when we have path so entity_id is sensor.[prefix]slug_path regardless of locale.
         if slug and path_str:
             self.internal_integration_suggested_object_id = f"{self._base_name}{slug}_{path_str}"
 
@@ -584,18 +598,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def suggested_object_id(self) -> str | None:
-        """Suggest entity object_id: [base]slug_[site]_[i]_[s]_[o] only (no 'optimizer_...' prefix).
-
-        Results in entity_id like sensor.[base]power_[site]_[inv]_[str]_[opt], e.g.
-        sensor.power_12345_1_1_1 or sensor.se_power_12345_1_1_1.
-        """
+        """Suggest full entity object_id (no device prefix). Return same as internal when set."""
+        if getattr(self, "internal_integration_suggested_object_id", None):
+            return self.internal_integration_suggested_object_id
         slug = self._TRANSLATION_KEYS.get(
             self._sensor_type, self._sensor_type.lower().replace(" ", "_")
         )
         if not slug or not self._entity_id_path:
             return None
         path_str = "_".join(map(str, self._entity_id_path))
-        # Return only [base]slug_path so entity_id is sensor.[base]slug_path (no optimizer_ prefix)
         return f"{self._base_name}{slug}_{path_str}"
 
     @callback
@@ -603,20 +614,14 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         """Handle updated data from the coordinator."""
 
         if self.coordinator.data is not None:
-            # AJT: 16-Jan-2026: Reduce debug logging overhead - only log if debug level is enabled
-            # AJT: 27-Jan-2026: Already using isEnabledFor check - this is optimal
+            # Cache panel_id once for this update (used for lookup and optional debug)
+            panel_id = self._panelobject.panel_id
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                # AJT: 27-Jan-2026: Cache attribute access to avoid repeated lookups
-                panel_id = self._panelobject.panel_id
                 _LOGGER.debug(
                     "Update the sensor %s - %s with the info from the coordinator",
                     panel_id,
                     self._sensor_type,
                 )
-
-            # AJT: 16-Jan-2026: Use dictionary lookup (O(1)) instead of linear search (O(n))
-            # AJT: 27-Jan-2026: Cache panel_id to avoid repeated attribute access
-            panel_id = self._panelobject.panel_id
             item = self.coordinator.data.get(panel_id)
             if item is not None:
                 # AJT: 16-Jan-2026: Use pre-computed timetocheck from coordinator (calculated once per update)
