@@ -182,7 +182,8 @@ class solaredgeoptimizers:
                         _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
                         self._lifetime_energy_cache = {}
                 self._lifetime_energy_cache_time = now
-                _LOGGER.debug("Refreshed lifetime energy cache (cached accessor)")
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Refreshed lifetime energy cache (cached accessor)")
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 # Transient DNS/network errors: keep previous cache, do not update cache time
                 _LOGGER.warning(
@@ -199,7 +200,8 @@ class solaredgeoptimizers:
 
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
-        _LOGGER.debug("SolarEdge Optimizers: Login check URL: %s", url)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Login check URL: %s", url)
 
         kwargs = {}
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
@@ -207,7 +209,8 @@ class solaredgeoptimizers:
                              }
         # AJT: 24-Jan-2026: Add timeout to prevent hanging and log request attempt
         kwargs["timeout"] = 30  # 30 second timeout
-        _LOGGER.debug("SolarEdge Optimizers: Making login check request with 30s timeout")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Making login check request with 30s timeout")
 
         try:
             # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
@@ -236,13 +239,15 @@ class solaredgeoptimizers:
 
         # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
-        _LOGGER.debug("SolarEdge Optimizers: Logical layout URL: %s", url)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Logical layout URL: %s", url)
 
         kwargs = {}
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
         # AJT: 24-Jan-2026: Add timeout to prevent hanging
         kwargs["timeout"] = 60  # 60 second timeout for layout request
-        _LOGGER.debug("SolarEdge Optimizers: Making logical layout request with 60s timeout")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Making logical layout request with 60s timeout")
 
         try:
             # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
@@ -275,29 +280,33 @@ class solaredgeoptimizers:
         if (self._panels_cache is None or
             self._panels_cache_time is None or
             (now - self._panels_cache_time) > self._panels_cache_ttl):
-            _LOGGER.debug("SolarEdge Optimizers: Cache miss, fetching fresh layout data")
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: Cache miss, fetching fresh layout data")
             try:
                 raw_layout = self.requestLogicalLayout()
-                _LOGGER.debug("SolarEdge Optimizers: Received raw layout data, parsing JSON")
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Received raw layout data, parsing JSON")
                 json_obj = json.loads(raw_layout)
                 # AJT: 22-Jan-2026: Log parsed logical layout JSON for debugging
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("Parsed logical layout JSON: %s", json_obj)
-                _LOGGER.debug("SolarEdge Optimizers: Creating SolarEdgeSite object")
+                    _LOGGER.debug("SolarEdge Optimizers: Creating SolarEdgeSite object")
                 self._panels_cache = SolarEdgeSite(json_obj)
                 self._panels_cache_time = now
                 _LOGGER.info("SolarEdge Optimizers: Refreshed panels cache with %s optimizers",
                            self._panels_cache.returnNumberOfOptimizers())
             except json.JSONDecodeError as e:
                 _LOGGER.error("SolarEdge Optimizers: Failed to parse layout JSON: %s", e)
-                _LOGGER.debug("SolarEdge Optimizers: Raw layout data: %s", raw_layout[:1000] if len(raw_layout) > 1000 else raw_layout)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Raw layout data: %s", raw_layout[:1000] if len(raw_layout) > 1000 else raw_layout)
                 raise
             except Exception as e:
                 _LOGGER.error("SolarEdge Optimizers: Unexpected error in requestListOfAllPanels: %s", e)
                 raise
         else:
-            _LOGGER.debug("SolarEdge Optimizers: Using cached panels data (age: %s)",
-                         now - self._panels_cache_time)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: Using cached panels data (age: %s)",
+                             now - self._panels_cache_time)
         return self._panels_cache
 
     def requestSystemData(self, itemId):
@@ -333,12 +342,14 @@ class solaredgeoptimizers:
                     # AJT: 10-Jan-2025: Ensure we have a dictionary before accessing keys
                     if not isinstance(json_object, dict):
                         _LOGGER.error("Unexpected data type returned for optimizer %s: %s", itemId, type(json_object))
-                        _LOGGER.debug("Response data: %s", json_object)
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug("Response data: %s", json_object)
                         return None
                     
                     # AJT: 10-Jan-2025: Changed from direct key access to .get() for safer dictionary access
                     if json_object.get("lastMeasurementDate") == "":
-                        _LOGGER.debug("Skipping optimizer %s without measurements", itemId)
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug("Skipping optimizer %s without measurements", itemId)
                         return None
                     else:
                         # AJT: 18-Jan-2026: Pass timezone to SolarEdgeOptimizerData for correct date parsing
@@ -346,12 +357,14 @@ class solaredgeoptimizers:
                 except KeyError as e:
                     # AJT: 10-Jan-2025: Added specific KeyError handling with better logging
                     _LOGGER.error("Missing expected key in response for optimizer %s: %s", itemId, e)
-                    _LOGGER.debug("Response data: %s", json_object)
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("Response data: %s", json_object)
                     return None
                 except Exception as e:
                     # AJT: Replaced print() with logging and added more detailed error info
                     _LOGGER.error("Error while processing data for optimizer %s: %s", itemId, e)
-                    _LOGGER.debug("Response data: %s", json_object)
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("Response data: %s", json_object)
                     raise Exception("Error while processing data") from e
             else:
                 # AJT: 15-Jan-2026: Treat 5xx errors as temporary with a clean log line
@@ -360,13 +373,15 @@ class solaredgeoptimizers:
                         "Temporary server error from SolarEdge (HTTP %s). Will retry on next update.",
                         r.status_code,
                     )
-                    _LOGGER.debug(
-                        "Server error response body for optimizer %s: %s", itemId, r.text
-                    )
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Server error response body for optimizer %s: %s", itemId, r.text
+                        )
                     raise Exception(f"Temporary server error from SolarEdge (HTTP {r.status_code})")
                 # Other HTTP errors: log status and body at debug only, raise concise exception
                 _LOGGER.error("Error sending request to SolarEdge. Status code: %s", r.status_code)
-                _LOGGER.debug("Error response body for optimizer %s: %s", itemId, r.text)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Error response body for optimizer %s: %s", itemId, r.text)
                 raise Exception(f"Problem sending request to SolarEdge (HTTP {r.status_code})")
 
     def requestAllData(self):
@@ -399,10 +414,12 @@ class solaredgeoptimizers:
             # Update cache
             self._lifetime_energy_cache = lifetimeenergy
             self._lifetime_energy_cache_time = now
-            _LOGGER.debug("Refreshed lifetime energy cache")
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Refreshed lifetime energy cache")
         else:
             lifetimeenergy = self._lifetime_energy_cache
-            _LOGGER.debug("Using cached lifetime energy data")
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Using cached lifetime energy data")
 
         # AJT: 16-Jan-2026: Collect all optimizer IDs first for parallel processing
         # AJT: 27-Jan-2026: Use list comprehension for better performance than append in loop
@@ -642,7 +659,8 @@ class solaredgeoptimizers:
         if hasattr(self._thread_local, 'session') and self._thread_local.session is not None:
             try:
                 self._thread_local.session.close()
-                _LOGGER.debug("Closed thread-local session")
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Closed thread-local session")
             except Exception as e:
                 _LOGGER.warning("Error closing thread-local session: %s", e)
             finally:
@@ -723,36 +741,44 @@ class solaredgeoptimizers:
 
 class SolarEdgeSite:
     def __init__(self, json_obj):
-        # AJT: 24-Jan-2026: Add debugging for site initialization
-        _LOGGER.debug("SolarEdge Optimizers: Initializing SolarEdgeSite with siteId: %s", json_obj.get("siteId"))
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Initializing SolarEdgeSite with siteId: %s", json_obj.get("siteId"))
         self.siteId = json_obj["siteId"]
-        _LOGGER.debug("SolarEdge Optimizers: Getting all inverters for site %s", self.siteId)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Getting all inverters for site %s", self.siteId)
         self.inverters = self.__GetAllInverters(json_obj)
-        _LOGGER.debug("SolarEdge Optimizers: Site %s initialized with %d inverters", self.siteId, len(self.inverters))
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Site %s initialized with %d inverters", self.siteId, len(self.inverters))
 
     def __GetAllInverters(self, json_obj):
-        # AJT: 24-Jan-2026: Add debugging for inverter parsing
-        _LOGGER.debug("SolarEdge Optimizers: Parsing inverters from logical tree")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Parsing inverters from logical tree")
 
         inverters = []
         child_count = len(json_obj["logicalTree"]["childIds"])
-        _LOGGER.debug("SolarEdge Optimizers: Found %d children in logical tree", child_count)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Found %d children in logical tree", child_count)
 
         for i in range(child_count):
             child_name = json_obj["logicalTree"]["children"][i]["data"]["name"]
-            _LOGGER.debug("SolarEdge Optimizers: Processing child %d: %s", i, child_name)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: Processing child %d: %s", i, child_name)
 
             if "PRODUCTION METER" not in child_name.upper():
-                _LOGGER.debug("SolarEdge Optimizers: Adding inverter at index %d", i)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Adding inverter at index %d", i)
                 inverters.append(SolarEdgeInverter(json_obj=json_obj, index=i))
             else:
-                _LOGGER.debug("SolarEdge Optimizers: Found production meter, processing sub-children")
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Found production meter, processing sub-children")
                 sub_child_count = len(json_obj["logicalTree"]["children"][i]["childIds"])
                 for j in range(sub_child_count):
-                    _LOGGER.debug("SolarEdge Optimizers: Adding inverter at indices %d,%d", i, j)
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("SolarEdge Optimizers: Adding inverter at indices %d,%d", i, j)
                     inverters.append(SolarEdgeInverter(json_obj=json_obj, index=i, index2=j, powermeterpresent=True))
 
-        _LOGGER.debug("SolarEdge Optimizers: Completed parsing %d inverters", len(inverters))
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Completed parsing %d inverters", len(inverters))
         return inverters
 
     def returnNumberOfOptimizers(self):
@@ -1003,9 +1029,10 @@ class SolarEdgeOptimizerData:
             
             # AJT: 17-Jan-2026: Log if all measurements are zero to help diagnose API response issues
             if self.current == 0.0 and self.power == 0.0 and self.voltage == 0.0 and self.optimizer_voltage == 0.0:
-                _LOGGER.debug(
-                    "All measurements are zero for optimizer %s (serial: %s). Measurements dict: %s",
-                    panelid,
-                    json_object.get("serialNumber", "unknown"),
-                    measurements
-                )
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "All measurements are zero for optimizer %s (serial: %s). Measurements dict: %s",
+                        panelid,
+                        json_object.get("serialNumber", "unknown"),
+                        measurements,
+                    )
