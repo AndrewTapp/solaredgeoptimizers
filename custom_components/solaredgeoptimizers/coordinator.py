@@ -55,8 +55,8 @@ class MyCoordinator(DataUpdateCoordinator):
         self._last_full_fetch_utc = None
         self._last_light_check_utc = None
         self._representative_optimizer_id = None
-        # Whether to include site ID in entity_id_path (for entity IDs). Default True when key missing (existing configs).
-        self._include_site_id_in_entity = bool(config_entry and config_entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, True))
+        # Whether to include site ID in entity_id_path (for entity IDs). Default False when key missing (e.g. upgraded from old version).
+        self._include_site_id_in_entity = bool(config_entry and config_entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, False))
 
     async def _async_setup(self) -> None:
         """Set up the coordinator.
@@ -66,7 +66,8 @@ class MyCoordinator(DataUpdateCoordinator):
         """
         # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
         _LOGGER.info("SolarEdge Optimizers: Starting coordinator setup")
-        _LOGGER.debug("SolarEdge Optimizers: About to request list of all panels")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: About to request list of all panels")
 
         try:
             site = await self.hass.async_add_executor_job(self.my_api.requestListOfAllPanels)
@@ -106,7 +107,8 @@ class MyCoordinator(DataUpdateCoordinator):
             model=f"SITE {site.siteId}",
             name=f"Site {site_id}",
         )
-        _LOGGER.debug("Created device for site: %s", site_id)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Created device for site: %s", site_id)
 
         for inv_idx, inverter in enumerate(site.inverters, start=1):
             _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
@@ -131,7 +133,8 @@ class MyCoordinator(DataUpdateCoordinator):
                     name=string_name,
                     via_device=(DOMAIN, inverter.serialNumber),
                 )
-                _LOGGER.debug("Created device for string: %s", string_name)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Created device for string: %s", string_name)
 
     def _calculate_aggregated_data(
         self,
@@ -416,12 +419,13 @@ class MyCoordinator(DataUpdateCoordinator):
                 if should_light_check:
                     self._last_light_check_utc = now_utc
                     try:
-                        _LOGGER.debug(
-                            "Adaptive polling lightweight check (opt_id=%s, interval=%s, latest=%s)",
-                            self._representative_optimizer_id,
-                            desired_check_interval,
-                            latest_measurement,
-                        )
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug(
+                                "Adaptive polling lightweight check (opt_id=%s, interval=%s, latest=%s)",
+                                self._representative_optimizer_id,
+                                desired_check_interval,
+                                latest_measurement,
+                            )
                         rep_info = await self.hass.async_add_executor_job(
                             self.my_api.requestSystemData, self._representative_optimizer_id
                         )
@@ -431,18 +435,21 @@ class MyCoordinator(DataUpdateCoordinator):
                         ):
                             # Portal has new data; refresh, but avoid hammering if multiple checks happen quickly
                             if self._last_full_fetch_utc is None or (now_utc - self._last_full_fetch_utc) >= timedelta(minutes=2):
-                                _LOGGER.debug(
-                                    "Adaptive polling detected new data (rep_last=%s > latest=%s); scheduling full refresh",
-                                    rep_lm,
-                                    latest_measurement,
-                                )
+                                if _LOGGER.isEnabledFor(logging.DEBUG):
+                                    _LOGGER.debug(
+                                        "Adaptive polling detected new data (rep_last=%s > latest=%s); scheduling full refresh",
+                                        rep_lm,
+                                        latest_measurement,
+                                    )
                                 do_full_refresh = True
                     except Exception as e:
-                        _LOGGER.debug("Lightweight update check failed: %s", e)
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug("Lightweight update check failed: %s", e)
 
                 data_list = None
                 if do_full_refresh:
-                    _LOGGER.debug("Performing full refresh (requestAllData)")
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("Performing full refresh (requestAllData)")
                     data_list = await self.hass.async_add_executor_job(self.my_api.requestAllData)
                     self._last_full_fetch_utc = now_utc
 
