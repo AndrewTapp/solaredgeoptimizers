@@ -1,4 +1,6 @@
 """SolarEdge Optimizers integration for Home Assistant."""
+import logging
+
 from requests import ConnectTimeout, HTTPError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -34,7 +36,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config.time_zone
     )
 
-    LOGGER.debug("SolarEdge Optimizers: Creating API instance")
+    if LOGGER.isEnabledFor(logging.DEBUG):
+        LOGGER.debug("SolarEdge Optimizers: Creating API instance")
     api = solaredgeoptimizers(
         entry.data["siteid"],
         entry.data["username"],
@@ -43,7 +46,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         language=hass.config.language,
     )
 
-    LOGGER.debug("SolarEdge Optimizers: Starting login check")
+    if LOGGER.isEnabledFor(logging.DEBUG):
+        LOGGER.debug("SolarEdge Optimizers: Starting login check")
     try:
         http_result_code = await hass.async_add_executor_job(api.check_login)
         LOGGER.info("SolarEdge Optimizers: Login check result: %s", http_result_code)
@@ -58,19 +62,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         LOGGER.error("SolarEdge Optimizers: Missing details data in SolarEdge response (status: %s)", http_result_code)
         raise ConfigEntryNotReady
 
-    LOGGER.debug("SolarEdge Optimizers: Login successful, creating coordinator")
+    if LOGGER.isEnabledFor(logging.DEBUG):
+        LOGGER.debug("SolarEdge Optimizers: Login successful, creating coordinator")
 
     hass.data.setdefault(DOMAIN, {})
 
     # AJT: 10-Jan-2025: Pass config_entry to coordinator to enable async_config_entry_first_refresh()
-    LOGGER.debug("SolarEdge Optimizers: Creating coordinator instance")
+    if LOGGER.isEnabledFor(logging.DEBUG):
+        LOGGER.debug("SolarEdge Optimizers: Creating coordinator instance")
     coordinator = MyCoordinator(hass, api, True, entry)
 
     # Fetch initial data so we have data when entities subscribe
     #
     # If the refresh fails, async_config_entry_first_refresh will
     # raise ConfigEntryNotReady and setup will try again later
-    LOGGER.debug("SolarEdge Optimizers: Starting initial coordinator refresh")
+    if LOGGER.isEnabledFor(logging.DEBUG):
+        LOGGER.debug("SolarEdge Optimizers: Starting initial coordinator refresh")
     try:
         await coordinator.async_config_entry_first_refresh()
         LOGGER.info("SolarEdge Optimizers: Initial coordinator refresh completed successfully")
@@ -94,7 +101,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if coordinator and hasattr(coordinator, 'my_api'):
             try:
                 await hass.async_add_executor_job(coordinator.my_api.close)
-                LOGGER.debug("SolarEdge Optimizers: Closed API sessions during unload")
+                if LOGGER.isEnabledFor(logging.DEBUG):
+                    LOGGER.debug("SolarEdge Optimizers: Closed API sessions during unload")
             except Exception as e:
                 LOGGER.warning("SolarEdge Optimizers: Error closing API sessions: %s", e)
 
