@@ -15,8 +15,8 @@ To set up the integration you will need:
 - Your **Site ID** (from the SolarEdge portal)
 - Your **Username**
 - Your **Password**
-- **Entity ID prefix** (optional) – If you run more than one site or want to avoid clashes with other integrations, you can set a short prefix (e.g. `se_`). All entity IDs will then start with that prefix (e.g. `sensor.se_power_9999999`). Leave blank for no prefix.
-- **Include Site ID in Entity ID** (optional, default **off**) – When off, entity IDs for inverter, string, and optimizer levels omit the site ID (e.g. `sensor.power_1_1`, `sensor.power_1_1_1`). The site level always shows the actual site ID (e.g. `sensor.power_2065855`). Turn on to include the site ID in every level (e.g. `sensor.power_2065855_1_1_1`).
+- **Entity ID prefix** (optional) – If you run more than one site or want to avoid clashes with other integrations, you can set a short prefix (e.g. `se_`). All entity IDs will then start with that prefix (e.g. `sensor.se_power_9999999`). Leave blank for no prefix. If you upgrade from an older version without removing the integration, this defaults to blank when not set.
+- **Include Site ID in Entity ID** (optional, default **off**) – When off, entity IDs for inverter, string, and optimizer levels omit the site ID (e.g. `sensor.power_1_1`, `sensor.power_1_1_1`). The site level always shows the actual site ID (e.g. `sensor.power_2065855`). Turn on to include the site ID in every level (e.g. `sensor.power_2065855_1_1_1`). If you upgrade from an older version without removing the integration, this defaults to off when not set.
 
 ## How Your System Is Shown in Home Assistant
 
@@ -45,7 +45,7 @@ For each string, inverter, and the site you get combined (aggregated) sensors:
 - **Power** (total for that level)
 - **Lifetime energy** (total for that level)
 - **Last measurement**
-- **Optimizer count** (strings) / **String count** (inverters) / **Inverter count** (site)
+- **Optimizer count** (strings) / **String count** (inverters) / **Inverter count** (site) – Always reported as integers (e.g. 3, not 3.0).
 - **Last polled** (site device only) – When the integration last successfully fetched data from the SolarEdge portal. Handy for checking that updates are running.
 
 Names are kept short (e.g. “Current (average)”, “Power”) because the device name (e.g. “String 1.1” or “Inverter 1”) already tells you where the value comes from.
@@ -89,9 +89,22 @@ Until this integration is part of Home Assistant Core, installing via HACS is re
 
 The first load can take a while if you have many optimizers; the integration fetches and organises all of them.
 
+## Debug logging
+
+To help troubleshoot setup or update issues, you can enable debug logging for this integration. In your Home Assistant `configuration.yaml` add:
+
+```yaml
+logger:
+  default: info
+  logs:
+    solaredgeoptimizers: debug
+```
+
+Restart Home Assistant for the change to take effect. Debug logs include coordinator updates, API requests, sensor updates, and layout parsing. All debug output is guarded so there is no performance cost when the log level is `info`. Turn logging back to `info` when you are done.
+
 ## Translations
 
-The integration is localized for multiple languages: config flow (labels, errors, entry title), sensor and device names, and API locale follow the user’s Home Assistant language where supported. See [Internationalization (i18n)](docs/internationalization.md) for details.
+The integration is localized for multiple languages: config flow (labels, errors, entry title), sensor and device names, and API locale follow the user’s Home Assistant language where supported. See [Internationalization (i18n)](https://github.com/AndrewTapp/solaredgeoptimizers/blob/main/custom_components/solaredgeoptimizers/docs/internationalization.md) for details.
 
 The config flow (add-integration setup) is translated into:
 
