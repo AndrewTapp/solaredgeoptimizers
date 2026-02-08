@@ -238,8 +238,8 @@ Ensure `custom_components/solaredgeoptimizers/` contains at least: `__init__.py`
 ## 6. Configuration
 
 - **Single step**: Site ID, Username (email), Password, optional **Entity ID prefix**, and optional **Include Site ID in Entity ID** (default **off**).  
-- **Entity ID prefix**: Optional. If set (e.g. `se_`), all entity IDs start with that prefix (e.g. `sensor.se_power_9999999`). Normalised to lowercase with spaces as underscores. Leave blank for no prefix. Useful when running multiple sites or avoiding clashes with other integrations.  
-- **Include Site ID in Entity ID**: Optional, default **off**. When off, inverter/string/optimizer entity IDs omit the site ID (e.g. `sensor.power_1_1`); site level always includes the actual site ID (e.g. `sensor.power_2065855`). When on, all levels include the site ID in the path.  
+- **Entity ID prefix**: Optional. If set (e.g. `se_`), all entity IDs start with that prefix (e.g. `sensor.se_power_9999999`). Normalised to lowercase with spaces as underscores. Leave blank for no prefix. Useful when running multiple sites or avoiding clashes with other integrations. When upgrading from an older version without removing the integration, this defaults to blank if the key is not present.  
+- **Include Site ID in Entity ID**: Optional, default **off**. When off, inverter/string/optimizer entity IDs omit the site ID (e.g. `sensor.power_1_1`); site level always includes the actual site ID (e.g. `sensor.power_2065855`). When on, all levels include the site ID in the path. When upgrading from an older version without removing the integration, this defaults to off if the key is not present.  
 - **Validation**: Calls SolarEdge `GET .../layout/logical` with HTTP Basic Auth; success = 200.  
 - **Config entry title**: Translated, e.g. “SolarEdge Site 12345” (from `config.title_entry` with `%(siteid)s`).  
 - **Errors**: “Failed to connect”, “Invalid authentication”, “Unexpected error” (keys `cannot_connect`, `invalid_auth`, `unknown`); all translatable.  
@@ -273,7 +273,7 @@ No YAML configuration is required; all configuration is via the config flow.
 | Voltage (average) | Average voltage of optimizers with recent data. |
 | Lifetime energy | Sum of optimizer lifetime energy (from API, by string; uses `unscaledEnergy` in Wh). Site level: when reliable, sum of inverters; when unreliable (aggregated &lt; 100 kWh and portal total ≥ 100 kWh), uses portal total (sum of all `unscaledEnergy` from layout/energy). |
 | Last measurement | Latest last measurement among optimizers in the string. |
-| Optimizer count | Number of optimizers in the string. |
+| Optimizer count | Number of optimizers in the string (always an integer). |
 
 ### Per-inverter (aggregated)
 
@@ -283,14 +283,14 @@ No YAML configuration is required; all configuration is via the config flow.
 | Current (average) / Voltage (average) | Averages over strings with recent data. |
 | Lifetime energy | Sum of string lifetime energy. |
 | Last measurement | Latest among strings. |
-| String count | Number of strings under the inverter. |
+| String count | Number of strings under the inverter (always an integer). |
 
 ### Per-site (aggregated)
 
 | Sensor | Description |
 |--------|--------------|
 | Same as inverter | But over all inverters. |
-| Inverter count | Number of inverters. |
+| Inverter count | Number of inverters (always an integer). |
 | **Last polled** | (Site device only.) When the integration last successfully finished an update. |
 
 All aggregated sensors use the same naming pattern (e.g. “Power”, “Current (average)”) with the device name indicating the level. Entity IDs include the path so they are unique. When **Include Site ID in Entity ID** is **off** (default), inverter/string/optimizer IDs omit the site; site level and Last polled always show the site ID. When **on**, all levels include the site ID.
@@ -401,19 +401,19 @@ The layout/energy response returns per-optimizer (and per-string) entries with `
 
 ## 12. Troubleshooting and logging
 
-- **Log namespace**: `logging.getLogger(__package__)` (integration package).  
-- **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures.
+- **Log namespace**: The integration uses `logging.getLogger(__name__)` per module (e.g. `solaredgeoptimizers.sensor`); the top-level logger name is `solaredgeoptimizers`.  
+- **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures. All debug calls are guarded with `isEnabledFor(logging.DEBUG)`, so there is no performance cost when the log level is `info` or higher.
 
 ### Logging
 
-To enable debug logging for this integration, add the following to your `configuration.yaml`. If you already have a `logger:` section, add only the `logs:` entry (and the line under it) instead of duplicating the whole block.
+To enable debug logging for this integration, add the following to your `configuration.yaml`. If you already have a `logger:` section, add only the `logs:` entry (and the line under it) instead of duplicating the whole block. Use the logger name `solaredgeoptimizers` (the integration package name).
 
 ```yaml
 # Logging
 logger:
-  default: warning
+  default: info
   logs:
-    custom_components.solaredgeoptimizers: debug
+    solaredgeoptimizers: debug
 ```
 
 **How to edit `configuration.yaml` directly**
@@ -432,6 +432,7 @@ logger:
 | Sensors stay 0 | Last measurement age (1 h rule); check “Last measurement” and “Last polled”; debug logs for API responses. If using a non-English HA language, ensure you’re on a version that supports locale-aware measurement keys (e.g. “Leistung [W]” for German). |
 | Slow first load | Many optimizers → many parallel requests; layout and lifetime energy cached after first run. |
 | Duplicate entity IDs (e.g. sensor.power_2) | Use a unique Entity ID prefix per site, or ensure you’re on a version that uses the new path-based entity IDs (site in path). |
+| Entity IDs show a device prefix (e.g. sensor.site_123_power_123 instead of sensor.power_123) | Rare (can depend on locale/HA version). Remove the integration, restart Home Assistant, then add the integration again after updating to the latest version so entity IDs are created with the correct path-based format. |
 
 - **5xx from SolarEdge**: Logged as temporary; coordinator retries on next cycle.  
 - **DNS/connection errors** (e.g. “Failed to resolve monitoring.solaredge.com”): Lifetime energy and aggregation fall back to cached or empty data so the coordinator still completes; next cycle will retry.  
