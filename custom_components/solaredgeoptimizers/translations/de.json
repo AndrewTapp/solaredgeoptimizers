@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Gerät ist bereits konfiguriert"},
+    "abort": {
+      "already_configured": "Gerät ist bereits konfiguriert",
+      "reauth_successful": "Erneute Authentifizierung erfolgreich",
+      "reauth_entry_missing": "Konfigurationseintrag für erneute Authentifizierung wurde nicht gefunden."
+    },
     "error": {
       "cannot_connect": "Verbindung fehlgeschlagen",
       "invalid_auth": "Ungültige Anmeldung",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Entity-ID-Präfix (optional)",
           "include_site_id_in_entity_id": "Standon-ID in Entitäts-ID einbeziehen"
         }
+      },
+      "reauth_confirm": {
+        "title": "SolarEdge Optimizers erneut authentifizieren",
+        "description": "Anmeldedaten für {title} sind nicht mehr gültig. Geben Sie Ihren SolarEdge-Benutzernamen und Ihr Passwort ein.",
+        "data": {
+          "username": "Benutzername",
+          "password": "Passwort"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "{title} neu konfigurieren",
+        "description": "Aktuelles Präfix: {current_entity_id_prefix}. Lassen Sie das Feld leer für kein Präfix. Beim Speichern wird die Integration neu geladen: Entity-IDs und unique_ids können sich ändern, sodass Verlauf und Statistiken bestehender Entitäten verloren gehen können. Erwägen Sie zuerst eine Sicherung oder einen Export der Daten.",
+        "data": {
+          "entity_id_prefix": "Entity-ID-Präfix (optional)",
+          "include_site_id_in_entity_id": "Standort-ID in Entitäts-ID einbeziehen"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Leistung"},
-      "voltage": {"name": "Spannung"},
-      "current": {"name": "Strom"},
-      "optimizer_voltage": {"name": "Optimizer-Spannung"},
-      "lifetime_energy": {"name": "Energie gesamt"},
-      "last_measurement": {"name": "Letzte Messung"},
-      "last_polled": {"name": "Zuletzt abgefragt"},
-      "current_average": {"name": "Strom (Durchschnitt)"},
-      "voltage_average": {"name": "Spannung (Durchschnitt)"},
-      "optimizer_count": {"name": "Anzahl Optimizer"},
-      "string_count": {"name": "Anzahl Strings"},
-      "inverter_count": {"name": "Anzahl Wechselrichter"}
+      "power": {
+        "name": "Leistung"
+      },
+      "voltage": {
+        "name": "Spannung"
+      },
+      "current": {
+        "name": "Strom"
+      },
+      "optimizer_voltage": {
+        "name": "Optimizer-Spannung"
+      },
+      "lifetime_energy": {
+        "name": "Energie gesamt"
+      },
+      "last_measurement": {
+        "name": "Letzte Messung"
+      },
+      "last_polled": {
+        "name": "Zuletzt abgefragt"
+      },
+      "current_average": {
+        "name": "Strom (Durchschnitt)"
+      },
+      "voltage_average": {
+        "name": "Spannung (Durchschnitt)"
+      },
+      "optimizer_count": {
+        "name": "Anzahl Optimizer"
+      },
+      "string_count": {
+        "name": "Anzahl Strings"
+      },
+      "inverter_count": {
+        "name": "Anzahl Wechselrichter"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Standort {site_id}"},
-    "inverter_device": {"name": "Wechselrichter {display_name}"},
-    "string_device": {"name": "String {display_name}"},
-    "optimizer_device": {"name": "Optimizer {display_name}"}
+    "site_device": {
+      "name": "Standort {site_id}"
+    },
+    "inverter_device": {
+      "name": "Wechselrichter {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimizer {display_name}"
+    }
   }
 }
