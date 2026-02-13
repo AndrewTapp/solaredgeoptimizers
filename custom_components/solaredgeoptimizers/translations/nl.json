@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Apparaat is al geconfigureerd"},
+    "abort": {
+      "already_configured": "Apparaat is al geconfigureerd",
+      "reauth_successful": "Herauthenticatie geslaagd",
+      "reauth_entry_missing": "Configuratie-item voor herauthenticatie niet gevonden."
+    },
     "error": {
       "cannot_connect": "Kan niet verbinden",
       "invalid_auth": "Ongeldige authenticatie",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Entity-ID-voorvoegsel (optioneel)",
           "include_site_id_in_entity_id": "Site-ID opnemen in entiteits-ID"
         }
+      },
+      "reauth_confirm": {
+        "title": "SolarEdge Optimizers opnieuw verifiëren",
+        "description": "Inloggegevens voor {title} zijn niet meer geldig. Voer uw SolarEdge gebruikersnaam en wachtwoord in.",
+        "data": {
+          "username": "Gebruikersnaam",
+          "password": "Wachtwoord"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "{title} opnieuw configureren",
+        "description": "Huidig voorvoegsel: {current_entity_id_prefix}. Laat het veld leeg voor geen voorvoegsel. Opslaan laadt de integratie opnieuw: entity ID's en unique_ids kunnen veranderen, waardoor geschiedenis en statistieken van bestaande entiteiten verloren kunnen gaan. Overweeg eerst een back-up of export van gegevens.",
+        "data": {
+          "entity_id_prefix": "Entiteits-ID-voorvoegsel (optioneel)",
+          "include_site_id_in_entity_id": "Site-ID opnemen in entiteits-ID"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Vermogen"},
-      "voltage": {"name": "Spanning"},
-      "current": {"name": "Stroom"},
-      "optimizer_voltage": {"name": "Optimizerspanning"},
-      "lifetime_energy": {"name": "Levensduur energie"},
-      "last_measurement": {"name": "Laatste meting"},
-      "last_polled": {"name": "Laatst opgehaald"},
-      "current_average": {"name": "Stroom (gemiddeld)"},
-      "voltage_average": {"name": "Spanning (gemiddeld)"},
-      "optimizer_count": {"name": "Aantal optimizers"},
-      "string_count": {"name": "Aantal strings"},
-      "inverter_count": {"name": "Aantal omvormers"}
+      "power": {
+        "name": "Vermogen"
+      },
+      "voltage": {
+        "name": "Spanning"
+      },
+      "current": {
+        "name": "Stroom"
+      },
+      "optimizer_voltage": {
+        "name": "Optimizerspanning"
+      },
+      "lifetime_energy": {
+        "name": "Levensduur energie"
+      },
+      "last_measurement": {
+        "name": "Laatste meting"
+      },
+      "last_polled": {
+        "name": "Laatst opgehaald"
+      },
+      "current_average": {
+        "name": "Stroom (gemiddeld)"
+      },
+      "voltage_average": {
+        "name": "Spanning (gemiddeld)"
+      },
+      "optimizer_count": {
+        "name": "Aantal optimizers"
+      },
+      "string_count": {
+        "name": "Aantal strings"
+      },
+      "inverter_count": {
+        "name": "Aantal omvormers"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Site {site_id}"},
-    "inverter_device": {"name": "Omvormer {display_name}"},
-    "string_device": {"name": "String {display_name}"},
-    "optimizer_device": {"name": "Optimizer {display_name}"}
+    "site_device": {
+      "name": "Site {site_id}"
+    },
+    "inverter_device": {
+      "name": "Omvormer {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimizer {display_name}"
+    }
   }
 }
