@@ -15,7 +15,7 @@ LOGGER = logging.getLogger(__package__)
 # AJT: 25-Jan-2026: Coordinator tick interval. Actual portal load is controlled by adaptive polling in the coordinator.
 UPDATE_DELAY = timedelta(minutes=2)
 
-CHECK_TIME_DELTA = timedelta(hours=1, minutes=00)
+CHECK_TIME_DELTA = timedelta(hours=2)
 
 SENSOR_TYPE_CURRENT = "Current"
 SENSOR_TYPE_OPT_VOLTAGE = "Optimizer_voltage"
