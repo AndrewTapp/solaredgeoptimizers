@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Dispositivo já configurado"},
+    "abort": {
+      "already_configured": "Dispositivo já configurado",
+      "reauth_successful": "Reautenticação bem-sucedida",
+      "reauth_entry_missing": "Entrada de configuração para reautenticação não encontrada."
+    },
     "error": {
       "cannot_connect": "Falha na conexão",
       "invalid_auth": "Autenticação inválida",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Prefixo de ID da entidade (opcional)",
           "include_site_id_in_entity_id": "Incluir ID do site no ID da entidade"
         }
+      },
+      "reauth_confirm": {
+        "title": "Reautenticar SolarEdge Optimizers",
+        "description": "As credenciais para {title} já não são válidas. Introduza o seu nome de utilizador e palavra-passe SolarEdge.",
+        "data": {
+          "username": "Nome de utilizador",
+          "password": "Palavra-passe"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Reconfigurar {title}",
+        "description": "Prefixo atual: {current_entity_id_prefix}. Deixe o campo vazio para não usar prefixo. Guardar irá recarregar a integração: os entity ID e unique_ids podem mudar, pelo que o histórico e as estatísticas das entidades existentes podem ser perdidos. Considere fazer uma cópia de segurança ou exportar os dados primeiro.",
+        "data": {
+          "entity_id_prefix": "Prefixo de ID da entidade (opcional)",
+          "include_site_id_in_entity_id": "Incluir ID do site no ID da entidade"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Potência"},
-      "voltage": {"name": "Tensão"},
-      "current": {"name": "Corrente"},
-      "optimizer_voltage": {"name": "Tensão do otimizador"},
-      "lifetime_energy": {"name": "Energia total"},
-      "last_measurement": {"name": "Última medição"},
-      "last_polled": {"name": "Última atualização"},
-      "current_average": {"name": "Corrente (média)"},
-      "voltage_average": {"name": "Tensão (média)"},
-      "optimizer_count": {"name": "Número de otimizadores"},
-      "string_count": {"name": "Número de strings"},
-      "inverter_count": {"name": "Número de inversores"}
+      "power": {
+        "name": "Potência"
+      },
+      "voltage": {
+        "name": "Tensão"
+      },
+      "current": {
+        "name": "Corrente"
+      },
+      "optimizer_voltage": {
+        "name": "Tensão do otimizador"
+      },
+      "lifetime_energy": {
+        "name": "Energia total"
+      },
+      "last_measurement": {
+        "name": "Última medição"
+      },
+      "last_polled": {
+        "name": "Última atualização"
+      },
+      "current_average": {
+        "name": "Corrente (média)"
+      },
+      "voltage_average": {
+        "name": "Tensão (média)"
+      },
+      "optimizer_count": {
+        "name": "Número de otimizadores"
+      },
+      "string_count": {
+        "name": "Número de strings"
+      },
+      "inverter_count": {
+        "name": "Número de inversores"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Site {site_id}"},
-    "inverter_device": {"name": "Inversor {display_name}"},
-    "string_device": {"name": "String {display_name}"},
-    "optimizer_device": {"name": "Otimizador {display_name}"}
+    "site_device": {
+      "name": "Site {site_id}"
+    },
+    "inverter_device": {
+      "name": "Inversor {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Otimizador {display_name}"
+    }
   }
 }
