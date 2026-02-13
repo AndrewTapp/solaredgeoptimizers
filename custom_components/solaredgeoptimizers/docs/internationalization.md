@@ -8,9 +8,14 @@ This document describes how the SolarEdge Optimizers integration supports multip
 
 - **Form labels**: Site id, Username, Password, Entity ID prefix (optional) — from `config.step.user.data.*` in each `translations/<code>.json`.
 - **Errors**: "Failed to connect", "Invalid authentication", "Unexpected error" — from `config.error.*`.
-- **Abort**: "Device is already configured" — from `config.abort.already_configured`.
+- **Abort**: "Device is already configured" — from `config.abort.already_configured`. Re-auth flow: `config.abort.reauth_successful`, `config.abort.reauth_entry_missing`.
+- **Re-authentication step**: When credentials expire, the re-auth form (title, description, username, password) — from `config.step.reauth_confirm`.
 - **Config entry title**: The name of the integration instance in Devices & services (e.g. "SolarEdge Site 12345") — from `config.title_entry` (supports `%(siteid)s`).
 - **Integration title**: The name shown when adding the integration — from `config.title`.
+
+### Options flow (Reconfigure / Configure dialog)
+
+- **Form labels and description**: The Configure dialog (options flow) uses the **options** section: `options.step.init.title`, `options.step.init.description`, `options.step.init.data.entity_id_prefix`, `options.step.init.data.include_site_id_in_entity_id`. The description shows the current prefix (`{current_entity_id_prefix}`); leave the Entity ID prefix field empty to remove the prefix. The integration sets `translation_domain` so the frontend loads these strings from the integration’s translation files.
 
 ### Entities and devices
 
@@ -35,7 +40,7 @@ See the [Translations](../../README.md#translations) section in the main README 
 
 1. Copy `translations/en.json` to `translations/<code>.json` (e.g. `cs.json` for Czech).
 2. Translate all string values. Keep the same JSON structure and keys.
-3. Ensure every key present in `en.json` exists in the new file (config, entity, and device sections).
+3. Ensure every key present in `en.json` exists in the new file (config, options, entity, and device sections).
 4. Run the project’s checks (e.g. Hassfest) to validate translation files.
 
 ## Validation
