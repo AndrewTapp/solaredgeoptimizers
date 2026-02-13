@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Η συσκευή είναι ήδη ρυθμισμένη"},
+    "abort": {
+      "already_configured": "Η συσκευή είναι ήδη ρυθμισμένη",
+      "reauth_successful": "Η επαναεπεξεργασία πιστοποίησης ολοκληρώθηκε",
+      "reauth_entry_missing": "Δεν βρέθηκε η καταχώρηση ρυθμίσεων για επαναεπεξεργασία."
+    },
     "error": {
       "cannot_connect": "Αποτυχία σύνδεσης",
       "invalid_auth": "Μη έγκυρη επαλήθευση",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Πρόθεμα ID οντοτήτων (προαιρετικό)",
           "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων"
         }
+      },
+      "reauth_confirm": {
+        "title": "Επαναεπεξεργασία SolarEdge Optimizers",
+        "description": "Τα διαπιστευτήρια για {title} δεν είναι πλέον έγκυρα. Εισάγετε το όνομα χρήστη και τον κωδικό SolarEdge σας.",
+        "data": {
+          "username": "Όνομα χρήστη",
+          "password": "Κωδικός πρόσβασης"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Επαναρύθμιση {title}",
+        "description": "Τρέχον πρόθεμα: {current_entity_id_prefix}. Αφήστε το πεδίο κενό για απουσία προθέματος. Η αποθήκευση θα ξαναφορτώσει την ενσωμάτωση: τα entity ID και τα unique_ids μπορεί να αλλάξουν, οπότε το ιστορικό και τα στατιστικά υπαρχουσών οντοτήτων μπορεί να χαθούν. Εξετάστε το backup ή την εξαγωγή δεδομένων πρώτα.",
+        "data": {
+          "entity_id_prefix": "Πρόθεμα ID οντοτήτων (προαιρετικό)",
+          "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Ισχύς"},
-      "voltage": {"name": "Τάση"},
-      "current": {"name": "Ρεύμα"},
-      "optimizer_voltage": {"name": "Τάση βελτιστοποιητή"},
-      "lifetime_energy": {"name": "Συνολική ενέργεια"},
-      "last_measurement": {"name": "Τελευταία μέτρηση"},
-      "last_polled": {"name": "Τελευταία ενημέρωση"},
-      "current_average": {"name": "Ρεύμα (μέσο)"},
-      "voltage_average": {"name": "Τάση (μέσο)"},
-      "optimizer_count": {"name": "Αριθμός βελτιστοποιητών"},
-      "string_count": {"name": "Αριθμός strings"},
-      "inverter_count": {"name": "Αριθμός inverters"}
+      "power": {
+        "name": "Ισχύς"
+      },
+      "voltage": {
+        "name": "Τάση"
+      },
+      "current": {
+        "name": "Ρεύμα"
+      },
+      "optimizer_voltage": {
+        "name": "Τάση βελτιστοποιητή"
+      },
+      "lifetime_energy": {
+        "name": "Συνολική ενέργεια"
+      },
+      "last_measurement": {
+        "name": "Τελευταία μέτρηση"
+      },
+      "last_polled": {
+        "name": "Τελευταία ενημέρωση"
+      },
+      "current_average": {
+        "name": "Ρεύμα (μέσο)"
+      },
+      "voltage_average": {
+        "name": "Τάση (μέσο)"
+      },
+      "optimizer_count": {
+        "name": "Αριθμός βελτιστοποιητών"
+      },
+      "string_count": {
+        "name": "Αριθμός strings"
+      },
+      "inverter_count": {
+        "name": "Αριθμός inverters"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Τοποθεσία {site_id}"},
-    "inverter_device": {"name": "Inverter {display_name}"},
-    "string_device": {"name": "String {display_name}"},
-    "optimizer_device": {"name": "Βελτιστοποιητής {display_name}"}
+    "site_device": {
+      "name": "Τοποθεσία {site_id}"
+    },
+    "inverter_device": {
+      "name": "Inverter {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Βελτιστοποιητής {display_name}"
+    }
   }
 }
