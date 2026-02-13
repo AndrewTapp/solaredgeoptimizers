@@ -319,8 +319,10 @@ class solaredgeoptimizers:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("Endpoint (single optimizer systemData): %s", url)
 
-        kwargs = {}
-        kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
+        kwargs = {
+            "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
+            "timeout": 30,  # Prevent hung requests in ThreadPoolExecutor
+        }
         # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
         with requests.get(url, **kwargs) as r:
             if _LOGGER.isEnabledFor(logging.DEBUG):
