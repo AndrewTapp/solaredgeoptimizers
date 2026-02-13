@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Zařízení je již nakonfigurováno"},
+    "abort": {
+      "already_configured": "Zařízení je již nakonfigurováno",
+      "reauth_successful": "Reautentizace proběhla úspěšně",
+      "reauth_entry_missing": "Položku konfigurace pro reautentizaci se nepodařilo najít."
+    },
     "error": {
       "cannot_connect": "Nepodařilo se připojit",
       "invalid_auth": "Neplatné ověření",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Prefix ID entity (nepovinné)",
           "include_site_id_in_entity_id": "Zahrnout ID lokality do ID entity"
         }
+      },
+      "reauth_confirm": {
+        "title": "Znovu ověřit SolarEdge Optimizers",
+        "description": "Přihlašovací údaje pro {title} již nejsou platné. Zadejte své SolarEdge uživatelské jméno a heslo.",
+        "data": {
+          "username": "Uživatelské jméno",
+          "password": "Heslo"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Předkonfigurovat {title}",
+        "description": "Aktuální prefix: {current_entity_id_prefix}. Pro žádný prefix nechte pole prázdné. Uložení znovu načte integraci: entity ID a unique_ids se mohou změnit, takže historie a statistiky stávajících entit mohou být ztraceny. Zvažte zálohu nebo export dat.",
+        "data": {
+          "entity_id_prefix": "Prefix ID entity (nepovinné)",
+          "include_site_id_in_entity_id": "Zahrnout ID lokality do ID entity"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Výkon"},
-      "voltage": {"name": "Napětí"},
-      "current": {"name": "Proud"},
-      "optimizer_voltage": {"name": "Napětí optimizéru"},
-      "lifetime_energy": {"name": "Celková energie"},
-      "last_measurement": {"name": "Poslední měření"},
-      "last_polled": {"name": "Naposledy načteno"},
-      "current_average": {"name": "Proud (průměr)"},
-      "voltage_average": {"name": "Napětí (průměr)"},
-      "optimizer_count": {"name": "Počet optimizérů"},
-      "string_count": {"name": "Počet stringů"},
-      "inverter_count": {"name": "Počet měničů"}
+      "power": {
+        "name": "Výkon"
+      },
+      "voltage": {
+        "name": "Napětí"
+      },
+      "current": {
+        "name": "Proud"
+      },
+      "optimizer_voltage": {
+        "name": "Napětí optimizéru"
+      },
+      "lifetime_energy": {
+        "name": "Celková energie"
+      },
+      "last_measurement": {
+        "name": "Poslední měření"
+      },
+      "last_polled": {
+        "name": "Naposledy načteno"
+      },
+      "current_average": {
+        "name": "Proud (průměr)"
+      },
+      "voltage_average": {
+        "name": "Napětí (průměr)"
+      },
+      "optimizer_count": {
+        "name": "Počet optimizérů"
+      },
+      "string_count": {
+        "name": "Počet stringů"
+      },
+      "inverter_count": {
+        "name": "Počet měničů"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Lokalita {site_id}"},
-    "inverter_device": {"name": "Měnič {display_name}"},
-    "string_device": {"name": "String {display_name}"},
-    "optimizer_device": {"name": "Optimizér {display_name}"}
+    "site_device": {
+      "name": "Lokalita {site_id}"
+    },
+    "inverter_device": {
+      "name": "Měnič {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimizér {display_name}"
+    }
   }
 }
