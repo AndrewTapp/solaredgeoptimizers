@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Enheten är redan konfigurerad"},
+    "abort": {
+      "already_configured": "Enheten är redan konfigurerad",
+      "reauth_successful": "Om-autentisering lyckades",
+      "reauth_entry_missing": "Konfigurationsposten för om-autentisering hittades inte."
+    },
     "error": {
       "cannot_connect": "Kunde inte ansluta",
       "invalid_auth": "Ogiltig autentisering",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Enhets-ID-prefix (valfritt)",
           "include_site_id_in_entity_id": "Inkludera plats-ID i entitets-ID"
         }
+      },
+      "reauth_confirm": {
+        "title": "Om-autentisera SolarEdge Optimizers",
+        "description": "Uppgifterna för {title} är inte längre giltiga. Ange ditt SolarEdge användarnamn och lösenord.",
+        "data": {
+          "username": "Användarnamn",
+          "password": "Lösenord"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Konfigurera om {title}",
+        "description": "Aktuellt prefix: {current_entity_id_prefix}. Lämna fältet tomt för inget prefix. Sparande laddar om integrationen: entitets-ID:n och unique_ids kan ändras, så historik och statistik för befintliga entiteter kan gå förlorade. Överväg att säkerhetskopiera eller exportera data först.",
+        "data": {
+          "entity_id_prefix": "Entitets-ID-prefix (valfritt)",
+          "include_site_id_in_entity_id": "Inkludera plats-ID i entitets-ID"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Effekt"},
-      "voltage": {"name": "Spänning"},
-      "current": {"name": "Ström"},
-      "optimizer_voltage": {"name": "Optimizerspänning"},
-      "lifetime_energy": {"name": "Energi totalt"},
-      "last_measurement": {"name": "Senast mätt"},
-      "last_polled": {"name": "Senast uppdaterad"},
-      "current_average": {"name": "Ström (medel)"},
-      "voltage_average": {"name": "Spänning (medel)"},
-      "optimizer_count": {"name": "Antal optimizers"},
-      "string_count": {"name": "Antal strängar"},
-      "inverter_count": {"name": "Antal växelriktare"}
+      "power": {
+        "name": "Effekt"
+      },
+      "voltage": {
+        "name": "Spänning"
+      },
+      "current": {
+        "name": "Ström"
+      },
+      "optimizer_voltage": {
+        "name": "Optimizerspänning"
+      },
+      "lifetime_energy": {
+        "name": "Energi totalt"
+      },
+      "last_measurement": {
+        "name": "Senast mätt"
+      },
+      "last_polled": {
+        "name": "Senast uppdaterad"
+      },
+      "current_average": {
+        "name": "Ström (medel)"
+      },
+      "voltage_average": {
+        "name": "Spänning (medel)"
+      },
+      "optimizer_count": {
+        "name": "Antal optimizers"
+      },
+      "string_count": {
+        "name": "Antal strängar"
+      },
+      "inverter_count": {
+        "name": "Antal växelriktare"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Plats {site_id}"},
-    "inverter_device": {"name": "Växelriktare {display_name}"},
-    "string_device": {"name": "Sträng {display_name}"},
-    "optimizer_device": {"name": "Optimizer {display_name}"}
+    "site_device": {
+      "name": "Plats {site_id}"
+    },
+    "inverter_device": {
+      "name": "Växelriktare {display_name}"
+    },
+    "string_device": {
+      "name": "Sträng {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimizer {display_name}"
+    }
   }
 }
