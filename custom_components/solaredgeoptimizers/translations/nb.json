@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Enheten er allerede konfigurert"},
+    "abort": {
+      "already_configured": "Enheten er allerede konfigurert",
+      "reauth_successful": "Ny godkjenning fullført",
+      "reauth_entry_missing": "Konfigurasjonsoppføringen for ny godkjenning ble ikke funnet."
+    },
     "error": {
       "cannot_connect": "Kunne ikke koble til",
       "invalid_auth": "Ugyldig godkjenning",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Entitets-ID-prefiks (valgfritt)",
           "include_site_id_in_entity_id": "Inkluder steds-ID i entitets-ID"
         }
+      },
+      "reauth_confirm": {
+        "title": "Godkjenn SolarEdge Optimizers på nytt",
+        "description": "Påloggingsdetaljene for {title} er ikke lenger gyldige. Skriv inn SolarEdge brukernavn og passord.",
+        "data": {
+          "username": "Brukernavn",
+          "password": "Passord"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Konfigurer {title} på nytt",
+        "description": "Nåværende prefiks: {current_entity_id_prefix}. La feltet stå tomt for ingen prefiks. Lagring vil laste inn integrasjonen på nytt: entitets-ID-er og unique_ids kan endres, så historikk og statistikk for eksisterende enheter kan gå tapt. Vurder sikkerhetskopiering eller eksport av data først.",
+        "data": {
+          "entity_id_prefix": "Entitets-ID-prefiks (valgfritt)",
+          "include_site_id_in_entity_id": "Inkluder steds-ID i entitets-ID"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Effekt"},
-      "voltage": {"name": "Spenning"},
-      "current": {"name": "Strøm"},
-      "optimizer_voltage": {"name": "Optimizerspenning"},
-      "lifetime_energy": {"name": "Total energi"},
-      "last_measurement": {"name": "Siste måling"},
-      "last_polled": {"name": "Sist oppdatert"},
-      "current_average": {"name": "Strøm (gjennomsnitt)"},
-      "voltage_average": {"name": "Spenning (gjennomsnitt)"},
-      "optimizer_count": {"name": "Antall optimizers"},
-      "string_count": {"name": "Antall strenger"},
-      "inverter_count": {"name": "Antall omformere"}
+      "power": {
+        "name": "Effekt"
+      },
+      "voltage": {
+        "name": "Spenning"
+      },
+      "current": {
+        "name": "Strøm"
+      },
+      "optimizer_voltage": {
+        "name": "Optimizerspenning"
+      },
+      "lifetime_energy": {
+        "name": "Total energi"
+      },
+      "last_measurement": {
+        "name": "Siste måling"
+      },
+      "last_polled": {
+        "name": "Sist oppdatert"
+      },
+      "current_average": {
+        "name": "Strøm (gjennomsnitt)"
+      },
+      "voltage_average": {
+        "name": "Spenning (gjennomsnitt)"
+      },
+      "optimizer_count": {
+        "name": "Antall optimizers"
+      },
+      "string_count": {
+        "name": "Antall strenger"
+      },
+      "inverter_count": {
+        "name": "Antall omformere"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Sted {site_id}"},
-    "inverter_device": {"name": "Omformer {display_name}"},
-    "string_device": {"name": "Streng {display_name}"},
-    "optimizer_device": {"name": "Optimizer {display_name}"}
+    "site_device": {
+      "name": "Sted {site_id}"
+    },
+    "inverter_device": {
+      "name": "Omformer {display_name}"
+    },
+    "string_device": {
+      "name": "Streng {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimizer {display_name}"
+    }
   }
 }
