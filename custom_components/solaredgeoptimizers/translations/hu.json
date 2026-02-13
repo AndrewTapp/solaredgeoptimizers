@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Az eszköz már konfigurálva van"},
+    "abort": {
+      "already_configured": "Az eszköz már konfigurálva van",
+      "reauth_successful": "Újra-hitelesítés sikeres",
+      "reauth_entry_missing": "A konfigurációs bejegyzés az újra-hitelesítéshez nem található."
+    },
     "error": {
       "cannot_connect": "Sikertelen csatlakozás",
       "invalid_auth": "Érvénytelen hitelesítés",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Entitás ID előtag (opcionális)",
           "include_site_id_in_entity_id": "Helyszín azonosító belefoglalása az entitás azonosítóba"
         }
+      },
+      "reauth_confirm": {
+        "title": "SolarEdge Optimizers újra-hitelesítése",
+        "description": "A {title} hitelesítő adatai már nem érvényesek. Adja meg SolarEdge felhasználónevét és jelszavát.",
+        "data": {
+          "username": "Felhasználónév",
+          "password": "Jelszó"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "{title} újrakonfigurálása",
+        "description": "Jelenlegi előtag: {current_entity_id_prefix}. Hagyja üresen a mezőt a prefix nélküli használathoz. A mentés újratölti az integrációt: az entity ID-k és unique_ids megváltozhatnak, ezért a meglévő entitások előzményei és statisztikái elveszhetnek. Fontolja meg az adatok biztonsági mentését vagy exportálását.",
+        "data": {
+          "entity_id_prefix": "Entitás ID előtag (opcionális)",
+          "include_site_id_in_entity_id": "Helyszín azonosító belefoglalása az entitás azonosítóba"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Teljesítmény"},
-      "voltage": {"name": "Feszültség"},
-      "current": {"name": "Áram"},
-      "optimizer_voltage": {"name": "Optimalizáló feszültség"},
-      "lifetime_energy": {"name": "Összes energia"},
-      "last_measurement": {"name": "Utolsó mérés"},
-      "last_polled": {"name": "Utoljára frissítve"},
-      "current_average": {"name": "Áram (átlag)"},
-      "voltage_average": {"name": "Feszültség (átlag)"},
-      "optimizer_count": {"name": "Optimalizálók száma"},
-      "string_count": {"name": "Stringek száma"},
-      "inverter_count": {"name": "Inverterek száma"}
+      "power": {
+        "name": "Teljesítmény"
+      },
+      "voltage": {
+        "name": "Feszültség"
+      },
+      "current": {
+        "name": "Áram"
+      },
+      "optimizer_voltage": {
+        "name": "Optimalizáló feszültség"
+      },
+      "lifetime_energy": {
+        "name": "Összes energia"
+      },
+      "last_measurement": {
+        "name": "Utolsó mérés"
+      },
+      "last_polled": {
+        "name": "Utoljára frissítve"
+      },
+      "current_average": {
+        "name": "Áram (átlag)"
+      },
+      "voltage_average": {
+        "name": "Feszültség (átlag)"
+      },
+      "optimizer_count": {
+        "name": "Optimalizálók száma"
+      },
+      "string_count": {
+        "name": "Stringek száma"
+      },
+      "inverter_count": {
+        "name": "Inverterek száma"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Település {site_id}"},
-    "inverter_device": {"name": "Inverter {display_name}"},
-    "string_device": {"name": "String {display_name}"},
-    "optimizer_device": {"name": "Optimalizáló {display_name}"}
+    "site_device": {
+      "name": "Település {site_id}"
+    },
+    "inverter_device": {
+      "name": "Inverter {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimalizáló {display_name}"
+    }
   }
 }
