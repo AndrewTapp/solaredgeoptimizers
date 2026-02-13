@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Устройство уже настроено"},
+    "abort": {
+      "already_configured": "Устройство уже настроено",
+      "reauth_successful": "Повторная аутентификация выполнена",
+      "reauth_entry_missing": "Запись конфигурации для повторной аутентификации не найдена."
+    },
     "error": {
       "cannot_connect": "Ошибка подключения",
       "invalid_auth": "Неверная аутентификация",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Префикс ID сущности (необязательно)",
           "include_site_id_in_entity_id": "Включить ID сайта в ID сущности"
         }
+      },
+      "reauth_confirm": {
+        "title": "Повторная аутентификация SolarEdge Optimizers",
+        "description": "Учётные данные для {title} больше не действительны. Введите имя пользователя и пароль SolarEdge.",
+        "data": {
+          "username": "Имя пользователя",
+          "password": "Пароль"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Перенастроить {title}",
+        "description": "Текущий префикс: {current_entity_id_prefix}. Оставьте поле пустым для отсутствия префикса. При сохранении интеграция перезагрузится: entity ID и unique_ids могут измениться, поэтому история и статистика существующих сущностей могут быть потеряны. Рекомендуется предварительно создать резервную копию или экспортировать данные.",
+        "data": {
+          "entity_id_prefix": "Префикс ID сущности (необязательно)",
+          "include_site_id_in_entity_id": "Включить ID сайта в ID сущности"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Мощность"},
-      "voltage": {"name": "Напряжение"},
-      "current": {"name": "Ток"},
-      "optimizer_voltage": {"name": "Напряжение оптимизатора"},
-      "lifetime_energy": {"name": "Суммарная энергия"},
-      "last_measurement": {"name": "Последнее измерение"},
-      "last_polled": {"name": "Последнее обновление"},
-      "current_average": {"name": "Ток (среднее)"},
-      "voltage_average": {"name": "Напряжение (среднее)"},
-      "optimizer_count": {"name": "Количество оптимизаторов"},
-      "string_count": {"name": "Количество строк"},
-      "inverter_count": {"name": "Количество инверторов"}
+      "power": {
+        "name": "Мощность"
+      },
+      "voltage": {
+        "name": "Напряжение"
+      },
+      "current": {
+        "name": "Ток"
+      },
+      "optimizer_voltage": {
+        "name": "Напряжение оптимизатора"
+      },
+      "lifetime_energy": {
+        "name": "Суммарная энергия"
+      },
+      "last_measurement": {
+        "name": "Последнее измерение"
+      },
+      "last_polled": {
+        "name": "Последнее обновление"
+      },
+      "current_average": {
+        "name": "Ток (среднее)"
+      },
+      "voltage_average": {
+        "name": "Напряжение (среднее)"
+      },
+      "optimizer_count": {
+        "name": "Количество оптимизаторов"
+      },
+      "string_count": {
+        "name": "Количество строк"
+      },
+      "inverter_count": {
+        "name": "Количество инверторов"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Объект {site_id}"},
-    "inverter_device": {"name": "Инвертор {display_name}"},
-    "string_device": {"name": "Строка {display_name}"},
-    "optimizer_device": {"name": "Оптимизатор {display_name}"}
+    "site_device": {
+      "name": "Объект {site_id}"
+    },
+    "inverter_device": {
+      "name": "Инвертор {display_name}"
+    },
+    "string_device": {
+      "name": "Строка {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Оптимизатор {display_name}"
+    }
   }
 }
