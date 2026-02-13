@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Cihaz zaten yapılandırılmış"},
+    "abort": {
+      "already_configured": "Cihaz zaten yapılandırılmış",
+      "reauth_successful": "Yeniden kimlik doğrulama başarılı",
+      "reauth_entry_missing": "Yeniden kimlik doğrulama için yapılandırma girişi bulunamadı."
+    },
     "error": {
       "cannot_connect": "Bağlantı kurulamadı",
       "invalid_auth": "Geçersiz kimlik doğrulama",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Varlık ID öneki (isteğe bağlı)",
           "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et"
         }
+      },
+      "reauth_confirm": {
+        "title": "SolarEdge Optimizers yeniden kimlik doğrulama",
+        "description": "{title} için kimlik bilgileri artık geçerli değil. SolarEdge kullanıcı adı ve parolanızı girin.",
+        "data": {
+          "username": "Kullanıcı adı",
+          "password": "Parola"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "{title} yeniden yapılandır",
+        "description": "Mevcut önek: {current_entity_id_prefix}. Önek kullanmak istemiyorsanız alanı boş bırakın. Kaydetme entegrasyonu yeniden yükleyecektir: entity ID'ler ve unique_ids değişebilir, bu nedenle mevcut varlıkların geçmişi ve istatistikleri kaybolabilir. Önce veri yedeklemesi veya dışa aktarımı yapmayı düşünün.",
+        "data": {
+          "entity_id_prefix": "Varlık ID öneki (isteğe bağlı)",
+          "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Güç"},
-      "voltage": {"name": "Gerilim"},
-      "current": {"name": "Akım"},
-      "optimizer_voltage": {"name": "Optimizer gerilimi"},
-      "lifetime_energy": {"name": "Toplam enerji"},
-      "last_measurement": {"name": "Son ölçüm"},
-      "last_polled": {"name": "Son güncelleme"},
-      "current_average": {"name": "Akım (ortalama)"},
-      "voltage_average": {"name": "Gerilim (ortalama)"},
-      "optimizer_count": {"name": "Optimizer sayısı"},
-      "string_count": {"name": "String sayısı"},
-      "inverter_count": {"name": "İnvertör sayısı"}
+      "power": {
+        "name": "Güç"
+      },
+      "voltage": {
+        "name": "Gerilim"
+      },
+      "current": {
+        "name": "Akım"
+      },
+      "optimizer_voltage": {
+        "name": "Optimizer gerilimi"
+      },
+      "lifetime_energy": {
+        "name": "Toplam enerji"
+      },
+      "last_measurement": {
+        "name": "Son ölçüm"
+      },
+      "last_polled": {
+        "name": "Son güncelleme"
+      },
+      "current_average": {
+        "name": "Akım (ortalama)"
+      },
+      "voltage_average": {
+        "name": "Gerilim (ortalama)"
+      },
+      "optimizer_count": {
+        "name": "Optimizer sayısı"
+      },
+      "string_count": {
+        "name": "String sayısı"
+      },
+      "inverter_count": {
+        "name": "İnvertör sayısı"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Site {site_id}"},
-    "inverter_device": {"name": "İnvertör {display_name}"},
-    "string_device": {"name": "String {display_name}"},
-    "optimizer_device": {"name": "Optimizer {display_name}"}
+    "site_device": {
+      "name": "Site {site_id}"
+    },
+    "inverter_device": {
+      "name": "İnvertör {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimizer {display_name}"
+    }
   }
 }
