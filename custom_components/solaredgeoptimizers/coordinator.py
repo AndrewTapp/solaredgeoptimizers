@@ -1,8 +1,8 @@
 """Data coordinator for SolarEdge Optimizers Home Assistant integration."""
-from datetime import datetime, timezone, timedelta
-
+import asyncio
 import logging
-import async_timeout
+from datetime import datetime, timedelta, timezone
+
 import requests
 
 from homeassistant.helpers import device_registry as dr
@@ -55,8 +55,19 @@ class MyCoordinator(DataUpdateCoordinator):
         self._last_full_fetch_utc = None
         self._last_light_check_utc = None
         self._representative_optimizer_id = None
-        # Whether to include site ID in entity_id_path (for entity IDs). Default False when key missing (e.g. upgraded from old version).
-        self._include_site_id_in_entity = bool(config_entry and config_entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, False))
+        # Whether to include site ID in entity_id_path (for entity IDs). Options override data; default False when key missing.
+        _include = False
+        if config_entry:
+            _include = config_entry.options.get(
+                CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
+                config_entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, False),
+            )
+        self._include_site_id_in_entity = bool(_include)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers coordinator: include_site_id_in_entity_id=%s (from options/data)",
+                self._include_site_id_in_entity,
+            )
 
     async def _async_setup(self) -> None:
         """Set up the coordinator.
@@ -83,6 +94,11 @@ class MyCoordinator(DataUpdateCoordinator):
                                 raise StopIteration
                 except StopIteration:
                     pass
+                if _LOGGER.isEnabledFor(logging.DEBUG) and self._representative_optimizer_id:
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers: Using representative optimizer %s for lightweight checks",
+                        self._representative_optimizer_id,
+                    )
             _LOGGER.info("SolarEdge Optimizers: Successfully retrieved panel list")
 
             _LOGGER.info("Found all information for site: %s", site.siteId)
@@ -370,7 +386,7 @@ class MyCoordinator(DataUpdateCoordinator):
         try:
             # Note: asyncio.TimeoutError and aiohttp.ClientError are already
             # handled by the data update coordinator.
-            async with async_timeout.timeout(300):
+            async with asyncio.timeout(300):
                 # AJT: 27-Jan-2026: Only log if debug level is enabled to reduce overhead
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("Update from the coordinator")
@@ -405,7 +421,7 @@ class MyCoordinator(DataUpdateCoordinator):
 
                 # AJT: 25-Jan-2026: Decide if we should hit the portal for a lightweight check this tick
                 measurement_age = (now_utc - latest_measurement) if isinstance(latest_measurement, datetime) else None
-                desired_check_interval = timedelta(minutes=15) if (measurement_age is None or measurement_age > timedelta(hours=1)) else timedelta(minutes=2)
+                desired_check_interval = timedelta(minutes=15) if (measurement_age is None or measurement_age > CHECK_TIME_DELTA) else timedelta(minutes=2)
 
                 should_light_check = (
                     not do_full_refresh
@@ -477,10 +493,20 @@ class MyCoordinator(DataUpdateCoordinator):
                     # AJT: 27-Jan-2026: Use dict comprehension for better performance
                     data_dict = {item.panel_id: item for item in data_list if item is not None}
                     self.first_boot = False
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "SolarEdge Optimizers: Full refresh returned %d optimizer/aggregate items",
+                            len(data_dict),
+                        )
                 else:
                     # AJT: 27-Jan-2026: Only copy if we need to modify, otherwise use reference
                     # AJT: 27-Jan-2026: Use cached is_data_dict check
                     data_dict = current_data if is_data_dict else {}
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "SolarEdge Optimizers: Reusing existing data (no full refresh), %d items",
+                            len(data_dict) if isinstance(data_dict, dict) else 0,
+                        )
 
                 # AJT: 25-Jan-2026: Calculate aggregated data (string → inverter → site)
                 if self._site_structure:
