@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Device is already configured"},
+    "abort": {
+      "already_configured": "Device is already configured",
+      "reauth_successful": "Re-authentication successful",
+      "reauth_entry_missing": "Re-authentication could not find the config entry."
+    },
     "error": {
       "cannot_connect": "Failed to connect",
       "invalid_auth": "Invalid authentication",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Entity ID prefix (optional)",
           "include_site_id_in_entity_id": "Include Site ID in Entity ID"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate SolarEdge Optimizers",
+        "description": "Credentials for {title} are no longer valid. Enter your SolarEdge username and password.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Reconfigure {title}",
+        "description": "Current prefix: {current_entity_id_prefix}. Leave Entity ID prefix empty for no prefix. Saving will reload the integration: entity IDs and unique_ids may change, so history and statistics for existing entities can be lost. Consider backing up or exporting data first.",
+        "data": {
+          "entity_id_prefix": "Entity ID prefix (optional)",
+          "include_site_id_in_entity_id": "Include Site ID in Entity ID"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Power"},
-      "voltage": {"name": "Voltage"},
-      "current": {"name": "Current"},
-      "optimizer_voltage": {"name": "Optimizer voltage"},
-      "lifetime_energy": {"name": "Lifetime energy"},
-      "last_measurement": {"name": "Last measurement"},
-      "last_polled": {"name": "Last polled"},
-      "current_average": {"name": "Current (average)"},
-      "voltage_average": {"name": "Voltage (average)"},
-      "optimizer_count": {"name": "Optimizer count"},
-      "string_count": {"name": "String count"},
-      "inverter_count": {"name": "Inverter count"}
+      "power": {
+        "name": "Power"
+      },
+      "voltage": {
+        "name": "Voltage"
+      },
+      "current": {
+        "name": "Current"
+      },
+      "optimizer_voltage": {
+        "name": "Optimizer voltage"
+      },
+      "lifetime_energy": {
+        "name": "Lifetime energy"
+      },
+      "last_measurement": {
+        "name": "Last measurement"
+      },
+      "last_polled": {
+        "name": "Last polled"
+      },
+      "current_average": {
+        "name": "Current (average)"
+      },
+      "voltage_average": {
+        "name": "Voltage (average)"
+      },
+      "optimizer_count": {
+        "name": "Optimizer count"
+      },
+      "string_count": {
+        "name": "String count"
+      },
+      "inverter_count": {
+        "name": "Inverter count"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Site {site_id}"},
-    "inverter_device": {"name": "Inverter {display_name}"},
-    "string_device": {"name": "String {display_name}"},
-    "optimizer_device": {"name": "Optimizer {display_name}"}
+    "site_device": {
+      "name": "Site {site_id}"
+    },
+    "inverter_device": {
+      "name": "Inverter {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimizer {display_name}"
+    }
   }
 }
