@@ -1,6 +1,7 @@
 """Sensor entities for SolarEdge Optimizers Home Assistant integration."""
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
 
@@ -59,9 +60,71 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _entity_prefix(entry: ConfigEntry) -> str:
-    """Normalize optional entity ID prefix from config (lowercase, underscores)."""
-    raw = (entry.data.get(CONF_ENTITY_PREFIX) or "").strip()
-    return raw.lower().replace(" ", "_")
+    """Normalize optional entity ID prefix from config (lowercase, underscores). Options override data.
+    If the key is present in options (including as ''), use it; only fall back to data when key is missing."""
+    if CONF_ENTITY_PREFIX in entry.options:
+        raw = entry.options.get(CONF_ENTITY_PREFIX) or ""
+    else:
+        raw = entry.data.get(CONF_ENTITY_PREFIX) or ""
+    return (raw or "").strip().lower().replace(" ", "_")
+
+
+def _remove_sensor_entities_for_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove all sensor entities for this config entry from the entity registry.
+    Called at start of setup so new entities get entity_id from current suggested_object_id
+    (e.g. after reconfigure with prefix removed, entities become sensor.power_* not sensor.prefix_power_*).
+    Match by config_entry_id and by unique_id prefix (entry_id) so we find entities even if
+    config_entry_id was cleared during unload.
+    """
+    ent_reg = er.async_get(hass)
+    entry_id = entry.entry_id
+    to_remove: set[str] = set()
+    # 1) By config_entry_id index
+    if hasattr(ent_reg.entities, "get_entries_for_config_entry_id"):
+        for e in ent_reg.entities.get_entries_for_config_entry_id(entry_id):
+            to_remove.add(e.entity_id)
+    # 2) Iterate registry: add any entity whose unique_id starts with entry_id (all our entities)
+    def _match(reg_entry) -> bool:
+        if getattr(reg_entry, "config_entry_id", None) == entry_id:
+            return True
+        uid = getattr(reg_entry, "unique_id", None)
+        return bool(uid and str(uid).startswith(entry_id))
+    if hasattr(ent_reg.entities, "data"):
+        for eid, reg_entry in list(getattr(ent_reg.entities, "data", {}).items()):
+            if _match(reg_entry):
+                to_remove.add(eid)
+    if hasattr(ent_reg.entities, "values"):
+        for entity in ent_reg.entities.values():
+            eid = getattr(entity, "entity_id", None)
+            if eid and _match(entity):
+                to_remove.add(eid)
+    # 3) Fallback: iterate by entity_id (ent_reg.entities is dict-like)
+    try:
+        for eid in ent_reg.entities:
+            if eid in to_remove:
+                continue
+            reg_entry = ent_reg.async_get(eid) if hasattr(ent_reg, "async_get") else None
+            if reg_entry is None and hasattr(ent_reg.entities, "data"):
+                reg_entry = getattr(ent_reg.entities, "data", {}).get(eid)
+            if reg_entry and _match(reg_entry):
+                to_remove.add(eid)
+    except Exception:  # pylint: disable=broad-except
+        pass
+    for eid in to_remove:
+        try:
+            ent_reg.async_remove(eid)
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "SolarEdge Optimizers sensor: Could not remove entity %s: %s",
+                eid,
+                e,
+            )
+    if to_remove:
+        _LOGGER.info(
+            "SolarEdge Optimizers sensor: Removing %d existing entities for entry %s so new entity_ids match current prefix",
+            len(to_remove),
+            entry_id,
+        )
 
 
 async def async_setup_entry(
@@ -70,10 +133,26 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Add an solarEdge entry."""
-    # Add the needed sensors to hass
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge Optimizers sensor: async_setup_entry for entry_id=%s",
+            entry.entry_id,
+        )
+    # Add the needed sensors to hass (use coordinator's site structure from first refresh; no duplicate API call)
     coordinator: MyCoordinator = hass.data[DOMAIN][entry.entry_id]
+    site = coordinator._site_structure
+    if site is None:
+        _LOGGER.error("SolarEdge Optimizers sensor: No site structure on coordinator; setup cannot continue")
+        return
 
-    site = await hass.async_add_executor_job(coordinator.my_api.requestListOfAllPanels)
+    # Remove existing sensor entities for this entry so new ones get entity_id from current options (e.g. prefix)
+    try:
+        _remove_sensor_entities_for_entry(hass, entry)
+    except Exception as e:  # pylint: disable=broad-except
+        _LOGGER.warning(
+            "SolarEdge Optimizers sensor: Error removing existing entities before setup: %s",
+            e,
+        )
 
     _LOGGER.info("Found all information for site: %s", site.siteId)
     _LOGGER.info("Site has %s inverters", len(site.inverters))
@@ -84,8 +163,16 @@ async def async_setup_entry(
 
     base_name = _entity_prefix(entry)
     site_id = str(site.siteId)
-    # Default False when key missing (e.g. upgraded from old version without these options)
-    include_site_id = entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, False)
+    # Options override data; default False when key missing (e.g. upgraded from old version)
+    include_site_id = entry.options.get(
+        CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
+        entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, False),
+    )
+    _LOGGER.info(
+        "SolarEdge Optimizers sensor: entity_id prefix=%r, include_site_id_in_entity_id=%s",
+        base_name or "(empty)",
+        include_site_id,
+    )
     optimizer_tasks = []
     for inv_idx, inverter in enumerate(site.inverters, start=1):
         _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
@@ -223,6 +310,11 @@ async def async_setup_entry(
 
     # Add all sensors at once
     if sensors_to_add:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers sensor: Adding %d entities (update_before_add=True)",
+                len(sensors_to_add),
+            )
         async_add_entities(sensors_to_add, update_before_add=True)
         individual_count = len(optimizer_tasks) * len(SENSOR_TYPE_INDIVIDUAL)
         aggregated_count = len(sensors_to_add) - individual_count
@@ -260,7 +352,14 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
         self._base_name = (base_name + "_") if base_name else ""
         self._include_site_id_in_entity_id = include_site_id_in_entity_id
 
-        self._attr_unique_id = f"{entry.entry_id}_last_polled_{site_id}" if include_site_id_in_entity_id else f"{entry.entry_id}_last_polled"
+        # Include prefix in unique_id so reconfigure (add/remove prefix) produces new entity_id instead of keeping old one
+        _uid_parts = [entry.entry_id]
+        if self._base_name:
+            _uid_parts.append(self._base_name.rstrip("_"))
+        _uid_parts.append("last_polled")
+        if include_site_id_in_entity_id:
+            _uid_parts.append(site_id)
+        self._attr_unique_id = "_".join(_uid_parts)
         # Full object_id so HA does not prefix with device name (e.g. avoid sensor.site_123_last_polled_123)
         obj_id = f"{self._base_name}last_polled_{self._site_id}" if include_site_id_in_entity_id else f"{self._base_name}last_polled"
         self.internal_integration_suggested_object_id = obj_id
@@ -332,12 +431,20 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         self._panel = panel.panel_description
         self._sensor_type = sensortype
         path_str = "_".join(map(str, getattr(panel, "entity_id_path", ())))
+        # Site level: always use numeric site id for entity_id (never panel_id "site_2065855") and ensure prefix is applied
+        if panel.entity_type == "site" and not path_str and "_" in getattr(panel, "panel_id", ""):
+            path_str = str(panel.panel_id).split("_", 1)[1]
         slug = self._slug_for_sensortype()
-        self._attr_unique_id = f"{entry.entry_id}_{slug}_{path_str}" if path_str else f"{entry.entry_id}_{slug}_{panel.panel_id}"
+        # Include prefix in unique_id so reconfigure (add/remove prefix) produces new entity_id instead of keeping old one
+        _uid_parts = [entry.entry_id]
+        if self._base_name:
+            _uid_parts.append(self._base_name.rstrip("_"))
+        _uid_parts.append(slug)
+        _uid_parts.append(path_str if path_str else panel.panel_id)
+        self._attr_unique_id = "_".join(_uid_parts)
 
         # Force HA to use our full object_id (no device-name prefix like "site_123_" or "inverter_1_").
-        # Always set both so entity_id is sensor.[prefix]slug_path (e.g. sensor.power_2065855) regardless
-        # of locale/timezone; some HA setups otherwise prefix with device name (e.g. sensor.site_2065855_power_2065855).
+        # Always set both so entity_id is sensor.[prefix]slug_path (e.g. sensor.[prefix]power_2065855 at site level).
         object_id = f"{self._base_name}{slug}_{path_str}" if path_str else f"{self._base_name}{slug}_{panel.panel_id}"
         if object_id.strip("_"):  # avoid setting empty or underscore-only
             self.internal_integration_suggested_object_id = object_id
@@ -437,6 +544,10 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         if path:
             path_str = "_".join(map(str, path))
             return f"{self._base_name}{slug}_{path_str}"
+        # Site level: use numeric site id (strip "site_" from panel_id) so entity_id is [prefix]slug_2065855 not [prefix]slug_site_2065855
+        if getattr(self._panelobject, "entity_type", None) == "site" and "_" in getattr(self._panelobject, "panel_id", ""):
+            path_str = str(self._panelobject.panel_id).split("_", 1)[1]
+            return f"{self._base_name}{slug}_{path_str}"
         return f"{self._base_name}{slug}_{self._panelobject.panel_id}"
 
     @callback
@@ -444,6 +555,12 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         """Handle updated data from the coordinator."""
         if self.coordinator.data is not None:
             item = self.coordinator.data.get(self._panelobject.panel_id)
+            if item is None and _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers sensor: No data for panel_id=%s (%s) in coordinator",
+                    self._panelobject.panel_id,
+                    self._sensor_type,
+                )
             if item and hasattr(item, 'entity_type'):
                 # This is aggregated data, handle it directly
                 # AJT: 27-Jan-2026: Use class-level constant instead of creating dict on every update
@@ -547,7 +664,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         slug = self._TRANSLATION_KEYS.get(
             sensortype, sensortype.lower().replace(" ", "_")
         )
-        self._attr_unique_id = f"{entry.entry_id}_{slug}_{path_str}" if path_str else f"{panel.serialnumber}_{sensortype}"
+        # Include prefix in unique_id so reconfigure (add/remove prefix) produces new entity_id instead of keeping old one
+        _uid_parts = [entry.entry_id]
+        if self._base_name:
+            _uid_parts.append(self._base_name.rstrip("_"))
+        if path_str:
+            _uid_parts.extend([slug, path_str])
+        else:
+            _uid_parts.extend([panel.serialnumber, sensortype])
+        self._attr_unique_id = "_".join(_uid_parts)
         self._attr_translation_key = self._TRANSLATION_KEYS.get(
             self._sensor_type, self._sensor_type.lower().replace(" ", "_")
         )
@@ -703,6 +828,12 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             if (self._sensor_type is not SENSOR_TYPE_ENERGY) and (
                 self._sensor_type is not SENSOR_TYPE_LASTMEASUREMENT
             ):
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers sensor: Coordinator data is None, zeroing %s (%s)",
+                        self._log_name,
+                        self._sensor_type,
+                    )
                 self._attr_native_value = 0
 
         # AJT: 27-Jan-2026: Only process string conversion if value is actually a string
