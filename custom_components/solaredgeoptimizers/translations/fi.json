@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "Laite on jo määritetty"},
+    "abort": {
+      "already_configured": "Laite on jo määritetty",
+      "reauth_successful": "Uudelleen tunnistautuminen onnistui",
+      "reauth_entry_missing": "Konfiguraation kohdetta uudelleen tunnistautumista varten ei löytynyt."
+    },
     "error": {
       "cannot_connect": "Yhteys epäonnistui",
       "invalid_auth": "Virheellinen tunnistautuminen",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "Entiteetin ID-etuliite (valinnainen)",
           "include_site_id_in_entity_id": "Sisällytä kohteen ID entiteetin ID:hen"
         }
+      },
+      "reauth_confirm": {
+        "title": "Tunnistaudu uudelleen SolarEdge Optimizers",
+        "description": "Tunnukset kohteelle {title} eivät ole enää voimassa. Syötä SolarEdge-käyttäjätunnus ja salasana.",
+        "data": {
+          "username": "Käyttäjätunnus",
+          "password": "Salasana"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Määritä {title} uudelleen",
+        "description": "Nykyinen etuliite: {current_entity_id_prefix}. Jätä kenttä tyhjäksi jos et halua etuliitettä. Tallenus lataa integraation uudelleen: entity ID -tunnisteet ja unique_ids voivat muuttua, joten olemassa olevien entiteettien historia ja tilastot voivat katoilla. Harkitse tietojen varmuuskopiointia tai vientiä ensin.",
+        "data": {
+          "entity_id_prefix": "Entiteetin ID-etuliite (valinnainen)",
+          "include_site_id_in_entity_id": "Sisällytä kohteen ID entiteetin ID:hen"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "Teho"},
-      "voltage": {"name": "Jännite"},
-      "current": {"name": "Virta"},
-      "optimizer_voltage": {"name": "Optimointilaitteen jännite"},
-      "lifetime_energy": {"name": "Kokonaisenergia"},
-      "last_measurement": {"name": "Viimeisin mittaus"},
-      "last_polled": {"name": "Viimeksi päivitetty"},
-      "current_average": {"name": "Virta (keskiarvo)"},
-      "voltage_average": {"name": "Jännite (keskiarvo)"},
-      "optimizer_count": {"name": "Optimointilaitteiden määrä"},
-      "string_count": {"name": "Stringien määrä"},
-      "inverter_count": {"name": "Inverttereiden määrä"}
+      "power": {
+        "name": "Teho"
+      },
+      "voltage": {
+        "name": "Jännite"
+      },
+      "current": {
+        "name": "Virta"
+      },
+      "optimizer_voltage": {
+        "name": "Optimointilaitteen jännite"
+      },
+      "lifetime_energy": {
+        "name": "Kokonaisenergia"
+      },
+      "last_measurement": {
+        "name": "Viimeisin mittaus"
+      },
+      "last_polled": {
+        "name": "Viimeksi päivitetty"
+      },
+      "current_average": {
+        "name": "Virta (keskiarvo)"
+      },
+      "voltage_average": {
+        "name": "Jännite (keskiarvo)"
+      },
+      "optimizer_count": {
+        "name": "Optimointilaitteiden määrä"
+      },
+      "string_count": {
+        "name": "Stringien määrä"
+      },
+      "inverter_count": {
+        "name": "Inverttereiden määrä"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "Kohde {site_id}"},
-    "inverter_device": {"name": "Inverteri {display_name}"},
-    "string_device": {"name": "Stringi {display_name}"},
-    "optimizer_device": {"name": "Optimointilaite {display_name}"}
+    "site_device": {
+      "name": "Kohde {site_id}"
+    },
+    "inverter_device": {
+      "name": "Inverteri {display_name}"
+    },
+    "string_device": {
+      "name": "Stringi {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimointilaite {display_name}"
+    }
   }
 }
