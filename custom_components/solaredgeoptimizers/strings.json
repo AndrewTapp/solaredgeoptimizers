@@ -9,6 +9,10 @@
           "entity_id_prefix": "Entity ID prefix (optional)",
           "include_site_id_in_entity_id": "Include Site ID in Entity ID"
         }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate SolarEdge Optimizers",
+        "description": "Credentials for {title} are no longer valid. Enter your SolarEdge username and password."
       }
     }
   },
@@ -18,6 +22,20 @@
     "unknown": "[%key:common::config_flow::error::unknown%]"
   },
   "abort": {
-    "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+    "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
+    "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+    "reauth_entry_missing": "Re-authentication could not find the config entry."
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Reconfigure {title}",
+        "description": "Current prefix: {current_entity_id_prefix}. Leave Entity ID prefix empty for no prefix. Saving will reload the integration: entity IDs and unique_ids may change, so history and statistics for existing entities can be lost. Consider backing up or exporting data first.",
+        "data": {
+          "entity_id_prefix": "Entity ID prefix (optional)",
+          "include_site_id_in_entity_id": "Include Site ID in Entity ID"
+        }
+      }
+    }
   }
 }
