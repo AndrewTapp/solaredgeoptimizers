@@ -2,7 +2,11 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
-    "abort": {"already_configured": "デバイスは既に設定されています"},
+    "abort": {
+      "already_configured": "デバイスは既に設定されています",
+      "reauth_successful": "再認証が完了しました",
+      "reauth_entry_missing": "再認証用の設定エントリが見つかりませんでした。"
+    },
     "error": {
       "cannot_connect": "接続に失敗しました",
       "invalid_auth": "認証が無効です",
@@ -17,29 +21,81 @@
           "entity_id_prefix": "エンティティ ID プレフィックス（任意）",
           "include_site_id_in_entity_id": "エンティティ ID にサイト ID を含める"
         }
+      },
+      "reauth_confirm": {
+        "title": "SolarEdge Optimizers の再認証",
+        "description": "{title} の認証情報は無効になりました。SolarEdge のユーザー名とパスワードを入力してください。",
+        "data": {
+          "username": "ユーザー名",
+          "password": "パスワード"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "{title} を再設定",
+        "description": "現在のプレフィックス: {current_entity_id_prefix}。プレフィックスなしにするには欄を空にしてください。保存すると統合が再読み込みされます。entity ID と unique_id が変わるため、既存エンティティの履歴や統計が失われる場合があります。事前のバックアップまたはデータのエクスポートを検討してください。",
+        "data": {
+          "entity_id_prefix": "エンティティ ID プレフィックス（任意）",
+          "include_site_id_in_entity_id": "エンティティ ID にサイト ID を含める"
+        }
       }
     }
   },
   "entity": {
     "sensor": {
-      "power": {"name": "電力"},
-      "voltage": {"name": "電圧"},
-      "current": {"name": "電流"},
-      "optimizer_voltage": {"name": "オプティマイザー電圧"},
-      "lifetime_energy": {"name": "累計発電量"},
-      "last_measurement": {"name": "最終測定"},
-      "last_polled": {"name": "最終更新"},
-      "current_average": {"name": "電流（平均）"},
-      "voltage_average": {"name": "電圧（平均）"},
-      "optimizer_count": {"name": "オプティマイザー数"},
-      "string_count": {"name": "ストリング数"},
-      "inverter_count": {"name": "インバーター数"}
+      "power": {
+        "name": "電力"
+      },
+      "voltage": {
+        "name": "電圧"
+      },
+      "current": {
+        "name": "電流"
+      },
+      "optimizer_voltage": {
+        "name": "オプティマイザー電圧"
+      },
+      "lifetime_energy": {
+        "name": "累計発電量"
+      },
+      "last_measurement": {
+        "name": "最終測定"
+      },
+      "last_polled": {
+        "name": "最終更新"
+      },
+      "current_average": {
+        "name": "電流（平均）"
+      },
+      "voltage_average": {
+        "name": "電圧（平均）"
+      },
+      "optimizer_count": {
+        "name": "オプティマイザー数"
+      },
+      "string_count": {
+        "name": "ストリング数"
+      },
+      "inverter_count": {
+        "name": "インバーター数"
+      }
     }
   },
   "device": {
-    "site_device": {"name": "サイト {site_id}"},
-    "inverter_device": {"name": "インバーター {display_name}"},
-    "string_device": {"name": "ストリング {display_name}"},
-    "optimizer_device": {"name": "オプティマイザー {display_name}"}
+    "site_device": {
+      "name": "サイト {site_id}"
+    },
+    "inverter_device": {
+      "name": "インバーター {display_name}"
+    },
+    "string_device": {
+      "name": "ストリング {display_name}"
+    },
+    "optimizer_device": {
+      "name": "オプティマイザー {display_name}"
+    }
   }
 }
