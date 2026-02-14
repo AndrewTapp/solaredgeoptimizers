@@ -156,7 +156,7 @@ To add another language, add a `translations/<code>.json` file with the same str
 
 ## Many thanks to the following people
 
-[@proudem](https://github.com/proudem) creator of the original integration.
+[@proudelm](https://github.com/proudelm) creator of the original integration.
 
 [@Mariusthvdb](https://github.com/Mariusthvdb) for his help getting me up and running with this fork of the original integration.
 
