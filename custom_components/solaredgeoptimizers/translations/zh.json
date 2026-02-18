@@ -16,8 +16,9 @@
       "user": {
         "data": {
           "siteid": "站点 ID",
-          "password": "密码",
           "username": "用户名（电子邮箱）",
+          "password": "密码",
+          "use_solaredge_one": "使用 SolarEdge One 门户",
           "entity_id_prefix": "实体 ID 前缀（可选）",
           "include_site_id_in_entity_id": "在实体 ID 中包含站点 ID"
         }
@@ -38,6 +39,7 @@
         "title": "重新配置 {title}",
         "description": "当前前缀：{current_entity_id_prefix}。若不需要前缀，请将字段留空。保存将重新加载集成：entity ID 和 unique_id 可能会改变，因此现有实体的历史和统计可能会丢失。请考虑先备份或导出数据。",
         "data": {
+          "use_solaredge_one": "使用 SolarEdge One 门户",
           "entity_id_prefix": "实体 ID 前缀（可选）",
           "include_site_id_in_entity_id": "在实体 ID 中包含站点 ID"
         }
