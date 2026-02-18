@@ -14,7 +14,7 @@ from requests import Session
 from datetime import datetime, timedelta
 from jsonfinder import jsonfinder
 
-# AJT: 10-Jan-2025: Added logger setup to replace print statements with proper logging
+# Added logger setup to replace print statements with proper logging
 _LOGGER = logging.getLogger(__name__)
 
 # SolarEdge API returns measurement keys in the user's locale (e.g. "Power [W]" in EN, "Leistung [W]" in DE).
@@ -129,7 +129,7 @@ class solaredgeoptimizers:
         self.siteid = siteid
         self.username = username
         self.password = password
-        # AJT: 18-Jan-2026: Store timezone for date parsing (default to UTC if not provided)
+        # Store timezone for date parsing (default to UTC if not provided)
         self._timezone = timezone if timezone is not None else pytz.UTC
         # Language for API locale/accept-language (e.g. "en", "de"); default "en"
         self._language = (language or "en").split("-")[0].lower()
@@ -141,13 +141,13 @@ class solaredgeoptimizers:
             "hu": "hu_HU", "ru": "ru_RU", "zh": "zh_CN", "ja": "ja_JP",
             "da": "da_DK", "nb": "nb_NO", "fi": "fi_FI",
         }
-        # AJT: 16-Jan-2026: Thread-local storage for session reuse (one session per thread)
+        # Thread-local storage for session reuse (one session per thread)
         self._thread_local = threading.local()
-        # AJT: 16-Jan-2026: Cache for requestListOfAllPanels() result (TTL: 1 hour)
+        # Cache for requestListOfAllPanels() result (TTL: 1 hour)
         self._panels_cache = None
         self._panels_cache_time = None
         self._panels_cache_ttl = timedelta(hours=1)
-        # AJT: 16-Jan-2026: Cache for lifetime energy data (TTL: 1 hour, changes slowly)
+        # Cache for lifetime energy data (TTL: 1 hour, changes slowly)
         self._lifetime_energy_cache = None
         self._lifetime_energy_cache_time = None
         self._lifetime_energy_cache_ttl = timedelta(hours=1)
@@ -170,6 +170,8 @@ class solaredgeoptimizers:
             or self._lifetime_energy_cache_time is None
             or (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl
         ):
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers (legacy): get_lifetime_energy_cached cache miss, fetching")
             try:
                 lifetime_energy_response = self.getLifeTimeEnergy()
                 if lifetime_energy_response.startswith("ERROR001"):
@@ -183,7 +185,14 @@ class solaredgeoptimizers:
                         self._lifetime_energy_cache = {}
                 self._lifetime_energy_cache_time = now
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("Refreshed lifetime energy cache (cached accessor)")
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): Refreshed lifetime energy cache (%d entries)",
+                        len(self._lifetime_energy_cache) if isinstance(self._lifetime_energy_cache, dict) else 0,
+                    )
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): Decoded lifetime energy data (by optimizer/string ID): %s",
+                        self._lifetime_energy_cache,
+                    )
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 # Transient DNS/network errors: keep previous cache, do not update cache time
                 _LOGGER.warning(
@@ -192,13 +201,22 @@ class solaredgeoptimizers:
                 )
                 if self._lifetime_energy_cache is None:
                     self._lifetime_energy_cache = {}
+        else:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                cache = self._lifetime_energy_cache or {}
+                age = now - self._lifetime_energy_cache_time if self._lifetime_energy_cache_time else None
+                _LOGGER.debug(
+                    "SolarEdge Optimizers (legacy): get_lifetime_energy_cached using cache (age=%s, %d entries)",
+                    age,
+                    len(cache) if isinstance(cache, dict) else 0,
+                )
         return self._lifetime_energy_cache or {}
 
     def check_login(self):
-        # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
+        # Add detailed debugging for initial setup issues
         _LOGGER.info("SolarEdge Optimizers: Starting login check for site %s", self.siteid)
 
-        # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+        # Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Login check URL: %s", url)
@@ -207,13 +225,13 @@ class solaredgeoptimizers:
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
         kwargs["headers"] = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
                              }
-        # AJT: 24-Jan-2026: Add timeout to prevent hanging and log request attempt
+        # Add timeout to prevent hanging and log request attempt
         kwargs["timeout"] = 30  # 30 second timeout
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Making login check request with 30s timeout")
 
         try:
-            # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
+            # Use context manager to ensure response is properly closed
             with requests.get(url, **kwargs) as r:
                 _LOGGER.info("SolarEdge Optimizers: Login check completed - Status: %s", r.status_code)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -234,23 +252,23 @@ class solaredgeoptimizers:
             raise
 
     def requestLogicalLayout(self):
-        # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
+        # Add detailed debugging for initial setup issues
         _LOGGER.info("SolarEdge Optimizers: Requesting logical layout for site %s", self.siteid)
 
-        # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+        # Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Logical layout URL: %s", url)
 
         kwargs = {}
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
-        # AJT: 24-Jan-2026: Add timeout to prevent hanging
+        # Add timeout to prevent hanging
         kwargs["timeout"] = 60  # 60 second timeout for layout request
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Making logical layout request with 60s timeout")
 
         try:
-            # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
+            # Use context manager to ensure response is properly closed
             with requests.get(url, **kwargs) as r:
                 _LOGGER.info("SolarEdge Optimizers: Logical layout request completed - Status: %s, Content length: %s", r.status_code, len(r.text))
                 if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -272,10 +290,10 @@ class solaredgeoptimizers:
             raise
 
     def requestListOfAllPanels(self):
-        # AJT: 24-Jan-2026: Add detailed debugging for initial setup issues
+        # Add detailed debugging for initial setup issues
         _LOGGER.info("SolarEdge Optimizers: Requesting list of all panels")
 
-        # AJT: 16-Jan-2026: Cache result to avoid repeated API calls (layout rarely changes)
+        # Cache result to avoid repeated API calls (layout rarely changes)
         now = datetime.now()
         if (self._panels_cache is None or
             self._panels_cache_time is None or
@@ -287,7 +305,7 @@ class solaredgeoptimizers:
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("SolarEdge Optimizers: Received raw layout data, parsing JSON")
                 json_obj = json.loads(raw_layout)
-                # AJT: 22-Jan-2026: Log parsed logical layout JSON for debugging
+                # Log parsed logical layout JSON for debugging
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("Parsed logical layout JSON: %s", json_obj)
                     _LOGGER.debug("SolarEdge Optimizers: Creating SolarEdgeSite object")
@@ -310,9 +328,9 @@ class solaredgeoptimizers:
         return self._panels_cache
 
     def requestSystemData(self, itemId):
-        # AJT: 10-Jan-2025: Fixed endpoint URL - changed from monitoringpublic.solaredge.com/publicSystemData to monitoring.solaredge.com/systemData,
+        # Fixed endpoint URL - changed from monitoringpublic.solaredge.com/publicSystemData to monitoring.solaredge.com/systemData,
         # changed isPublic=true to false, added locale parameter, and added v parameter with timestamp
-        # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+        # Use f-string instead of .format() for better performance
         locale = self._locale_from_language()
         url = f"https://monitoring.solaredge.com/solaredge-web/p/systemData?reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale={locale}&v={round(time.time() * 1000)}"
 
@@ -323,17 +341,17 @@ class solaredgeoptimizers:
             "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
             "timeout": 30,  # Prevent hung requests in ThreadPoolExecutor
         }
-        # AJT: 11-Jan-2026: Use context manager to ensure response is properly closed
+        # Use context manager to ensure response is properly closed
         with requests.get(url, **kwargs) as r:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("Response from systemData (optimizer %s, status %s)", itemId, r.status_code)
             if r.status_code == 200:
                 json_object = self.decodeResult(r.text)
-                # AJT: 22-Jan-2026: Log decoded JSON object for debugging
+                # Log decoded JSON object for debugging
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("Decoded JSON object for optimizer %s: %s", itemId, json_object)
                 try:
-                    # AJT: Handle case where decodeResult returns a list instead of dict - extract first element if list
+                    # Handle case where decodeResult returns a list instead of dict - extract first element if list
                     if isinstance(json_object, list):
                         if len(json_object) > 0:
                             json_object = json_object[0]
@@ -341,35 +359,34 @@ class solaredgeoptimizers:
                             _LOGGER.warning("Empty list returned for optimizer %s", itemId)
                             return None
                     
-                    # AJT: 10-Jan-2025: Ensure we have a dictionary before accessing keys
+                    # Ensure we have a dictionary before accessing keys
                     if not isinstance(json_object, dict):
                         _LOGGER.error("Unexpected data type returned for optimizer %s: %s", itemId, type(json_object))
                         if _LOGGER.isEnabledFor(logging.DEBUG):
                             _LOGGER.debug("Response data: %s", json_object)
                         return None
                     
-                    # AJT: 10-Jan-2025: Changed from direct key access to .get() for safer dictionary access
+                    # Changed from direct key access to .get() for safer dictionary access
                     if json_object.get("lastMeasurementDate") == "":
                         if _LOGGER.isEnabledFor(logging.DEBUG):
                             _LOGGER.debug("Skipping optimizer %s without measurements", itemId)
                         return None
                     else:
-                        # AJT: 18-Jan-2026: Pass timezone to SolarEdgeOptimizerData for correct date parsing
+                        # Pass timezone to SolarEdgeOptimizerData for correct date parsing
                         return SolarEdgeOptimizerData(itemId, json_object, self._timezone)
                 except KeyError as e:
-                    # AJT: 10-Jan-2025: Added specific KeyError handling with better logging
+                    # Added specific KeyError handling with better logging
                     _LOGGER.error("Missing expected key in response for optimizer %s: %s", itemId, e)
                     if _LOGGER.isEnabledFor(logging.DEBUG):
                         _LOGGER.debug("Response data: %s", json_object)
                     return None
                 except Exception as e:
-                    # AJT: Replaced print() with logging and added more detailed error info
-                    _LOGGER.error("Error while processing data for optimizer %s: %s", itemId, e)
+                    # %s", itemId, e)
                     if _LOGGER.isEnabledFor(logging.DEBUG):
                         _LOGGER.debug("Response data: %s", json_object)
                     raise Exception("Error while processing data") from e
             else:
-                # AJT: 15-Jan-2026: Treat 5xx errors as temporary with a clean log line
+                # Treat 5xx errors as temporary with a clean log line
                 if 500 <= r.status_code < 600:
                     _LOGGER.warning(
                         "Temporary server error from SolarEdge (HTTP %s). Will retry on next update.",
@@ -387,17 +404,18 @@ class solaredgeoptimizers:
                 raise Exception(f"Problem sending request to SolarEdge (HTTP {r.status_code})")
 
     def requestAllData(self):
-
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers (legacy): requestAllData starting")
         solarsite = self.requestListOfAllPanels()
 
-        # AJT: 16-Jan-2026: Cache lifetime energy data to avoid repeated API calls (changes slowly)
+        # Cache lifetime energy data to avoid repeated API calls (changes slowly)
         now = datetime.now()
         if (self._lifetime_energy_cache is None or 
             self._lifetime_energy_cache_time is None or 
             (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl):
-            # AJT: 11-Jan-2026: Added error handling for getLifeTimeEnergy() response
+            # Added error handling for getLifeTimeEnergy() response
             lifetime_energy_response = self.getLifeTimeEnergy()
-            # AJT: 22-Jan-2026: Log raw lifetime energy response for debugging (endpoint already logged in getLifeTimeEnergy)
+            # Log raw lifetime energy response for debugging (endpoint already logged in getLifeTimeEnergy)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 response_preview = lifetime_energy_response[:2000] if len(lifetime_energy_response) > 2000 else lifetime_energy_response
                 _LOGGER.debug("Response from lifetime energy endpoint: %s", response_preview)
@@ -407,7 +425,7 @@ class solaredgeoptimizers:
             else:
                 try:
                     lifetimeenergy = json.loads(lifetime_energy_response)
-                    # AJT: 22-Jan-2026: Log parsed lifetime energy data returned from endpoint
+                    # Log parsed lifetime energy data returned from endpoint
                     if _LOGGER.isEnabledFor(logging.DEBUG):
                         _LOGGER.debug("Parsed lifetime energy data (by optimizer/string ID): %s", lifetimeenergy)
                 except json.JSONDecodeError as e:
@@ -423,8 +441,8 @@ class solaredgeoptimizers:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("Using cached lifetime energy data")
 
-        # AJT: 16-Jan-2026: Collect all optimizer IDs first for parallel processing
-        # AJT: 27-Jan-2026: Use list comprehension for better performance than append in loop
+        # Collect all optimizer IDs first for parallel processing
+        # Use list comprehension for better performance than append in loop
         optimizer_ids = [
             optimizer.optimizerId
             for inverter in solarsite.inverters
@@ -432,15 +450,20 @@ class solaredgeoptimizers:
             for optimizer in string.optimizers
         ]
 
-        # AJT: 16-Jan-2026: Parallelize API calls using ThreadPoolExecutor for 10-20x speedup
+        # Parallelize API calls using ThreadPoolExecutor for 10-20x speedup
         data = []
-        # AJT: 27-Jan-2026: Use adaptive worker count based on CPU cores for better performance
+        # Use adaptive worker count based on CPU cores for better performance
         max_workers = min(
             os.cpu_count() or 4,  # Use CPU count, fallback to 4
             len(optimizer_ids),
             10  # Cap at 10 to avoid overwhelming server
         )
-        
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): requestAllData fetching %d optimizers with max_workers=%d",
+                len(optimizer_ids),
+                max_workers,
+            )
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all requests in parallel
             future_to_id = {
@@ -468,6 +491,11 @@ class solaredgeoptimizers:
                 except Exception as e:
                     _LOGGER.error("Error fetching data for optimizer %s: %s", optimizer_id, e)
 
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): requestAllData complete, %d optimizers with data",
+                len(data),
+            )
         return data
 
     def requestItemHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
@@ -491,7 +519,7 @@ class solaredgeoptimizers:
         if isinstance(endtime, datetime):
             endtime = int(endtime.timestamp() * 1000)
 
-        # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+        # Use f-string instead of .format() for better performance
         url = f'https://monitoring.solaredge.com/solaredge-web/p/chartData?reporterId={itemId}&fieldId={self.siteid}&reporterType=&startDate={starttime:d}&endDate={endtime:d}&uom=W&parameterName={parameter}'
 
         r = self._doRequestWithCooldown("GET", url)
@@ -547,7 +575,7 @@ class solaredgeoptimizers:
         """
         Same as _doRequest, but waiting before each call, and in between retries in case it fails
         """
-        # AJT: 16-Jan-2026: Use f-string instead of % formatting for better performance
+        # Use f-string instead of % formatting for better performance
         e = Exception(f"Could not perform request within {n_retries} retries")
         for i in range(n_retries):
             try:
@@ -569,11 +597,11 @@ class solaredgeoptimizers:
         Sessions are reused within the same thread to reduce login overhead.
         """
         if not hasattr(self._thread_local, 'session') or self._thread_local.session is None:
-            # AJT: 16-Jan-2026: Create new session for this thread
+            # Create new session for this thread
             self._thread_local.session = Session()
             # Perform initial login setup
-            # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
-            # AJT: 27-Jan-2026: Use context manager to ensure response is closed
+            # Use f-string instead of .format() for better performance
+            # Use context manager to ensure response is closed
             with self._thread_local.session.head(
                 f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy",
                 headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
@@ -582,7 +610,7 @@ class solaredgeoptimizers:
                 pass  # Response automatically closed by context manager
             url = "https://monitoring.solaredge.com/solaredge-web/p/login"
             self._thread_local.session.auth = (self.username, self.password)
-            # AJT: 27-Jan-2026: Use context manager to ensure response is closed
+            # Use context manager to ensure response is closed
             with self._thread_local.session.get(url) as r1:
                 if r1.status_code != 200:
                     _LOGGER.warning("Login request returned status %d", r1.status_code)
@@ -590,20 +618,20 @@ class solaredgeoptimizers:
         return self._thread_local.session
 
     def _doRequest(self, method, request_url, data=None):
-        # AJT: 16-Jan-2026: Reuse thread-local session to reduce login overhead
+        # Reuse thread-local session to reduce login overhead
         session = self._get_session()
 
         # Fix the cookie to get a string.
         therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
         # The csrf-token is needed as a seperate header.
         thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
-        # AJT: Added check for None CSRF token to prevent errors when token is missing
+        # Added check for None CSRF token to prevent errors when token is missing
         if thecrsftoken is None:
             _LOGGER.warning("CSRF token not found in cookies")
             thecrsftoken = ""
 
         # Build up the request.
-        # AJT: 27-Jan-2026: Use context manager to ensure response is properly closed
+        # Use context manager to ensure response is properly closed
         with session.request(
             method=method,
             url=request_url,
@@ -614,7 +642,7 @@ class solaredgeoptimizers:
                 "content-type": "application/json",
                 "cookie": therightcookie,
                 "origin": "https://monitoring.solaredge.com",
-                # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+                # Use f-string instead of .format() for better performance
                 "referer": f"https://monitoring.solaredge.com/solaredge-web/p/site/{self.siteid}/",
                 "sec-ch-ua": '"Google Chrome";v="105", "Not)A;Brand";v="8", "Chromium";v="105"',
                 "sec-ch-ua-mobile": "?0",
@@ -629,7 +657,7 @@ class solaredgeoptimizers:
             },
             data=data
         ) as response:
-            # AJT: 22-Jan-2026: Log endpoint and raw response data for debugging
+            # Log endpoint and raw response data for debugging
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 response_preview = response.text[:2000] if len(response.text) > 2000 else response.text
                 _LOGGER.debug("Endpoint: %s %s | Status: %s | Response (preview): %s",
@@ -643,11 +671,11 @@ class solaredgeoptimizers:
         if status_code == 200:
             return response_text
         else:
-            # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+            # Use f-string instead of .format() for better performance
             return f"ERROR001 - HTTP CODE: {status_code}"
 
     def getLifeTimeEnergy(self):
-        # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+        # Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy?timeUnit=ALL"
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("Endpoint (lifetime energy, whole site): %s", url)
@@ -670,7 +698,7 @@ class solaredgeoptimizers:
 
     def getAlerts(self, only_open=False):
         # Note: this might require FULL_ACCESS rights in the SE portal, as opposed to DASHBOARD_AND_LAYOUT
-        # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+        # Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/rna/v1.0/site/{self.siteid}/alerts"
         data = None
         if only_open:
@@ -680,28 +708,28 @@ class solaredgeoptimizers:
         return self._doRequest("POST", url, data=json.dumps(data))
 
     def GetThecsrfToken(self, cookies):
-        # AJT: 16-Jan-2026: Optimize using direct dictionary access instead of linear search
+        # Optimize using direct dictionary access instead of linear search
         return cookies.get("CSRF-TOKEN")
 
     def MakeStringFromCookie(self, cookies):
-        # AJT: 16-Jan-2026: Optimize string concatenation using list and join() instead of += in loop
-        # AJT: 27-Jan-2026: Direct access to known keys instead of iterating all cookies
+        # Optimize string concatenation using list and join() instead of += in loop
+        # Direct access to known keys instead of iterating all cookies
         cookie_parts = []
         if "CSRF-TOKEN" in cookies:
             cookie_parts.append(f"CSRF-TOKEN={cookies['CSRF-TOKEN']};")
         if "JSESSIONID" in cookies:
             cookie_parts.append(f"JSESSIONID={cookies['JSESSIONID']};")
 
-        # AJT: 10-Jan-2025: Fixed typo "concent" to "consent" in cookie string
-        # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+        # Fixed typo "concent" to "consent" in cookie string
+        # Use f-string instead of .format() for better performance
         locale = self._locale_from_language()
         cookie_parts.append(f"SolarEdge_Locale={locale}; SolarEdge_Locale={locale}; solaredge_cookie_consent=1;SolarEdge_Field_ID={self.siteid}")
 
         return "".join(cookie_parts)
 
     def decodeResult(self, result):
-        # AJT: 22-Jan-2026: First try to extract JSON from SE.systemData = {...}; line (more specific and reliable)
-        # AJT: 27-Jan-2026: Moved import to module level for better performance
+        # First try to extract JSON from SE.systemData = {...}; line (more specific and reliable)
+        # Moved import to module level for better performance
         # Find SE.systemData = and extract the JSON object (handles nested braces)
         se_systemdata_match = re.search(r'SE\.systemData\s*=\s*', result)
         if se_systemdata_match:
@@ -731,7 +759,7 @@ class solaredgeoptimizers:
                             break
                     i += 1
         
-        # AJT: 22-Jan-2026: Fallback to jsonfinder method for backwards compatibility
+        # Fallback to jsonfinder method for backwards compatibility
         json_result = ""
         for _, __, obj in jsonfinder(result, json_only=True):
             json_result = obj
@@ -799,7 +827,7 @@ class SolarEdgeSite:
         for inverter in self.inverters:
             for string in inverter.strings:
                 for optimizer in string.optimizers:
-                    # AJT: 16-Jan-2026: Use f-string instead of .format() for better performance
+                    # Use f-string instead of .format() for better performance
                     panel_ids.append(f"{optimizer.optimizerId}|{optimizer.serialNumber}")
 
         return panel_ids
@@ -910,7 +938,7 @@ class SolarEdgeAggregatedData:
 class SolarEdgeOptimizerData:
     """Data class for SolarEdge optimizer measurements and metadata."""
     
-    # AJT: 27-Jan-2026: Use __slots__ to reduce memory overhead and improve attribute access speed
+    # Use __slots__ to reduce memory overhead and improve attribute access speed
     __slots__ = (
         '_timezone', '_json_obj', 'serialnumber', 'panel_id', 'panel_description',
         'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage',
@@ -919,12 +947,12 @@ class SolarEdgeOptimizerData:
 
     def __init__(self, panelid, json_object, timezone=None):
 
-        # AJT: 18-Jan-2026: Store timezone for date parsing (default to UTC if not provided)
+        # Store timezone for date parsing (default to UTC if not provided)
         self._timezone = timezone if timezone is not None else pytz.UTC
 
         self.serialnumber = ""
         self.panel_id = ""
-        # AJT: 16-Jan-2026: Fixed spelling from "paneel" to "panel"
+        # Fixed spelling from "paneel" to "panel"
         self.panel_description = ""
         self.lastmeasurement = ""
         self.model = ""
@@ -943,64 +971,65 @@ class SolarEdgeOptimizerData:
 
             self.serialnumber = json_object["serialNumber"]
             self.panel_id = panelid
-            # AJT: 16-Jan-2026: Fixed spelling from "paneel" to "panel"
+            # Fixed spelling from "paneel" to "panel"
             self.panel_description = json_object["description"]
             rawdate = json_object.get("lastMeasurementDate", "")
             
-            # AJT: 24-Jan-2026: Simplified timezone handling - always parse as local time using Home Assistant timezone
-            # The SolarEdge API returns timestamps in the local timezone where the optimizers are installed,
-            # but since we don't know the optimizer locations, we use the Home Assistant timezone as a reasonable approximation.
-            # The date string format is typically: "Fri Jan 23 16:04:21 GMT 2026" where the time is local but labeled as GMT
+            # Support ISO 8601 format (e.g. "2026-02-13T13:50:41Z") from SolarEdge One API
             try:
-                # Clean the date string by removing any timezone indicators (GMT, UTC, etc.)
-                # This handles formats like "Fri Jan 23 16:04:21 GMT 2026" -> "Fri Jan 23 16:04:21 2026"
-                date_str = rawdate
-                # Remove timezone abbreviations that appear before the year
-                # AJT: 27-Jan-2026: re is already imported at module level
-                date_str = re.sub(r'\s+(?:GMT|UTC|EST|CST|PST|EDT|CDT|PDT|[A-Z]{3})\s+', ' ', date_str)
-
-                # Parse as naive datetime (no timezone info)
-                naive_dt = datetime.strptime(date_str.strip(), "%a %b %d %H:%M:%S %Y")
-
-                # Apply Home Assistant timezone (treat as local time)
-                if naive_dt.tzinfo is None:
-                    if hasattr(self._timezone, 'localize'):
-                        # pytz timezone
-                        local_dt = self._timezone.localize(naive_dt)
-                    else:
-                        # ZoneInfo or other timezone
-                        local_dt = naive_dt.replace(tzinfo=self._timezone)
+                if "T" in rawdate and ("Z" in rawdate or "+" in rawdate or (len(rawdate) >= 6 and rawdate[-6] in "+-")):
+                    iso_str = rawdate.strip().replace("Z", "+00:00")
+                    self.lastmeasurement = datetime.fromisoformat(iso_str).astimezone(pytz.UTC)
                 else:
-                    local_dt = naive_dt
+                    raise ValueError("Not ISO format")
+            except (ValueError, TypeError):
+                # Simplified timezone handling - always parse as local time using Home Assistant timezone
+                # The SolarEdge API returns timestamps in the local timezone where the optimizers are installed,
+                # but since we don't know the optimizer locations, we use the Home Assistant timezone as a reasonable approximation.
+                # The date string format is typically: "Fri Jan 23 16:04:21 GMT 2026" where the time is local but labeled as GMT
+                try:
+                    # Clean the date string by removing any timezone indicators (GMT, UTC, etc.)
+                    date_str = rawdate
+                    date_str = re.sub(r'\s+(?:GMT|UTC|EST|CST|PST|EDT|CDT|PDT|[A-Z]{3})\s+', ' ', date_str)
 
-                # Convert to UTC for consistent storage
-                self.lastmeasurement = local_dt.astimezone(pytz.UTC)
+                    # Parse as naive datetime (no timezone info)
+                    naive_dt = datetime.strptime(date_str.strip(), "%a %b %d %H:%M:%S %Y")
 
-                # AJT: 24-Jan-2026: Updated logging to reflect simplified timezone handling
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "Timezone conversion for optimizer %s: raw='%s' | cleaned='%s' | naive=%s | local=%s (%s) | UTC=%s",
-                        panelid,
-                        rawdate,
-                        date_str.strip(),
-                        naive_dt,
-                        local_dt,
-                        str(self._timezone),
-                        self.lastmeasurement
-                    )
-            except (ValueError, IndexError) as e:
-                _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
-                # Set to current UTC time as fallback
-                self.lastmeasurement = datetime.now(pytz.UTC)
+                    # Apply Home Assistant timezone (treat as local time)
+                    if naive_dt.tzinfo is None:
+                        if hasattr(self._timezone, 'localize'):
+                            local_dt = self._timezone.localize(naive_dt)
+                        else:
+                            local_dt = naive_dt.replace(tzinfo=self._timezone)
+                    else:
+                        local_dt = naive_dt
+
+                    # Convert to UTC for consistent storage
+                    self.lastmeasurement = local_dt.astimezone(pytz.UTC)
+
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "Timezone conversion for optimizer %s: raw='%s' | cleaned='%s' | naive=%s | local=%s (%s) | UTC=%s",
+                            panelid,
+                            rawdate,
+                            date_str.strip(),
+                            naive_dt,
+                            local_dt,
+                            str(self._timezone),
+                            self.lastmeasurement
+                        )
+                except (ValueError, IndexError) as e:
+                    _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
+                    self.lastmeasurement = datetime.now(pytz.UTC)
 
             self.model = json_object.get("model", "")
             self.manufacturer = json_object.get("manufacturer", "")
 
-            # AJT: 11-Jan-2026: Fixed unsafe dictionary access using .get() with defaults
-            # AJT: 17-Jan-2026: Handle cases where measurements might be missing, null, or have different structure
+            # Fixed unsafe dictionary access using .get() with defaults
+            # Handle cases where measurements might be missing, null, or have different structure
             measurements = json_object.get("measurements", {})
             if not measurements or not isinstance(measurements, dict):
-                # AJT: 27-Jan-2026: Only build keys list if logging is enabled to reduce overhead
+                # Only build keys list if logging is enabled to reduce overhead
                 available_keys = None
                 if _LOGGER.isEnabledFor(logging.WARNING):
                     available_keys = list(json_object.keys()) if isinstance(json_object, dict) else "N/A"
@@ -1025,11 +1054,11 @@ class SolarEdgeOptimizerData:
                     return default
 
             self.current = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["current"]), 0.0)
-            self.optimizer_voltage = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["optimizer_voltage"]), 0.0)
-            self.power = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["power"]), 0.0)
-            self.voltage = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["voltage"]), 0.0)
+            self.optimizer_voltage = round(safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["optimizer_voltage"]), 0.0), 2)
+            self.power = round(safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["power"]), 0.0), 2)
+            self.voltage = round(safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["voltage"]), 0.0), 2)
             
-            # AJT: 17-Jan-2026: Log if all measurements are zero to help diagnose API response issues
+            # Log if all measurements are zero to help diagnose API response issues
             if self.current == 0.0 and self.power == 0.0 and self.voltage == 0.0 and self.optimizer_voltage == 0.0:
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug(
