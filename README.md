@@ -9,7 +9,9 @@ This integration brings your SolarEdge optimizer data from the SolarEdge monitor
 
 **📖 [Technical documentation (Wiki)](https://github.com/AndrewTapp/solaredgeoptimizers/wiki)** — architecture, data flow, sensors reference, troubleshooting, and more.
 
-## Upgrading from a version prior to v2.3.4:
+## Upgrading from an earlier version
+
+If you are on a version prior to v2.4.0 (or want a clean registry after any upgrade), the steps below ensure entities and devices are recreated correctly:
 
 1. **Update the integration via HACS** so the new code (including cleanup) is installed.
 2. **Restart Home Assistant** (optional but recommended).
@@ -18,6 +20,10 @@ This integration brings your SolarEdge optimizer data from the SolarEdge monitor
 5. **Clear browser cache** [Ctrl]+[Shift]+r on Microsoft Edge.
 6. **Re-add the integration** with the same Site ID, username, password, and options. You get fresh entities and a clean registry; history reconnects because `unique_id`s are the same.
 
+## SolarEdge One portal
+
+The SolarEdge monitoring portal is being upgraded to **SolarEdge One**. If your account uses the new portal, keep **Use SolarEdge One portal** enabled (it defaults to **on** when adding the integration). The integration will then use the SolarEdge One API (`/services/layout/...`) instead of the legacy endpoints. Same Site ID, username, and password; the data (optimizers, power, lifetime energy) is the same. When using SolarEdge One, optimizer and inverter devices in Home Assistant show the **model** (e.g. optimizer P405-4RM4MRM-NA25, inverter SE5000H-RW000BNN4) and serial number.
+
 ## What You Need
 
 To set up the integration you will need:
@@ -25,6 +31,7 @@ To set up the integration you will need:
 - Your **Site ID** (from the SolarEdge portal)
 - Your **Username**
 - Your **Password**
+- **Use SolarEdge One portal** (optional, default **on**) – Turn off only if your account still uses the legacy portal. When on, the integration uses the SolarEdge One API and device model information is shown for optimizers and inverters.
 - **Entity ID prefix** (optional) – If you run more than one site or want to avoid clashes with other integrations, you can set a short prefix (e.g. `se_`). All entity IDs will then start with that prefix (e.g. `sensor.se_power_9999999`). Leave blank for no prefix. If you upgrade from an older version without removing the integration, this defaults to blank when not set.
 - **Include Site ID in Entity ID** (optional, default **off**) – When off, entity IDs for inverter, string, and optimizer levels omit the site ID (e.g. `sensor.power_1_1`, `sensor.power_1_1_1`). The site level always shows the actual site ID (e.g. `sensor.power_9999999`). Turn on to include the site ID in every level (e.g. `sensor.power_9999999_1_1_1`). If you upgrade from an older version without removing the integration, this defaults to off when not set.
 
@@ -62,14 +69,14 @@ Names are kept short (e.g. “Current (average)”, “Power”) because the dev
 
 ## How Often Data Updates
 
-- The integration checks for new data every few minutes. When the SolarEdge portal has new readings, a full refresh runs so all sensors update.
+- The integration checks for new data every few minutes. It does a lightweight check (one or a few optimizers) to see if the portal has new readings; when it detects new data, a full refresh runs so all sensors update. With **SolarEdge One**, up to five optimizers are chosen at random for each check so different orientations and shade don't block updates.
 - **Lifetime energy** is only refreshed from the portal about once per hour, because that value changes slowly. It is derived from the API’s unscaled energy (Wh), not the display units, so values update correctly. Totals for strings, inverters, and the site are calculated from that data.
 
 So in normal use you see updates every few minutes when the portal has new data, and lifetime energy at most once per hour.
 
 ## When an Optimizer Is Offline or Not Reporting
 
-- If the **last measurement** is older than two hours, **Voltage**, **Current**, **Optimizer voltage**, and **Power** are shown as **0** for that optimizer (and any aggregates that depend on it). This avoids showing stale “live” values.
+- If the **last measurement** is older than the stale threshold, **Voltage**, **Current**, **Optimizer voltage**, and **Power** are shown as **0** for that optimizer (and any aggregates that depend on it). This avoids showing stale “live” values. The threshold is **1 hour** when using **SolarEdge One** and **2 hours** for the legacy API.
 - **Lifetime energy** and **Last measurement** always show the last known values, so you can still see historical production even when a panel is temporarily offline.
 
 ## One config entry per site
@@ -84,7 +91,7 @@ If your SolarEdge credentials expire or become invalid (for example after a pass
 
 - Temporary problems on SolarEdge’s servers (e.g. HTTP 5xx errors) or network/DNS issues (e.g. “Failed to resolve monitoring.solaredge.com”) are handled without crashing: the integration uses cached data where possible and will try again on the next update.
 - Connections and sessions are closed properly when the integration is removed or reloaded, so it's safe to run for long periods.
-- When you **delete the integration** (remove the config entry), the integration removes all associated entities from the entity registry and all associated devices from the device registry, so no leftover entries remain. Delete from **Settings → Devices & services → Integrations** (not only from HACS) so that this cleanup runs.
+- When you **delete the integration** (remove the config entry), the integration removes all associated entities and devices from the registries via a shared cleanup routine (used by both the config flow and unload), so no leftover entries remain. Delete from **Settings → Devices & services → Integrations** (not only from HACS) so that this cleanup runs.
 
 ## Installation
 
@@ -96,19 +103,20 @@ Until this integration is part of Home Assistant Core, installing via HACS is re
    - Category: **Integration** → **Add**.
 
 2. **Install the integration**
-   - In HACS, open **SolarEdge Optimizers** and click **Download**.
+   - In HACS, open **SolarEdge Optimizers** (or **SolarEdge Optimizers Data**) and click **Download**.
 
 3. **Restart Home Assistant.**
 
 4. **Configure**
    - **Settings** → **Devices & services** → **Add Integration** → search for **SolarEdge Optimizers**.
    - Enter your **Site ID**, **Username**, and **Password**.
+   - **Use SolarEdge One portal** is on by default; turn it off only if your account still uses the legacy portal.
    - Optionally set **Entity ID prefix** (e.g. `se_`) so all entity IDs start with that prefix; leave blank for no prefix.
    - Optionally enable **Include Site ID in Entity ID** (default off) to include the site ID in inverter/string/optimizer entity IDs; site-level entities always show the site ID.
 
-**Reconfigure (optional):** After setup, you can change **Entity ID prefix** or **Include Site ID in Entity ID** without deleting the integration: go to **Settings** → **Devices & services** → **SolarEdge Optimizers** → your site → **Configure**. The dialog shows your current prefix in the description; leave the Entity ID prefix field empty to remove the prefix. Saving will reload the integration. **Note:** Changing these options can change entity IDs and unique_ids, so existing entity history and statistics may be lost; consider backing up or exporting data first.
+**Reconfigure (optional):** After setup, you can change **Use SolarEdge One portal**, **Entity ID prefix**, or **Include Site ID in Entity ID** without deleting the integration: go to **Settings** → **Devices & services** → **SolarEdge Optimizers** → your site → **Configure**. The dialog shows **Use SolarEdge One portal** first (defaulting to your current setting), then Entity ID prefix (description shows current prefix; leave empty to remove it), then Include Site ID in Entity ID. Saving will reload the integration. **Note:** Changing these options can change entity IDs and unique_ids, so existing entity history and statistics may be lost; consider backing up or exporting data first.
 
-The first load can take a while if you have many optimizers; the integration fetches and organises all of them.
+On first load, the integration fetches all optimizer data once in the coordinator; the sensor platform then reuses that data when creating entities, so it does not send duplicate API calls for each optimizer. With many optimizers, the initial fetch and device creation may still take a short while.
 
 ## Debug logging
 
@@ -121,11 +129,11 @@ logger:
     solaredgeoptimizers: debug
 ```
 
-Restart Home Assistant for the change to take effect. Debug logging covers the full lifecycle: config flow (user form, validation, entry creation, reauth form, options/reconfigure form, removal), setup and unload (coordinator, platforms, API sessions), coordinator updates (adaptive polling, full refresh vs reuse, representative optimizer, include_site_id_in_entity_id), sensor setup (entities added, config options), and API requests (login, layout, system data, lifetime energy). All debug output is guarded so there is no performance cost when the log level is `info`. Turn logging back to `info` when you are done.
+Restart Home Assistant for the change to take effect. Debug logging covers the full lifecycle: config flow (user form, validation, unique_id check, entry creation, reauth form, options/reconfigure form when showing or saving, removal), setup and unload (API choice, coordinator, platform forward, API session close, registry cleanup), coordinator updates (inverter models fetch for SolarEdge One, device creation with model, adaptive polling, full refresh vs reuse, representative optimizers or random batch, lifetime energy entries, update complete), sensor setup (base_name, include_site_id, per-optimizer serial/model, aggregated sensors, entity count), and API requests (SolarEdge One: OAuth, token, GET/POST to /services/, optimizer/inverter information, cache hit/miss; legacy: login, layout, system data, lifetime energy). All debug output is guarded so there is no performance cost when the log level is `info`. Turn logging back to `info` when you are done.
 
 ## Translations
 
-The integration is localized for multiple languages: config flow (labels, errors, entry title), sensor and device names, and API locale follow the user’s Home Assistant language where supported. See [Internationalization (i18n)](https://github.com/AndrewTapp/solaredgeoptimizers/blob/main/custom_components/solaredgeoptimizers/docs/internationalization.md) for details.
+The integration is localized for multiple languages: config flow (labels, errors, entry title), sensor and device names, and API locale follow the user’s Home Assistant language where supported. See [Internationalization (i18n)](https://github.com/AndrewTapp/solaredgeoptimizers/blob/main/custom_components/solaredgeoptimizers/docs/Internationalization.md) for details.
 
 The config flow (add-integration setup) is translated into:
 
