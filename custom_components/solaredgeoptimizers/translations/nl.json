@@ -16,8 +16,9 @@
       "user": {
         "data": {
           "siteid": "Site nummer",
-          "password": "Wachtwoord",
           "username": "Gebruikersnaam (Email)",
+          "password": "Wachtwoord",
+          "use_solaredge_one": "SolarEdge One-portaal gebruiken",
           "entity_id_prefix": "Entity-ID-voorvoegsel (optioneel)",
           "include_site_id_in_entity_id": "Site-ID opnemen in entiteits-ID"
         }
@@ -38,6 +39,7 @@
         "title": "{title} opnieuw configureren",
         "description": "Huidig voorvoegsel: {current_entity_id_prefix}. Laat het veld leeg voor geen voorvoegsel. Opslaan laadt de integratie opnieuw: entity ID's en unique_ids kunnen veranderen, waardoor geschiedenis en statistieken van bestaande entiteiten verloren kunnen gaan. Overweeg eerst een back-up of export van gegevens.",
         "data": {
+          "use_solaredge_one": "SolarEdge One-portaal gebruiken",
           "entity_id_prefix": "Entiteits-ID-voorvoegsel (optioneel)",
           "include_site_id_in_entity_id": "Site-ID opnemen in entiteits-ID"
         }
