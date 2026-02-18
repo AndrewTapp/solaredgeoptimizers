@@ -16,10 +16,11 @@
       "user": {
         "data": {
           "siteid": "Standort-ID",
-          "password": "Passwort",
           "username": "Benutzername (E-Mail)",
+          "password": "Passwort",
+          "use_solaredge_one": "SolarEdge One-Portal verwenden",
           "entity_id_prefix": "Entity-ID-Präfix (optional)",
-          "include_site_id_in_entity_id": "Standon-ID in Entitäts-ID einbeziehen"
+          "include_site_id_in_entity_id": "Standort-ID in Entitäts-ID einbeziehen"
         }
       },
       "reauth_confirm": {
@@ -38,6 +39,7 @@
         "title": "{title} neu konfigurieren",
         "description": "Aktuelles Präfix: {current_entity_id_prefix}. Lassen Sie das Feld leer für kein Präfix. Beim Speichern wird die Integration neu geladen: Entity-IDs und unique_ids können sich ändern, sodass Verlauf und Statistiken bestehender Entitäten verloren gehen können. Erwägen Sie zuerst eine Sicherung oder einen Export der Daten.",
         "data": {
+          "use_solaredge_one": "SolarEdge One-Portal verwenden",
           "entity_id_prefix": "Entity-ID-Präfix (optional)",
           "include_site_id_in_entity_id": "Standort-ID in Entitäts-ID einbeziehen"
         }
