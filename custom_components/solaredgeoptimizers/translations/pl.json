@@ -16,8 +16,9 @@
       "user": {
         "data": {
           "siteid": "ID witryny",
-          "password": "Hasło",
           "username": "Nazwa użytkownika (e-mail)",
+          "password": "Hasło",
+          "use_solaredge_one": "Użyj portalu SolarEdge One",
           "entity_id_prefix": "Prefiks ID encji (opcjonalny)",
           "include_site_id_in_entity_id": "Uwzględnij ID witryny w ID encji"
         }
@@ -38,6 +39,7 @@
         "title": "Skonfiguruj ponownie {title}",
         "description": "Bieżący prefiks: {current_entity_id_prefix}. Zostaw pole puste, aby nie używać prefiksu. Zapisanie przeładuje integrację: identyfikatory entity ID i unique_ids mogą ulec zmianie, więc historia i statystyki istniejących encji mogą zostać utracone. Rozważ wcześniej utworzenie kopii zapasowej lub eksport danych.",
         "data": {
+          "use_solaredge_one": "Użyj portalu SolarEdge One",
           "entity_id_prefix": "Prefiks ID encji (opcjonalnie)",
           "include_site_id_in_entity_id": "Uwzględnij ID witryny w ID encji"
         }
