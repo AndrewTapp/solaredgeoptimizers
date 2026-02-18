@@ -16,8 +16,9 @@
       "user": {
         "data": {
           "siteid": "Steds-ID",
-          "password": "Passord",
           "username": "Brukernavn (e-post)",
+          "password": "Passord",
+          "use_solaredge_one": "Bruk SolarEdge One-portalen",
           "entity_id_prefix": "Entitets-ID-prefiks (valgfritt)",
           "include_site_id_in_entity_id": "Inkluder steds-ID i entitets-ID"
         }
@@ -38,6 +39,7 @@
         "title": "Konfigurer {title} på nytt",
         "description": "Nåværende prefiks: {current_entity_id_prefix}. La feltet stå tomt for ingen prefiks. Lagring vil laste inn integrasjonen på nytt: entitets-ID-er og unique_ids kan endres, så historikk og statistikk for eksisterende enheter kan gå tapt. Vurder sikkerhetskopiering eller eksport av data først.",
         "data": {
+          "use_solaredge_one": "Bruk SolarEdge One-portalen",
           "entity_id_prefix": "Entitets-ID-prefiks (valgfritt)",
           "include_site_id_in_entity_id": "Inkluder steds-ID i entitets-ID"
         }
