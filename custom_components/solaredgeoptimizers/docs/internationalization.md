@@ -6,7 +6,7 @@ This document describes how the SolarEdge Optimizers integration supports multip
 
 ### Config flow (add-integration)
 
-- **Form labels**: Site id, Username, Password, Entity ID prefix (optional) — from `config.step.user.data.*` in each `translations/<code>.json`.
+- **Form labels**: Site id, Username, Password, **Use SolarEdge One portal** (from `config.step.user.data.use_solaredge_one`), Entity ID prefix (optional), Include Site ID in Entity ID — from `config.step.user.data.*` in each `translations/<code>.json`.
 - **Errors**: "Failed to connect", "Invalid authentication", "Unexpected error" — from `config.error.*`.
 - **Abort**: "Device is already configured" — from `config.abort.already_configured`. Re-auth flow: `config.abort.reauth_successful`, `config.abort.reauth_entry_missing`.
 - **Re-authentication step**: When credentials expire, the re-auth form (title, description, username, password) — from `config.step.reauth_confirm`.
