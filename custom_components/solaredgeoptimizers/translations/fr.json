@@ -16,8 +16,9 @@
       "user": {
         "data": {
           "siteid": "ID du site",
-          "password": "Mot de passe",
           "username": "Nom d'utilisateur (e-mail)",
+          "password": "Mot de passe",
+          "use_solaredge_one": "Utiliser le portail SolarEdge One",
           "entity_id_prefix": "Préfixe d'ID d'entité (facultatif)",
           "include_site_id_in_entity_id": "Inclure l'ID du site dans l'ID de l'entité"
         }
@@ -38,6 +39,7 @@
         "title": "Reconfigurer {title}",
         "description": "Préfixe actuel : {current_entity_id_prefix}. Laissez le champ vide pour ne pas utiliser de préfixe. L'enregistrement rechargera l'intégration : les entity ID et unique_ids peuvent changer, donc l'historique et les statistiques des entités existantes peuvent être perdus. Envisagez d'abord une sauvegarde ou un export des données.",
         "data": {
+          "use_solaredge_one": "Utiliser le portail SolarEdge One",
           "entity_id_prefix": "Préfixe d'ID d'entité (facultatif)",
           "include_site_id_in_entity_id": "Inclure l'ID du site dans l'ID de l'entité"
         }
