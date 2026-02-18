@@ -16,8 +16,9 @@
       "user": {
         "data": {
           "siteid": "Site kimliği",
-          "password": "Parola",
           "username": "Kullanıcı adı (e-posta)",
+          "password": "Parola",
+          "use_solaredge_one": "SolarEdge One portalını kullan",
           "entity_id_prefix": "Varlık ID öneki (isteğe bağlı)",
           "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et"
         }
@@ -38,6 +39,7 @@
         "title": "{title} yeniden yapılandır",
         "description": "Mevcut önek: {current_entity_id_prefix}. Önek kullanmak istemiyorsanız alanı boş bırakın. Kaydetme entegrasyonu yeniden yükleyecektir: entity ID'ler ve unique_ids değişebilir, bu nedenle mevcut varlıkların geçmişi ve istatistikleri kaybolabilir. Önce veri yedeklemesi veya dışa aktarımı yapmayı düşünün.",
         "data": {
+          "use_solaredge_one": "SolarEdge One portalını kullan",
           "entity_id_prefix": "Varlık ID öneki (isteğe bağlı)",
           "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et"
         }
