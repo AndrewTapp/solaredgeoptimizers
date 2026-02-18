@@ -46,7 +46,7 @@ The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitorin
 | **Caching** | Logical layout (1 h) and lifetime energy (1 h) cached to reduce API load. |
 | **Multi-language** | Config flow (including re-auth step and abort messages) and entity names translated; API locale follows HA language. |
 | **Stale handling** | Live values (V, I, P) zeroed when last measurement is older than threshold: **1 hour** (SolarEdge One) or **2 hours** (legacy API). |
-| **Reliability** | Temporary server/network errors (5xx, DNS) handled with cached data; connections closed on remove/reload. |
+| **Reliability** | Temporary server/network errors (5xx, DNS) handled with cached data; connections closed on remove/reload. **SolarEdge One** optimizer data requests use a 60 s timeout and one automatic retry on read/connect timeout to reduce failures when the portal is slow. |
 | **Removal cleanup** | When the integration is deleted from **Settings → Integrations**, config flow’s `async_remove_entry` calls the shared helper `remove_entities_and_devices_for_entry` (defined in `__init__.py`), which removes all associated entities and devices from the registries. The same helper is used on unload. No leftover registry entries remain. |
 
 ### Requirements
@@ -401,7 +401,7 @@ The integration supports two API back ends. Which one is used is determined by t
 |---------|--------|---------------------|
 | Login | GET/POST | `login.solaredge.com` (OAuth PKCE flow), then `POST .../oauth2/token` for access token |
 | Site structure / layout | GET | `.../services/layout/logical/generic/v2/site/{siteId}?include-optimizers=true` |
-| Per-optimizer live data + basic info | POST | `.../services/layout/information/optimizers` (body: list of optimizer serials). Returns `basicInformationList` (serial, model e.g. P405-4RM4MRM-NA25) and `serialToLiveData`. Used for full refresh (parallel per optimizer) and for lightweight check via `requestSystemDataBatch` (one call with up to 5 random serials). |
+| Per-optimizer live data + basic info | POST | `.../services/layout/information/optimizers` (body: list of optimizer serials). Returns `basicInformationList` (serial, model e.g. P405-4RM4MRM-NA25) and `serialToLiveData`. Used for full refresh (parallel per optimizer) and for lightweight check via `requestSystemDataBatch` (one call with up to 5 random serials). **Timeout**: 60 s with **one automatic retry** on read/connect timeout (log: "Timeout requesting optimizer data (retrying once)"). |
 | Inverter information | GET | `.../services/layout/information/inverters?inverter-serials=...` (fullModel e.g. SE5000H-RW000BNN4). Fetched at setup to set inverter device model. |
 | Lifetime energy | GET | `.../services/layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...&start-date=...&end-date=...` (one request per optimizer; cached 1 h) |
 
@@ -435,7 +435,7 @@ The layout/energy (legacy) or energy-graph (SolarEdge One) response provides per
 - **Log namespace**: The integration uses `logging.getLogger(__name__)` per module (e.g. `solaredgeoptimizers.sensor`); the top-level logger name is `solaredgeoptimizers`.  
 - **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures. All debug calls are guarded with `isEnabledFor(logging.DEBUG)`, so there is no performance cost when the log level is `info` or higher.
 
-**What debug logging covers:** Config flow (user form, validating input, unique_id check, creating entry with title and use_solaredge_one, reauth form, options/reconfigure form when showing — with current prefix/use_solaredge_one/include_site_id — or saving, removal and device count); setup (API instance — legacy or SolarEdge One — from options/data, login check, coordinator with include_site_id_in_entity_id, inverter models fetch for SolarEdge One, site/inverter/string device creation with model, platform forward, coordinator stored); unload (unload start, platform result, API session close, registry cleanup when nothing to remove, unload complete); coordinator (panel list request, representative optimizers or random batch for SolarEdge One, update cycle — do_full_refresh, should_light_check, measurement_age, desired_interval, latest_measurement — adaptive light check and full refresh, full refresh vs reuse item count, lifetime energy entry count, timezone, update complete); sensor platform (setup entry, base_name and include_site_id and site_id, adding optimizer with panel_id/serial/model, aggregated sensors, entity count, skip on exception); API client (legacy: login, layout, requestAllData start/complete, system data, get_lifetime_energy_cached hit/miss/entry count, lifetime energy; SolarEdge One: OAuth steps, token, get_inverter_models request/result, requestLogicalLayout, requestSystemData/requestSystemDataBatch, _build_optimizer_data_from_response, requestAllData, cache, errors). Enable with `logger: logs: solaredgeoptimizers: debug` in `configuration.yaml`.
+**What debug logging covers:** Config flow (user form, validating input, unique_id check, creating entry with title and use_solaredge_one, reauth form, options/reconfigure form when showing — with current prefix/use_solaredge_one/include_site_id — or saving, removal and device count); setup (API instance — legacy or SolarEdge One — from options/data, login check, coordinator with include_site_id_in_entity_id, inverter models fetch for SolarEdge One, site/inverter/string device creation with model, platform forward, coordinator stored); unload (unload start, platform result, API session close, registry cleanup when nothing to remove, unload complete); coordinator (panel list request, representative optimizers or random batch for SolarEdge One, update cycle — do_full_refresh, should_light_check, measurement_age, desired_interval, latest_measurement — adaptive light check and full refresh, full refresh vs reuse item count, lifetime energy entry count, timezone, update complete); sensor platform (setup entry, base_name and include_site_id and site_id, adding optimizer with panel_id/serial/model, aggregated sensors, entity count, skip on exception); API client (legacy: login, layout, requestAllData start/complete, system data, get_lifetime_energy_cached hit/miss/entry count, lifetime energy; SolarEdge One: OAuth steps, token, get_inverter_models request/result, requestLogicalLayout, requestSystemData/requestSystemDataBatch, timeout retry (warning), _build_optimizer_data_from_response, requestAllData, cache, errors). Enable with `logger: logs: solaredgeoptimizers: debug` in `configuration.yaml`.
 
 ### Logging
 
@@ -466,9 +466,11 @@ logger:
 | Slow first load | Many optimizers → many parallel requests; layout and lifetime energy cached after first run. |
 | Duplicate entity IDs (e.g. sensor.power_2) | Use a unique Entity ID prefix per site, or ensure you’re on a version that uses the new path-based entity IDs (site in path). |
 | Entity IDs show a device prefix (e.g. sensor.site_123_power_123 instead of sensor.power_123) | Rare (can depend on locale/HA version). Remove the integration, restart Home Assistant, then add the integration again after updating to the latest version so entity IDs are created with the correct path-based format. |
+| "Read timed out" or "Error fetching data for optimizer …" (SolarEdge One) | Optimizer requests use a 60 s timeout and one retry. If timeouts persist, check network/firewall or SolarEdge status; enable debug logging to see "Timeout requesting optimizer data (retrying once)". |
 
 - **5xx from SolarEdge**: Logged as temporary; coordinator retries on next cycle.  
 - **DNS/connection errors** (e.g. “Failed to resolve monitoring.solaredge.com”): Lifetime energy and aggregation fall back to cached or empty data so the coordinator still completes; next cycle will retry.  
+- **Read timed out / timeout errors**: Optimizer data requests (SolarEdge One) use a 60 s timeout and one automatic retry. If you see "Error fetching data for optimizer … Read timed out" or "Timeout requesting optimizer data (retrying once)" in logs, the first attempt timed out and the retry was used. If timeouts persist, check network latency, firewall, or SolarEdge portal status; the next poll will try again.
 - **Unload**: Coordinator is removed and API client `close()` is called to release sessions.  
 - **Removing the integration**: When you delete the config entry from **Settings → Devices & services → Integrations** (not only from HACS), the config flow’s `async_remove_entry` runs and calls the shared helper `remove_entities_and_devices_for_entry(hass, entry)` (defined in `__init__.py`), which removes all entities and devices linked to that entry from the registries. The same helper is used on unload. No manual cleanup of leftover devices or entities is needed.
 
@@ -480,19 +482,22 @@ logger:
 
 ```
 solaredgeoptimizers/
-├── __init__.py            # Entry point, setup, API + coordinator creation (legacy or SolarEdge One), remove_entities_and_devices_for_entry (shared cleanup)
+├── __init__.py            # Entry point, setup, API + coordinator creation (legacy or SolarEdge One), remove_entities_and_devices_for_entry (shared cleanup) and helpers for entity/device collection and removal
 ├── api.py                 # SolarEdgeAPIProtocol: typing protocol for API clients (used by coordinator)
 ├── config_flow.py         # Config flow, validation, translated title, async_remove_entry (calls shared cleanup helper)
-├── const.py               # DOMAIN, intervals, sensor type constants, CONF_USE_SOLAREDGE_ONE
+├── const.py               # DOMAIN, intervals, sensor type constants, CONF_USE_SOLAREDGE_ONE, CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, etc.
 ├── coordinator.py         # DataUpdateCoordinator, adaptive polling, aggregation (my_api: SolarEdgeAPIProtocol)
-├── manifest.json          # Domain, version, requirements
+├── hacs.json              # HACS metadata
+├── info.md                # Integration info (e.g. for HACS)
+├── manifest.json         # Domain, version, requirements (e.g. jsonfinder)
 ├── sensor.py              # Sensor entities (optimizer, aggregated, last polled); at setup removes existing sensor entities for this entry then creates new ones using coordinator.data when available (only calls API for optimizers missing from coordinator)
 ├── solaredgeoptimizers.py # Legacy API client, data models, SolarEdge legacy API calls
-├── solaredge_one_api.py   # SolarEdge One API client (OAuth, /services/layout/...)
+├── solaredge_one_api.py   # SolarEdge One API client (OAuth, /services/layout/..., optimizer requests with 60 s timeout and retry)
 ├── strings.json           # Config flow strings (references to common keys)
 ├── translations/          # en.json, nl.json, de.json, ...
 └── docs/
     ├── Internationalization.md
+    ├── SolarEdge-One-API-Summary.md
     └── Wiki-Home.md       # This file
 ```
 
