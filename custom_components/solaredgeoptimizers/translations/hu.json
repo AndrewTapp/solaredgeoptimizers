@@ -16,8 +16,9 @@
       "user": {
         "data": {
           "siteid": "Település azonosító",
-          "password": "Jelszó",
           "username": "Felhasználónév (e-mail)",
+          "password": "Jelszó",
+          "use_solaredge_one": "SolarEdge One portál használata",
           "entity_id_prefix": "Entitás ID előtag (opcionális)",
           "include_site_id_in_entity_id": "Helyszín azonosító belefoglalása az entitás azonosítóba"
         }
@@ -38,6 +39,7 @@
         "title": "{title} újrakonfigurálása",
         "description": "Jelenlegi előtag: {current_entity_id_prefix}. Hagyja üresen a mezőt a prefix nélküli használathoz. A mentés újratölti az integrációt: az entity ID-k és unique_ids megváltozhatnak, ezért a meglévő entitások előzményei és statisztikái elveszhetnek. Fontolja meg az adatok biztonsági mentését vagy exportálását.",
         "data": {
+          "use_solaredge_one": "SolarEdge One portál használata",
           "entity_id_prefix": "Entitás ID előtag (opcionális)",
           "include_site_id_in_entity_id": "Helyszín azonosító belefoglalása az entitás azonosítóba"
         }
