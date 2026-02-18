@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import requests
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -11,13 +12,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.translation import async_get_translations
 
-from .const import CONF_SITE_ID, DOMAIN
+from .const import CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, DOMAIN
+from . import remove_entities_and_devices_for_entry
 
-# AJT: 10-Jan-2025: Changed from absolute import to relative import to use local solaredgeoptimizers.py instead of site-packages version
+# Changed from absolute import to relative import to use local solaredgeoptimizers.py instead of site-packages version
 from .solaredgeoptimizers import solaredgeoptimizers
+from .solaredge_one_api import solaredge_one
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +28,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required("siteid"): str,
         vol.Required("username"): str,
         vol.Required("password"): str,
+        vol.Optional(CONF_USE_SOLAREDGE_ONE, default=True): bool,
         vol.Optional("entity_id_prefix", default=""): str,
         vol.Optional("include_site_id_in_entity_id", default=False): bool,
     }
@@ -33,12 +36,16 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 
 
 def _options_schema(entry: ConfigEntry) -> vol.Schema:
-    """Build options schema. entity_id_prefix uses default='' so clearing the field saves ''; current value shown in description."""
+    """Build options schema. use_solaredge_one first, then entity_id_prefix, then include_site_id. Defaults from options then data."""
     data = entry.data
     options = entry.options
     return vol.Schema(
         {
-            vol.Optional("entity_id_prefix", default=""): str,
+            vol.Optional(
+                CONF_USE_SOLAREDGE_ONE,
+                default=options.get(CONF_USE_SOLAREDGE_ONE, data.get(CONF_USE_SOLAREDGE_ONE, False)),
+            ): bool,
+            vol.Optional("entity_id_prefix", default=options.get("entity_id_prefix", data.get("entity_id_prefix", ""))): str,
             vol.Optional(
                 "include_site_id_in_entity_id",
                 default=options.get("include_site_id_in_entity_id", data.get("include_site_id_in_entity_id", False)),
@@ -57,43 +64,56 @@ def _reauth_schema(entry: ConfigEntry) -> vol.Schema:
     )
 
 
-class SolarEdgeWebAuth:
-    """Handles authentication with SolarEdge API."""
-
-    def __init__(self, siteid: str) -> None:
-        """Initialize."""
-        self.siteid = siteid
-
-    async def authenticate(
-        self, hass: HomeAssistant, username: str, password: str
-    ) -> bool:
-        """Test to check if siteid, username and password are correct."""
-        api = solaredgeoptimizers(
-            siteid=self.siteid, username=username, password=password
-        )
-        # http_result_code = api.check_login()
-        http_result_code = await hass.async_add_executor_job(api.check_login)
-        if http_result_code == 200:
-            return True
-        else:
-            return False
-
-
 async def validate_input(
     hass: HomeAssistant, data: dict[str, Any], translated_title: str
 ) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+    Raises InvalidAuth for 401, CannotConnect for connection/timeout.
+    When legacy returns 401, tries SolarEdge One as fallback and returns use_solaredge_one=True if it succeeds.
     """
-    hub = SolarEdgeWebAuth(data["siteid"])
+    siteid = (data.get("siteid") or "").strip()
+    use_one = data.get(CONF_USE_SOLAREDGE_ONE, False)
+    username = data.get("username") or ""
+    password = data.get("password") or ""
 
-    if not await hub.authenticate(hass, data["username"], data["password"]):
-        raise InvalidAuth
+    def _check(api_instance):
+        return api_instance.check_login()
 
-    # Return info that you want to store in the config entry (title uses translation).
-    # Translations use %(siteid)s placeholder, so use %-formatting not .format()
-    return {"title": translated_title % {"siteid": data["siteid"]}}
+    # Try selected API first
+    api_class = solaredge_one if use_one else solaredgeoptimizers
+    api = api_class(siteid=siteid, username=username, password=password)
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge Optimizers config: Validating with %s API for site %s",
+            "SolarEdge One" if use_one else "legacy",
+            siteid,
+        )
+    try:
+        code = await hass.async_add_executor_job(_check, api)
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        _LOGGER.warning("Connection or timeout during login check: %s", e)
+        raise CannotConnect from e
+    except Exception as e:
+        _LOGGER.exception("Login check failed: %s", e)
+        raise CannotConnect from e
+
+    if code == 200:
+        return {"title": translated_title % {"siteid": siteid}}
+
+    if code == 401 and not use_one:
+        # Legacy portal may have migrated to SolarEdge One; try One with same credentials
+        api_one = solaredge_one(siteid=siteid, username=username, password=password)
+        try:
+            code_one = await hass.async_add_executor_job(_check, api_one)
+            if code_one == 200:
+                _LOGGER.info("Legacy login returned 401; SolarEdge One succeeded (using One for this entry)")
+                return {"title": translated_title % {"siteid": siteid}, "use_solaredge_one": True}
+        except Exception as e:
+            _LOGGER.debug("SolarEdge One fallback failed: %s", e)
+
+    raise InvalidAuth
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -122,6 +142,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # One config entry per site globally: set unique_id and abort if this site is already configured
         site_id = (user_input.get("siteid") or "").strip()
         await self.async_set_unique_id(site_id)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers config flow: Checking unique_id (site_id) %s", site_id)
         self._abort_if_unique_id_configured()
 
         # Resolve config entry title in the user's language
@@ -152,7 +174,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     "SolarEdge Optimizers config flow: Creating entry title=%s",
                     info["title"],
                 )
-            return self.async_create_entry(title=info["title"], data=user_input)
+            # If validation used SolarEdge One fallback, store that in the entry
+            entry_data = dict(user_input)
+            if info.get("use_solaredge_one"):
+                entry_data[CONF_USE_SOLAREDGE_ONE] = True
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers config flow: Creating entry title=%s use_solaredge_one=%s",
+                    info["title"],
+                    entry_data.get(CONF_USE_SOLAREDGE_ONE),
+                )
+            return self.async_create_entry(title=info["title"], data=entry_data)
 
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
@@ -237,87 +269,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "SolarEdge Optimizers: async_remove_entry for entry %s",
                 entry.entry_id,
             )
-        ent_reg = er.async_get(hass)
-        dev_reg = dr.async_get(hass)
-
-        # --- Entities: collect entity_ids to remove (then remove in a second pass)
-        entity_ids_to_remove: list[str] = []
-        if hasattr(ent_reg.entities, "get_entries_for_config_entry_id"):
-            for entity_entry in ent_reg.entities.get_entries_for_config_entry_id(
-                entry.entry_id
-            ):
-                entity_ids_to_remove.append(entity_entry.entity_id)
-        # Fallback: iterate registry; match by config_entry_id or by our unique_id prefix
-        if not entity_ids_to_remove:
-            def _entity_matches(e: Any) -> bool:
-                if e is None:
-                    return False
-                if getattr(e, "config_entry_id", None) == entry.entry_id:
-                    return True
-                uid = getattr(e, "unique_id", None)
-                return uid is not None and str(uid).startswith(entry.entry_id)
-
-            if hasattr(ent_reg.entities, "values"):
-                for entity in ent_reg.entities.values():
-                    if _entity_matches(entity):
-                        entity_ids_to_remove.append(entity.entity_id)
-            else:
-                # Some HA versions: iterate keys (entity_id) then async_get
-                for maybe_key in ent_reg.entities:
-                    entity = ent_reg.async_get(maybe_key) if hasattr(ent_reg, "async_get") else None
-                    if entity is None and hasattr(ent_reg.entities, "data"):
-                        entity = ent_reg.entities.data.get(maybe_key)
-                    if _entity_matches(entity):
-                        eid = getattr(entity, "entity_id", maybe_key)
-                        entity_ids_to_remove.append(eid)
-        for eid in entity_ids_to_remove:
-            ent_reg.async_remove(eid)
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers: Removed entity %s for config entry %s",
-                    eid,
-                    entry.entry_id,
-                )
-
-        # --- Devices: collect device entries to remove (then remove in a second pass)
-        devices_to_remove: list[tuple[str, Any]] = []  # (id, name_or_identifiers)
-        if hasattr(dev_reg.devices, "get_devices_for_config_entry_id"):
-            for dev in dev_reg.devices.get_devices_for_config_entry_id(entry.entry_id):
-                devices_to_remove.append((dev.id, dev.name or dev.identifiers))
-        if not devices_to_remove and hasattr(dev_reg.devices, "values"):
-            for device in dev_reg.devices.values():
-                if entry.entry_id in device.config_entries:
-                    devices_to_remove.append((device.id, device.name or device.identifiers))
-        # Fallback: remove site device by identifier (we have siteid from entry.data)
-        if not devices_to_remove:
-            siteid = (entry.data.get(CONF_SITE_ID) or "").strip()
-            if siteid:
-                site_device = dev_reg.async_get_device(
-                    identifiers={(DOMAIN, f"site_{siteid}")}
-                )
-                if site_device:
-                    devices_to_remove.append(
-                        (site_device.id, site_device.name or site_device.identifiers)
-                    )
-        for device_id, name_or_ids in devices_to_remove:
-            dev_reg.async_remove_device(device_id)
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers: Removed device %s (%s) for config entry %s",
-                    device_id,
-                    name_or_ids,
-                    entry.entry_id,
-                )
-
-        if not entity_ids_to_remove and not devices_to_remove:
-            _LOGGER.warning(
-                "SolarEdge Optimizers: async_remove_entry found no entities or devices "
-                "to remove for entry %s. Delete the integration from Settings → Devices & "
-                "services → Integrations (not only from HACS) while the integration is still "
-                "installed so that cleanup can run.",
-                entry.entry_id,
-            )
-
+        remove_entities_and_devices_for_entry(hass, entry)
 
     @staticmethod
     def async_get_options_flow(
@@ -353,13 +305,15 @@ class SolarEdgeOptimizersOptionsFlowHandler(config_entries.OptionsFlow):
         """Manage the options (reconfigure) step."""
         if user_input is not None:
             options_data = {
+                CONF_USE_SOLAREDGE_ONE: bool(user_input.get(CONF_USE_SOLAREDGE_ONE, False)),
                 "entity_id_prefix": (user_input.get("entity_id_prefix") or "").strip(),
                 "include_site_id_in_entity_id": bool(user_input.get("include_site_id_in_entity_id", False)),
             }
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge Optimizers options flow: Saving options for entry %s (entity_id_prefix=%r, include_site_id_in_entity_id=%s)",
+                    "SolarEdge Optimizers options flow: Saving options for entry %s (use_solaredge_one=%s, entity_id_prefix=%r, include_site_id_in_entity_id=%s)",
                     self._entry.entry_id,
+                    options_data[CONF_USE_SOLAREDGE_ONE],
                     options_data["entity_id_prefix"],
                     options_data["include_site_id_in_entity_id"],
                 )
@@ -373,13 +327,16 @@ class SolarEdgeOptimizersOptionsFlowHandler(config_entries.OptionsFlow):
             self.hass.async_create_task(_reload_after_save())
             return result
 
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge Optimizers options flow: Showing options form for entry %s",
-                self._entry.entry_id,
-            )
         entry = self._entry
         current_prefix = entry.options.get("entity_id_prefix", entry.data.get("entity_id_prefix", "")) or "(none)"
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers options flow: Showing options form for entry %s (current prefix=%r, use_solaredge_one=%s, include_site_id=%s)",
+                self._entry.entry_id,
+                current_prefix,
+                entry.options.get(CONF_USE_SOLAREDGE_ONE, entry.data.get(CONF_USE_SOLAREDGE_ONE)),
+                entry.options.get("include_site_id_in_entity_id", entry.data.get("include_site_id_in_entity_id")),
+            )
         return self.async_show_form(
             step_id="init",
             data_schema=_options_schema(entry),
