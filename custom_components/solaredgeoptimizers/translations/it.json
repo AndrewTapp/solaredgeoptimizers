@@ -16,8 +16,9 @@
       "user": {
         "data": {
           "siteid": "ID sito",
-          "password": "Password",
           "username": "Nome utente (email)",
+          "password": "Password",
+          "use_solaredge_one": "Usa il portale SolarEdge One",
           "entity_id_prefix": "Prefisso ID entità (opzionale)",
           "include_site_id_in_entity_id": "Includi ID sito nell'ID entità"
         }
@@ -38,6 +39,7 @@
         "title": "Riconfigura {title}",
         "description": "Prefisso attuale: {current_entity_id_prefix}. Lasciare vuoto il campo per nessun prefisso. Il salvataggio ricaricherà l'integrazione: gli entity ID e i unique_ids possono cambiare, quindi cronologia e statistiche delle entità esistenti possono andare perse. Valutare backup o esportazione dati prima.",
         "data": {
+          "use_solaredge_one": "Usa il portale SolarEdge One",
           "entity_id_prefix": "Prefisso ID entità (opzionale)",
           "include_site_id_in_entity_id": "Includi ID sito nell'ID entità"
         }
