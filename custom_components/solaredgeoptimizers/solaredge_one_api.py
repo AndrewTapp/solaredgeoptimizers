@@ -85,8 +85,8 @@ def _parse_login_form(html: str):
     parser = _FormParser()
     try:
         parser.feed(html)
-    except Exception:
-        pass
+    except Exception as e:
+        _LOGGER.debug("HTML form parse error (non-fatal): %s", e)
     return parser.form_action, parser.form_method, parser.inputs
 
 
@@ -102,119 +102,127 @@ def _parse_site_id_from_uuid(uuid_str: str) -> str | None:
         return None
 
 
-def _site_structure_v2_to_solar_edge_site(site_id: str, raw: dict) -> SolarEdgeSite:
-    """Convert SolarEdge One v2 siteStructure JSON to SolarEdgeSite (same shape as legacy API)."""
-    structure = raw.get("siteStructure") if "siteStructure" in raw else raw
+def _v2_find_children_by_type(parent: dict, node_type: str) -> list:
+    """Return list of child nodes whose type matches node_type (case-insensitive)."""
+    out = []
+    for c in (parent.get("children") or []):
+        if (c.get("type") or "").upper() == node_type.upper():
+            out.append(c)
+    return out
 
-    # Extract siteId from uuid if not provided
-    sid = site_id
-    if not sid and structure.get("uuid"):
-        sid = _parse_site_id_from_uuid(structure["uuid"]) or sid
 
-    # Build a minimal logicalTree-like structure so SolarEdgeSite can parse it
-    # SolarEdgeSite expects: siteId, logicalTree.children[].data.id, .serialNumber, .name, .displayName, .relativeOrder, .type, .operationsKey, .children[].data...
-    # We have: structure.children[] -> FOLDER (INVERTER) -> children[] -> INVERTER -> children[] -> FOLDER (STRING) -> children[] -> STRING -> children[] -> FOLDER (OPTIMIZER) -> children[] -> OPTIMIZER
-    def find_children_by_type(parent, node_type: str):
-        out = []
-        for c in (parent.get("children") or []):
-            if (c.get("type") or "").upper() == node_type.upper():
-                out.append(c)
-        return out
+def _v2_build_optimizer_logical_node(opt_node: dict) -> dict:
+    """Build one optimizer logical node (data only, no children) for SolarEdgeSite."""
+    opt_props = opt_node.get("properties") or {}
+    opt_serial = opt_node.get("serial") or opt_props.get("identifier") or opt_node.get("uuid", "")
+    opt_name = opt_node.get("name") or opt_serial
+    opt_display = opt_node.get("displayOrder") or opt_name
+    opt_order = opt_node.get("order") or 0
+    return {
+        "data": {
+            "id": opt_serial,
+            "serialNumber": opt_serial,
+            "name": opt_name,
+            "displayName": opt_display,
+            "relativeOrder": opt_order,
+            "type": "OPTIMIZER",
+            "operationsKey": opt_node.get("uuid") or "",
+        }
+    }
 
-    def first_folder_children(parent, folder_name: str):
-        for c in (parent.get("children") or []):
-            if (c.get("type") or "").upper() == "FOLDER" and (c.get("name") or "").upper() == folder_name.upper():
-                return c.get("children") or []
-        return []
 
+def _v2_build_string_logical_children(str_node: dict) -> list:
+    """Build list of optimizer logical nodes from a v2 STRING node's OPTIMIZER folders."""
+    opt_children = []
+    for opt_folder in (str_node.get("children") or []):
+        if (opt_folder.get("type") or "").upper() != "FOLDER" or (opt_folder.get("name") or "").upper() != "OPTIMIZER":
+            continue
+        for opt_node in (opt_folder.get("children") or []):
+            if (opt_node.get("type") or "").upper() != "OPTIMIZER":
+                continue
+            opt_children.append(_v2_build_optimizer_logical_node(opt_node))
+    return opt_children
+
+
+def _v2_build_string_logical_node(str_node: dict) -> dict:
+    """Build one string logical node (data + optimizer children) for SolarEdgeSite."""
+    str_props = str_node.get("properties") or {}
+    str_identifier = str_props.get("identifier") or str_node.get("uuid") or str_node.get("name", "")
+    str_serial = str_node.get("serial") or str_identifier
+    str_name = str_node.get("name") or str_identifier
+    str_display = str_node.get("displayOrder") or str_name
+    str_order = str_node.get("order") or 0
+    opt_children = _v2_build_string_logical_children(str_node)
+    return {
+        "data": {
+            "id": str_identifier,
+            "serialNumber": str_serial,
+            "name": str_name,
+            "displayName": str_display,
+            "relativeOrder": str_order,
+            "type": "STRING",
+            "operationsKey": str_node.get("uuid") or "",
+        },
+        "children": opt_children,
+    }
+
+
+def _v2_build_inverter_logical_children(inv_node: dict) -> list:
+    """Build list of string logical nodes from a v2 INVERTER node's STRING folders."""
+    string_children = []
+    for str_folder in (inv_node.get("children") or []):
+        if (str_folder.get("type") or "").upper() != "FOLDER" or (str_folder.get("name") or "").upper() != "STRING":
+            continue
+        for str_node in (str_folder.get("children") or []):
+            if (str_node.get("type") or "").upper() != "STRING":
+                continue
+            string_children.append(_v2_build_string_logical_node(str_node))
+    return string_children
+
+
+def _v2_build_inverter_logical_node(inv_node: dict) -> dict:
+    """Build one inverter logical node (data + string children) for SolarEdgeSite."""
+    inv_props = inv_node.get("properties") or {}
+    inv_identifier = inv_props.get("identifier") or inv_node.get("serial") or inv_node.get("uuid", "")
+    inv_serial = inv_node.get("serial") or inv_identifier
+    inv_name = inv_node.get("name") or f"Inverter {inv_identifier}"
+    inv_display = inv_node.get("displayOrder") or inv_name
+    inv_order = inv_node.get("order") or 0
+    string_children = _v2_build_inverter_logical_children(inv_node)
+    return {
+        "data": {
+            "id": inv_identifier,
+            "serialNumber": inv_serial,
+            "name": inv_name,
+            "displayName": inv_display,
+            "relativeOrder": inv_order,
+            "type": "INVERTER",
+            "operationsKey": inv_node.get("uuid") or "",
+        },
+        "children": string_children,
+    }
+
+
+def _v2_build_logical_children(structure: dict) -> list:
+    """Build list of inverter logical nodes from v2 site structure (FOLDER->INVERTER hierarchy)."""
     logical_children = []
-    inv_folders = find_children_by_type(structure, "FOLDER")
-    for inv_folder in inv_folders:
+    for inv_folder in _v2_find_children_by_type(structure, "FOLDER"):
         if (inv_folder.get("name") or "").upper() != "INVERTER":
             continue
         for inv_node in (inv_folder.get("children") or []):
             if (inv_node.get("type") or "").upper() != "INVERTER":
                 continue
-            inv_props = inv_node.get("properties") or {}
-            inv_identifier = inv_props.get("identifier") or inv_node.get("serial") or inv_node.get("uuid", "")
-            inv_serial = inv_node.get("serial") or inv_identifier
-            inv_name = inv_node.get("name") or f"Inverter {inv_identifier}"
-            inv_display = inv_node.get("displayOrder") or inv_name
-            inv_order = inv_node.get("order") or 0
+            logical_children.append(_v2_build_inverter_logical_node(inv_node))
+    return logical_children
 
-            string_children = []
-            for str_folder in (inv_node.get("children") or []):
-                if (str_folder.get("type") or "").upper() != "FOLDER" or (str_folder.get("name") or "").upper() != "STRING":
-                    continue
-                for str_node in (str_folder.get("children") or []):
-                    if (str_node.get("type") or "").upper() != "STRING":
-                        continue
-                    str_props = str_node.get("properties") or {}
-                    str_identifier = str_props.get("identifier") or str_node.get("uuid") or str_node.get("name", "")
-                    str_serial = str_node.get("serial") or str_identifier
-                    str_name = str_node.get("name") or str_identifier
-                    str_display = str_node.get("displayOrder") or str_name
-                    str_order = str_node.get("order") or 0
 
-                    opt_children = []
-                    for opt_folder in (str_node.get("children") or []):
-                        if (opt_folder.get("type") or "").upper() != "FOLDER" or (opt_folder.get("name") or "").upper() != "OPTIMIZER":
-                            continue
-                        for opt_node in (opt_folder.get("children") or []):
-                            if (opt_node.get("type") or "").upper() != "OPTIMIZER":
-                                continue
-                            opt_serial = opt_node.get("serial") or (opt_node.get("properties") or {}).get("identifier") or opt_node.get("uuid", "")
-                            opt_name = opt_node.get("name") or opt_serial
-                            opt_display = opt_node.get("displayOrder") or opt_name
-                            opt_order = opt_node.get("order") or 0
-                            opt_children.append({
-                                "data": {
-                                    "id": opt_serial,
-                                    "serialNumber": opt_serial,
-                                    "name": opt_name,
-                                    "displayName": opt_display,
-                                    "relativeOrder": opt_order,
-                                    "type": "OPTIMIZER",
-                                    "operationsKey": opt_node.get("uuid") or "",
-                                }
-                            })
-
-                    string_children.append({
-                        "data": {
-                            "id": str_identifier,
-                            "serialNumber": str_serial,
-                            "name": str_name,
-                            "displayName": str_display,
-                            "relativeOrder": str_order,
-                            "type": "STRING",
-                            "operationsKey": str_node.get("uuid") or "",
-                        },
-                        "children": opt_children,
-                    })
-
-            logical_children.append({
-                "data": {
-                    "id": inv_identifier,
-                    "serialNumber": inv_serial,
-                    "name": inv_name,
-                    "displayName": inv_display,
-                    "relativeOrder": inv_order,
-                    "type": "INVERTER",
-                    "operationsKey": inv_node.get("uuid") or "",
-                },
-                "children": string_children,
-            })
-
-    # SolarEdgeSite expects json_obj with siteId and logicalTree.children (and logicalTree.childIds)
-    # childIds: exactly 3 closing parens for list(range(len(...)))
-    fake_logical = {
-        "childIds": list(range(len(logical_children))),
-        "children": logical_children,
-    }
-    fake_json = {
-        "siteId": sid,
-        "logicalTree": fake_logical,
-    }
+def _site_structure_v2_to_solar_edge_site(site_id: str, raw: dict) -> SolarEdgeSite:
+    """Convert SolarEdge One v2 siteStructure JSON to SolarEdgeSite (same shape as legacy API)."""
+    structure = raw.get("siteStructure") if "siteStructure" in raw else raw
+    sid = site_id or (structure.get("uuid") and _parse_site_id_from_uuid(structure["uuid"])) or site_id
+    logical_children = _v2_build_logical_children(structure)
+    fake_logical = {"childIds": list(range(len(logical_children))), "children": logical_children}
+    fake_json = {"siteId": sid, "logicalTree": fake_logical}
     return SolarEdgeSite(fake_json)
 
 
@@ -293,7 +301,8 @@ class solaredge_one:
             _LOGGER.debug("SolarEdge One POST login -> %s, URL: %s", r.status_code, r.url)
             if r.status_code >= 400:
                 body_preview = (r.text or "")[:500]
-                _LOGGER.warning("SolarEdge One login POST %s response: %s", r.status_code, body_preview)
+                # DEBUG: when using dual-API, login failure is expected and legacy is used; avoid log spam
+                _LOGGER.debug("SolarEdge One login POST %s response: %s", r.status_code, body_preview)
             final_url = r.url
             if r.status_code == 204 and "Location" in r.headers:
                 callback_url = r.headers["Location"]
@@ -304,7 +313,8 @@ class solaredge_one:
 
         # (5) Extract code from callback URL
         if MFE_AUTH_CALLBACK not in final_url:
-            _LOGGER.warning("SolarEdge One: did not reach callback (final URL: %s)", final_url)
+            # DEBUG: when using dual-API, One login failure is expected and legacy is used; avoid log spam
+            _LOGGER.debug("SolarEdge One: did not reach callback (final URL: %s)", final_url)
             raise requests.RequestException("OAuth callback failed")
         parsed_cb = urlparse(final_url)
         q = parse_qs(parsed_cb.query)
@@ -518,10 +528,22 @@ class solaredge_one:
                 json_object,
             )
         try:
-            return SolarEdgeOptimizerData(item_id, json_object, self._timezone)
+            return SolarEdgeOptimizerData(
+                item_id, json_object, self._timezone, has_valid_measurements=bool(measurements)
+            )
         except Exception as e:
             _LOGGER.error("SolarEdge One: Error building optimizer data for %s: %s", item_id, e)
             return None
+
+    def _post_optimizers_with_retry(self, path: str, payload: list, timeout: int = 60):
+        """POST to optimizer endpoint with longer timeout and one retry on read/connect timeout."""
+        try:
+            return self._post(path, payload, timeout=timeout)
+        except requests.exceptions.Timeout as e:
+            _LOGGER.warning(
+                "SolarEdge One: Timeout requesting optimizer data (retrying once): %s", e
+            )
+            return self._post(path, payload, timeout=timeout)
 
     def requestSystemData(self, item_id: str):
         """
@@ -532,7 +554,7 @@ class solaredge_one:
             _LOGGER.debug("SolarEdge One: requestSystemData for optimizer %s", item_id)
         path = "/services/layout/information/optimizers"
         try:
-            data = self._post(path, [item_id], timeout=30)
+            data = self._post_optimizers_with_retry(path, [item_id])
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code >= 500:
                 _LOGGER.warning("SolarEdge One: Temporary server error (HTTP %s) for optimizer %s", e.response.status_code, item_id)
@@ -562,7 +584,7 @@ class solaredge_one:
             )
         path = "/services/layout/information/optimizers"
         try:
-            data = self._post(path, list(item_ids), timeout=30)
+            data = self._post_optimizers_with_retry(path, list(item_ids))
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code >= 500:
                 _LOGGER.warning(
