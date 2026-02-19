@@ -23,7 +23,9 @@ from .const import (
     CHECK_TIME_DELTA,
     CHECK_TIME_DELTA_SOLAREDGE_ONE,
     CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
+    REVERT_TO_ONE_RETRY_INTERVAL,
 )
+from .api_dual import OBTAINED_FROM_LEGACY, OBTAINED_FROM_ONE
 from .solaredgeoptimizers import (
     SolarEdgeAggregatedData,
     _lifetime_energy_to_kwh,
@@ -31,6 +33,26 @@ from .solaredgeoptimizers import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _get_all_optimizer_ids(site) -> list:
+    """Return list of all optimizer IDs from site structure (inverters -> strings -> optimizers)."""
+    ids = []
+    for inv in site.inverters:
+        for s in inv.strings:
+            if getattr(s, "optimizers", None):
+                for opt in s.optimizers:
+                    ids.append(opt.optimizerId)
+    return ids
+
+
+def _get_first_optimizer_id(site):
+    """Return the first optimizer ID found in site structure, or None."""
+    for inv in site.inverters:
+        for s in inv.strings:
+            if getattr(s, "optimizers", None) and s.optimizers:
+                return s.optimizers[0].optimizerId
+    return None
 
 
 class MyCoordinator(DataUpdateCoordinator):
@@ -78,101 +100,62 @@ class MyCoordinator(DataUpdateCoordinator):
         self._include_site_id_in_entity = bool(_include)
         # SolarEdge One API: inverter serial -> fullModel (e.g. SE5000H-RW000BNN4) for device model
         self._inverter_models = {}
+        # Which API provided current data ("One API" or "Legacy API"); set after full refresh
+        self._obtained_from = OBTAINED_FROM_ONE
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers coordinator: include_site_id_in_entity_id=%s (from options/data)",
                 self._include_site_id_in_entity,
             )
 
-    async def _async_setup(self) -> None:
-        """Set up the coordinator.
+    def _pick_light_check_optimizers(self, site) -> None:
+        """Set _light_check_optimizer_ids (batch API) or _representative_optimizer_id for lightweight checks."""
+        if self._representative_optimizer_id is not None or self._light_check_optimizer_ids is not None:
+            return
+        if getattr(self.my_api, "requestSystemDataBatch", None) is not None:
+            all_ids = _get_all_optimizer_ids(site)
+            ids = random.sample(all_ids, min(5, len(all_ids))) if all_ids else []
+            if ids:
+                self._light_check_optimizer_ids = ids
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers: Using %d representative optimizers for lightweight checks (batch): %s",
+                        len(ids), ids,
+                    )
+        if not self._light_check_optimizer_ids:
+            self._representative_optimizer_id = _get_first_optimizer_id(site)
+            if _LOGGER.isEnabledFor(logging.DEBUG) and self._representative_optimizer_id:
+                _LOGGER.debug(
+                    "SolarEdge Optimizers: Using representative optimizer %s for lightweight checks",
+                    self._representative_optimizer_id,
+                )
 
-        Can be overwritten by integrations to load data or resources
-        only once during the first refresh.
-        """
-        # Add detailed debugging for initial setup issues
-        _LOGGER.info("SolarEdge Optimizers: Starting coordinator setup")
+    async def _fetch_inverter_models(self, site) -> None:
+        """Fetch inverter models from API if supported; set self._inverter_models (with error handling)."""
+        if getattr(self.my_api, "get_inverter_models", None) is None:
+            return
+        inv_serials = [inv.serialNumber for inv in site.inverters if getattr(inv, "serialNumber", None)]
+        if not inv_serials:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: No inverter serials to fetch models for")
+            return
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers: About to request list of all panels")
-
-        try:
-            site = await self.hass.async_add_executor_job(self.my_api.requestListOfAllPanels)
-            # Store site structure for aggregated calculations
-            self._site_structure = site
-            # Pick optimizer(s) for lightweight update checks. SolarEdge One: sample several from
-            # different strings so orientation/shade on one panel doesn't block detecting new data.
-            if self._representative_optimizer_id is None and self._light_check_optimizer_ids is None:
-                if getattr(self.my_api, "requestSystemDataBatch", None) is not None:
-                    # API supports batch: pick up to 5 optimizers at random from the site so we
-                    # get variety across orientations/strings and don't always check the same panels.
-                    all_ids = []
-                    for inv in site.inverters:
-                        for s in inv.strings:
-                            if getattr(s, "optimizers", None):
-                                for opt in s.optimizers:
-                                    all_ids.append(opt.optimizerId)
-                    ids = random.sample(all_ids, min(5, len(all_ids))) if all_ids else []
-                    if ids:
-                        self._light_check_optimizer_ids = ids
-                        if _LOGGER.isEnabledFor(logging.DEBUG):
-                            _LOGGER.debug(
-                                "SolarEdge Optimizers: Using %d representative optimizers for lightweight checks (batch): %s",
-                                len(ids),
-                                ids,
-                            )
-                if not self._light_check_optimizer_ids:
-                    try:
-                        for inv in site.inverters:
-                            for s in inv.strings:
-                                if getattr(s, "optimizers", None) and s.optimizers:
-                                    self._representative_optimizer_id = s.optimizers[0].optimizerId
-                                    raise StopIteration
-                    except StopIteration:
-                        pass
-                    if _LOGGER.isEnabledFor(logging.DEBUG) and self._representative_optimizer_id:
-                        _LOGGER.debug(
-                            "SolarEdge Optimizers: Using representative optimizer %s for lightweight checks",
-                            self._representative_optimizer_id,
-                        )
-            _LOGGER.info("SolarEdge Optimizers: Successfully retrieved panel list")
-
-            _LOGGER.info("Found all information for site: %s", site.siteId)
-            _LOGGER.info("Site has %s inverters", len(site.inverters))
-            _LOGGER.info(
-                "Setting up Home Assistant devices and sensors for %s optimizers across %s inverters",
-                site.returnNumberOfOptimizers(),
-                len(site.inverters)
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Fetching inverter models for %d inverter(s): %s",
+                len(inv_serials), inv_serials,
             )
-            # SolarEdge One API: fetch inverter models (fullModel) for device display
-            if getattr(self.my_api, "get_inverter_models", None) is not None:
-                inv_serials = [inv.serialNumber for inv in site.inverters if getattr(inv, "serialNumber", None)]
-                if inv_serials:
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "SolarEdge Optimizers: Fetching inverter models for %d inverter(s): %s",
-                            len(inv_serials),
-                            inv_serials,
-                        )
-                    try:
-                        self._inverter_models = await self.hass.async_add_executor_job(
-                            self.my_api.get_inverter_models, inv_serials
-                        ) or {}
-                        if _LOGGER.isEnabledFor(logging.DEBUG):
-                            _LOGGER.debug(
-                                "SolarEdge Optimizers: Inverter models received: %s",
-                                self._inverter_models,
-                            )
-                    except Exception as e:
-                        _LOGGER.warning("SolarEdge Optimizers: Could not fetch inverter models: %s", e)
-                elif _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers: No inverter serials to fetch models for")
+        try:
+            self._inverter_models = await self.hass.async_add_executor_job(
+                self.my_api.get_inverter_models, inv_serials
+            ) or {}
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: Inverter models received: %s", self._inverter_models)
         except Exception as e:
-            _LOGGER.error("SolarEdge Optimizers: Failed to get panel list in coordinator setup: %s", e)
-            raise
-        
+            _LOGGER.warning("SolarEdge Optimizers: Could not fetch inverter models: %s", e)
 
+    def _register_site_and_inverter_devices(self, site) -> None:
+        """Create device registry entries for site, inverters, and strings."""
         device_registry = dr.async_get(self.hass)
-
         site_id = str(site.siteId)
         device_registry.async_get_or_create(
             config_entry_id=self.config_entry.entry_id,
@@ -183,19 +166,15 @@ class MyCoordinator(DataUpdateCoordinator):
         )
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("Created device for site: %s", site_id)
-
         for inv_idx, inverter in enumerate(site.inverters, start=1):
             _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
             inverter_name = f"Inverter {site_id}.{inv_idx}"
-            # Use fullModel from SolarEdge One API when available, else type + displayName
             inv_model = self._inverter_models.get(inverter.serialNumber) if self._inverter_models else None
             model = (inv_model or f"{inverter.type} {inverter.displayName}").strip() or inverter.serialNumber
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
                     "SolarEdge Optimizers: Creating inverter device serial=%s model=%r (from_api=%s)",
-                    inverter.serialNumber,
-                    model,
-                    inv_model is not None,
+                    inverter.serialNumber, model, inv_model is not None,
                 )
             device_registry.async_get_or_create(
                 config_entry_id=self.config_entry.entry_id,
@@ -206,7 +185,6 @@ class MyCoordinator(DataUpdateCoordinator):
                 hw_version=inverter.serialNumber,
                 via_device=(DOMAIN, f"site_{site.siteId}"),
             )
-
             for str_idx, string in enumerate(inverter.strings, start=1):
                 string_name = f"String {site_id}.{inv_idx}.{str_idx}"
                 device_registry.async_get_or_create(
@@ -219,6 +197,33 @@ class MyCoordinator(DataUpdateCoordinator):
                 )
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("Created device for string: %s", string_name)
+
+    async def _async_setup(self) -> None:
+        """Set up the coordinator.
+
+        Can be overwritten by integrations to load data or resources
+        only once during the first refresh.
+        """
+        _LOGGER.info("SolarEdge Optimizers: Starting coordinator setup")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: About to request list of all panels")
+        try:
+            site = await self.hass.async_add_executor_job(self.my_api.requestListOfAllPanels)
+            self._site_structure = site
+            self._pick_light_check_optimizers(site)
+            _LOGGER.info("SolarEdge Optimizers: Successfully retrieved panel list")
+            _LOGGER.info("Found all information for site: %s", site.siteId)
+            _LOGGER.info("Site has %s inverters", len(site.inverters))
+            _LOGGER.info(
+                "Setting up Home Assistant devices and sensors for %s optimizers across %s inverters",
+                site.returnNumberOfOptimizers(),
+                len(site.inverters),
+            )
+            await self._fetch_inverter_models(site)
+        except Exception as e:
+            _LOGGER.error("SolarEdge Optimizers: Failed to get panel list in coordinator setup: %s", e)
+            raise
+        self._register_site_and_inverter_devices(site)
 
     def _calculate_aggregated_data(
         self,
@@ -482,6 +487,22 @@ class MyCoordinator(DataUpdateCoordinator):
                     or not current_data
                 )
 
+                # When data is from legacy API, periodically re-try One so we revert to One when it becomes available
+                if (
+                    not do_full_refresh
+                    and is_data_dict
+                    and current_data
+                    and getattr(self, "_obtained_from", None) == OBTAINED_FROM_LEGACY
+                    and self._last_full_fetch_utc is not None
+                    and (now_utc - self._last_full_fetch_utc) >= REVERT_TO_ONE_RETRY_INTERVAL
+                ):
+                    do_full_refresh = True
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "SolarEdge Optimizers: Re-trying SolarEdge One API (data from legacy for %s)",
+                            now_utc - self._last_full_fetch_utc,
+                        )
+
                 # Determine latest known measurement timestamp
                 # Cache site_id to avoid repeated attribute access
                 latest_measurement = None
@@ -606,10 +627,15 @@ class MyCoordinator(DataUpdateCoordinator):
                     # Use dict comprehension for better performance
                     data_dict = {item.panel_id: item for item in data_list if item is not None}
                     self.first_boot = False
+                    # Expose which API provided data (dual API wrapper sets _obtained_from)
+                    self._obtained_from = getattr(
+                        self.my_api, "_obtained_from", OBTAINED_FROM_ONE
+                    )
                     if _LOGGER.isEnabledFor(logging.DEBUG):
                         _LOGGER.debug(
-                            "SolarEdge Optimizers: Full refresh returned %d optimizer/aggregate items",
+                            "SolarEdge Optimizers: Full refresh returned %d optimizer/aggregate items (source: %s)",
                             len(data_dict),
+                            self._obtained_from,
                         )
                 else:
                     # Only copy if we need to modify, otherwise use reference
