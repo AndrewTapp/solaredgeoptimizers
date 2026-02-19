@@ -18,7 +18,6 @@
           "siteid": "ID lokality",
           "username": "Uživatelské jméno (e-mail)",
           "password": "Heslo",
-          "use_solaredge_one": "Použít portál SolarEdge One",
           "entity_id_prefix": "Prefix ID entity (nepovinné)",
           "include_site_id_in_entity_id": "Zahrnout ID lokality do ID entity"
         }
@@ -39,7 +38,6 @@
         "title": "Předkonfigurovat {title}",
         "description": "Aktuální prefix: {current_entity_id_prefix}. Pro žádný prefix nechte pole prázdné. Uložení znovu načte integraci: entity ID a unique_ids se mohou změnit, takže historie a statistiky stávajících entit mohou být ztraceny. Zvažte zálohu nebo export dat.",
         "data": {
-          "use_solaredge_one": "Použít portál SolarEdge One",
           "entity_id_prefix": "Prefix ID entity (nepovinné)",
           "include_site_id_in_entity_id": "Zahrnout ID lokality do ID entity"
         }
@@ -83,6 +81,9 @@
       },
       "inverter_count": {
         "name": "Počet měničů"
+      },
+      "obtained_from": {
+        "name": "Získáno z"
       }
     }
   },
