@@ -18,7 +18,6 @@
           "siteid": "Kohteen tunnus",
           "username": "Käyttäjätunnus (sähköposti)",
           "password": "Salasana",
-          "use_solaredge_one": "Käytä SolarEdge One -portaalia",
           "entity_id_prefix": "Entiteetin ID-etuliite (valinnainen)",
           "include_site_id_in_entity_id": "Sisällytä kohteen ID entiteetin ID:hen"
         }
@@ -39,7 +38,6 @@
         "title": "Määritä {title} uudelleen",
         "description": "Nykyinen etuliite: {current_entity_id_prefix}. Jätä kenttä tyhjäksi jos et halua etuliitettä. Tallenus lataa integraation uudelleen: entity ID -tunnisteet ja unique_ids voivat muuttua, joten olemassa olevien entiteettien historia ja tilastot voivat katoilla. Harkitse tietojen varmuuskopiointia tai vientiä ensin.",
         "data": {
-          "use_solaredge_one": "Käytä SolarEdge One -portaalia",
           "entity_id_prefix": "Entiteetin ID-etuliite (valinnainen)",
           "include_site_id_in_entity_id": "Sisällytä kohteen ID entiteetin ID:hen"
         }
@@ -83,6 +81,9 @@
       },
       "inverter_count": {
         "name": "Inverttereiden määrä"
+      },
+      "obtained_from": {
+        "name": "Haettu"
       }
     }
   },
