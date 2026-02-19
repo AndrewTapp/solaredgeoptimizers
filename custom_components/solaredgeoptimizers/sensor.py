@@ -108,21 +108,32 @@ def _registry_entry_belongs_to_config_entry(reg_entry, entry_id: str) -> bool:
     return bool(uid and str(uid).startswith(entry_id))
 
 
-def _collect_entity_ids_for_config_entry(ent_reg, entry_id: str) -> set[str]:
-    """Collect all entity IDs in the registry that belong to this config entry."""
-    to_remove: set[str] = set()
+def _add_entity_ids_from_entries_api(to_remove: set[str], ent_reg, entry_id: str) -> None:
+    """Add entity IDs from get_entries_for_config_entry_id if available."""
     if hasattr(ent_reg.entities, "get_entries_for_config_entry_id"):
         for e in ent_reg.entities.get_entries_for_config_entry_id(entry_id):
             to_remove.add(e.entity_id)
+
+
+def _add_entity_ids_from_entities_data(to_remove: set[str], ent_reg, entry_id: str) -> None:
+    """Add entity IDs from ent_reg.entities.data that belong to this config entry."""
     if hasattr(ent_reg.entities, "data"):
         for eid, reg_entry in list(getattr(ent_reg.entities, "data", {}).items()):
             if _registry_entry_belongs_to_config_entry(reg_entry, entry_id):
                 to_remove.add(eid)
+
+
+def _add_entity_ids_from_entities_values(to_remove: set[str], ent_reg, entry_id: str) -> None:
+    """Add entity IDs from ent_reg.entities.values() that belong to this config entry."""
     if hasattr(ent_reg.entities, "values"):
         for entity in ent_reg.entities.values():
             eid = getattr(entity, "entity_id", None)
             if eid and _registry_entry_belongs_to_config_entry(entity, entry_id):
                 to_remove.add(eid)
+
+
+def _add_entity_ids_from_fallback_iteration(to_remove: set[str], ent_reg, entry_id: str) -> None:
+    """Add entity IDs by iterating ent_reg.entities and resolving via async_get/data (with error handling)."""
     try:
         for eid in ent_reg.entities:
             if eid in to_remove:
@@ -138,6 +149,15 @@ def _collect_entity_ids_for_config_entry(ent_reg, entry_id: str) -> set[str]:
             entry_id,
             e,
         )
+
+
+def _collect_entity_ids_for_config_entry(ent_reg, entry_id: str) -> set[str]:
+    """Collect all entity IDs in the registry that belong to this config entry."""
+    to_remove: set[str] = set()
+    _add_entity_ids_from_entries_api(to_remove, ent_reg, entry_id)
+    _add_entity_ids_from_entities_data(to_remove, ent_reg, entry_id)
+    _add_entity_ids_from_entities_values(to_remove, ent_reg, entry_id)
+    _add_entity_ids_from_fallback_iteration(to_remove, ent_reg, entry_id)
     return to_remove
 
 
@@ -380,6 +400,11 @@ async def async_setup_entry(
             coordinator, hass, entry, site_id, base_name=base_name, include_site_id_in_entity_id=include_site_id
         )
     )
+    sensors_to_add.append(
+        SolarEdgeObtainedFromSensor(
+            coordinator, hass, entry, site_id, base_name=base_name, include_site_id_in_entity_id=include_site_id
+        )
+    )
     sensors_to_add.extend(
         _build_aggregated_sensors(coordinator, hass, entry, coordinator._site_structure, base_name, include_site_id, site_id)
     )
@@ -453,6 +478,66 @@ class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         self._attr_native_value = getattr(self.coordinator, "_integration_last_polled", None)
+        self.async_write_ha_state()
+
+
+class SolarEdgeObtainedFromSensor(CoordinatorEntity, SensorEntity):
+    """Site-level sensor indicating which API provided the current data (One API or Legacy API)."""
+
+    _attr_device_class = None
+    _attr_state_class = None
+    _attr_has_entity_name = True
+    _attr_translation_key = "obtained_from"
+
+    def __init__(
+        self,
+        coordinator: MyCoordinator,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        site_id: str,
+        base_name: str = "",
+        include_site_id_in_entity_id: bool = False,
+    ) -> None:
+        super().__init__(coordinator)
+        self._hass = hass
+        self._entry = entry
+        self._site_id = site_id
+        self._base_name = (base_name + "_") if base_name else ""
+        self._include_site_id_in_entity_id = include_site_id_in_entity_id
+
+        _uid_parts = [entry.entry_id]
+        if self._base_name:
+            _uid_parts.append(self._base_name.rstrip("_"))
+        _uid_parts.append("obtained_from")
+        if include_site_id_in_entity_id:
+            _uid_parts.append(site_id)
+        self._attr_unique_id = "_".join(_uid_parts)
+        obj_id = (
+            f"{self._base_name}obtained_from_{self._site_id}"
+            if include_site_id_in_entity_id
+            else f"{self._base_name}obtained_from"
+        )
+        self.internal_integration_suggested_object_id = obj_id
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"site_{site_id}")},
+            manufacturer="SolarEdge",
+            model=f"SITE {site_id}",
+            translation_key="site_device",
+            translation_placeholders={"site_id": str(site_id)},
+        )
+
+    @property
+    def suggested_object_id(self) -> str | None:
+        """Suggest full entity object_id (no device prefix)."""
+        return getattr(self, "internal_integration_suggested_object_id", None) or (
+            f"{self._base_name}obtained_from_{self._site_id}"
+            if self._include_site_id_in_entity_id
+            else f"{self._base_name}obtained_from"
+        )
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        self._attr_native_value = getattr(self.coordinator, "_obtained_from", None)
         self.async_write_ha_state()
 
 
