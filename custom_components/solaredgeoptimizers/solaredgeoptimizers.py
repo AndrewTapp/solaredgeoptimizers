@@ -100,6 +100,133 @@ def _lifetime_energy_to_kwh(energy_data):
     return None
 
 
+def _parse_system_data_json(json_object, item_id, timezone):
+    """Parse and validate systemData JSON into SolarEdgeOptimizerData or None.
+    Handles list/dict types, missing lastMeasurementDate, and KeyError.
+    """
+    if isinstance(json_object, list):
+        if len(json_object) == 0:
+            _LOGGER.warning("Empty list returned for optimizer %s", item_id)
+            return None
+        json_object = json_object[0]
+    if not isinstance(json_object, dict):
+        _LOGGER.error("Unexpected data type returned for optimizer %s: %s", item_id, type(json_object))
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Response data: %s", json_object)
+        return None
+    if json_object.get("lastMeasurementDate") == "":
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Skipping optimizer %s without measurements", item_id)
+        return None
+    try:
+        return SolarEdgeOptimizerData(item_id, json_object, timezone)
+    except KeyError as e:
+        _LOGGER.error("Missing expected key in response for optimizer %s: %s", item_id, e)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Response data: %s", json_object)
+        return None
+    except Exception as e:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Response data: %s", json_object)
+        raise Exception("Error while processing data") from e
+
+
+def _apply_lifetime_energy_to_optimizer_info(info, optimizer_id, lifetimeenergy):
+    """Set lifetime_energy on optimizer info from lifetimeenergy dict (by string or int key)."""
+    optimizer_id_str = str(optimizer_id)
+    energy_data = lifetimeenergy.get(optimizer_id_str) or lifetimeenergy.get(optimizer_id) or {}
+    kWh = _lifetime_energy_to_kwh(energy_data)
+    if kWh is not None:
+        info.lifetime_energy = kWh
+    else:
+        _LOGGER.warning("Lifetime energy data missing for optimizer %s, setting to 0", optimizer_id)
+        info.lifetime_energy = 0.0
+
+
+def _raise_for_system_data_http_error(response, item_id):
+    """Raise an appropriate exception for non-200 systemData HTTP response."""
+    if 500 <= response.status_code < 600:
+        _LOGGER.warning(
+            "Temporary server error from SolarEdge (HTTP %s). Will retry on next update.",
+            response.status_code,
+        )
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Server error response body for optimizer %s: %s", item_id, response.text)
+        raise Exception(f"Temporary server error from SolarEdge (HTTP {response.status_code})")
+    _LOGGER.error("Error sending request to SolarEdge. Status code: %s", response.status_code)
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug("Error response body for optimizer %s: %s", item_id, response.text)
+    raise Exception(f"Problem sending request to SolarEdge (HTTP {response.status_code})")
+
+
+def _safe_float(value, default=0.0):
+    """Safely convert value to float, handling None, empty strings, comma decimals, and invalid types."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, str):
+        value = value.replace(",", ".")
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_last_measurement_date(rawdate, panelid, timezone):
+    """Parse lastMeasurementDate string (ISO or SolarEdge format) to timezone-aware UTC datetime."""
+    if not rawdate:
+        return datetime.now(pytz.UTC)
+    try:
+        if "T" in rawdate and ("Z" in rawdate or "+" in rawdate or (len(rawdate) >= 6 and rawdate[-6] in "+-")):
+            iso_str = rawdate.strip().replace("Z", "+00:00")
+            return datetime.fromisoformat(iso_str).astimezone(pytz.UTC)
+        raise ValueError("Not ISO format")
+    except (ValueError, TypeError):
+        pass
+    try:
+        date_str = re.sub(r'\s+(?:GMT|UTC|EST|CST|PST|EDT|CDT|PDT|[A-Z]{3})\s+', ' ', rawdate)
+        naive_dt = datetime.strptime(date_str.strip(), "%a %b %d %H:%M:%S %Y")
+        if naive_dt.tzinfo is None:
+            local_dt = timezone.localize(naive_dt) if hasattr(timezone, 'localize') else naive_dt.replace(tzinfo=timezone)
+        else:
+            local_dt = naive_dt
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Timezone conversion for optimizer %s: raw='%s' | cleaned='%s' | naive=%s | local=%s (%s) | UTC=%s",
+                panelid, rawdate, date_str.strip(), naive_dt, local_dt, str(timezone), local_dt.astimezone(pytz.UTC)
+            )
+        return local_dt.astimezone(pytz.UTC)
+    except (ValueError, IndexError) as e:
+        _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
+        return datetime.now(pytz.UTC)
+
+
+def _normalize_measurements_dict(json_object, panelid):
+    """Extract and validate measurements dict from optimizer json_object; return {} if invalid."""
+    measurements = json_object.get("measurements", {})
+    if not measurements or not isinstance(measurements, dict):
+        available_keys = list(json_object.keys()) if _LOGGER.isEnabledFor(logging.WARNING) and isinstance(json_object, dict) else "N/A"
+        _LOGGER.warning(
+            "Missing or invalid measurements for optimizer %s (panel_id: %s). Available keys: %s",
+            panelid, json_object.get("serialNumber", "unknown"), available_keys
+        )
+        return {}
+    return measurements
+
+
+def _apply_measurements_to_optimizer_data(instance, measurements, json_object, panelid):
+    """Set current, optimizer_voltage, power, voltage from measurements and log if all zero."""
+    instance.current = _safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["current"]), 0.0)
+    instance.optimizer_voltage = round(_safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["optimizer_voltage"]), 0.0), 2)
+    instance.power = round(_safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["power"]), 0.0), 2)
+    instance.voltage = round(_safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["voltage"]), 0.0), 2)
+    if instance.current == 0.0 and instance.power == 0.0 and instance.voltage == 0.0 and instance.optimizer_voltage == 0.0:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "All measurements are zero for optimizer %s (serial: %s). Measurements dict: %s",
+                panelid, json_object.get("serialNumber", "unknown"), measurements,
+            )
+
+
 def _site_lifetime_kwh_from_layout_energy(lifetime_energy_data):
     """Compute site total lifetime energy (kWh) from layout/energy API response.
 
@@ -330,7 +457,6 @@ class solaredgeoptimizers:
     def requestSystemData(self, itemId):
         # Fixed endpoint URL - changed from monitoringpublic.solaredge.com/publicSystemData to monitoring.solaredge.com/systemData,
         # changed isPublic=true to false, added locale parameter, and added v parameter with timestamp
-        # Use f-string instead of .format() for better performance
         locale = self._locale_from_language()
         url = f"https://monitoring.solaredge.com/solaredge-web/p/systemData?reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale={locale}&v={round(time.time() * 1000)}"
 
@@ -341,81 +467,23 @@ class solaredgeoptimizers:
             "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
             "timeout": 30,  # Prevent hung requests in ThreadPoolExecutor
         }
-        # Use context manager to ensure response is properly closed
         with requests.get(url, **kwargs) as r:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("Response from systemData (optimizer %s, status %s)", itemId, r.status_code)
-            if r.status_code == 200:
-                json_object = self.decodeResult(r.text)
-                # Log decoded JSON object for debugging
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("Decoded JSON object for optimizer %s: %s", itemId, json_object)
-                try:
-                    # Handle case where decodeResult returns a list instead of dict - extract first element if list
-                    if isinstance(json_object, list):
-                        if len(json_object) > 0:
-                            json_object = json_object[0]
-                        else:
-                            _LOGGER.warning("Empty list returned for optimizer %s", itemId)
-                            return None
-                    
-                    # Ensure we have a dictionary before accessing keys
-                    if not isinstance(json_object, dict):
-                        _LOGGER.error("Unexpected data type returned for optimizer %s: %s", itemId, type(json_object))
-                        if _LOGGER.isEnabledFor(logging.DEBUG):
-                            _LOGGER.debug("Response data: %s", json_object)
-                        return None
-                    
-                    # Changed from direct key access to .get() for safer dictionary access
-                    if json_object.get("lastMeasurementDate") == "":
-                        if _LOGGER.isEnabledFor(logging.DEBUG):
-                            _LOGGER.debug("Skipping optimizer %s without measurements", itemId)
-                        return None
-                    else:
-                        # Pass timezone to SolarEdgeOptimizerData for correct date parsing
-                        return SolarEdgeOptimizerData(itemId, json_object, self._timezone)
-                except KeyError as e:
-                    # Added specific KeyError handling with better logging
-                    _LOGGER.error("Missing expected key in response for optimizer %s: %s", itemId, e)
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug("Response data: %s", json_object)
-                    return None
-                except Exception as e:
-                    # %s", itemId, e)
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug("Response data: %s", json_object)
-                    raise Exception("Error while processing data") from e
-            else:
-                # Treat 5xx errors as temporary with a clean log line
-                if 500 <= r.status_code < 600:
-                    _LOGGER.warning(
-                        "Temporary server error from SolarEdge (HTTP %s). Will retry on next update.",
-                        r.status_code,
-                    )
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "Server error response body for optimizer %s: %s", itemId, r.text
-                        )
-                    raise Exception(f"Temporary server error from SolarEdge (HTTP {r.status_code})")
-                # Other HTTP errors: log status and body at debug only, raise concise exception
-                _LOGGER.error("Error sending request to SolarEdge. Status code: %s", r.status_code)
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("Error response body for optimizer %s: %s", itemId, r.text)
-                raise Exception(f"Problem sending request to SolarEdge (HTTP {r.status_code})")
+            if r.status_code != 200:
+                _raise_for_system_data_http_error(r, itemId)
+            json_object = self.decodeResult(r.text)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Decoded JSON object for optimizer %s: %s", itemId, json_object)
+            return _parse_system_data_json(json_object, itemId, self._timezone)
 
-    def requestAllData(self):
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers (legacy): requestAllData starting")
-        solarsite = self.requestListOfAllPanels()
-
-        # Cache lifetime energy data to avoid repeated API calls (changes slowly)
+    def _get_cached_lifetime_energy(self):
+        """Return lifetime energy dict, from cache or by fetching and parsing getLifeTimeEnergy()."""
         now = datetime.now()
-        if (self._lifetime_energy_cache is None or 
-            self._lifetime_energy_cache_time is None or 
-            (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl):
-            # Added error handling for getLifeTimeEnergy() response
+        if (self._lifetime_energy_cache is None or
+                self._lifetime_energy_cache_time is None or
+                (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl):
             lifetime_energy_response = self.getLifeTimeEnergy()
-            # Log raw lifetime energy response for debugging (endpoint already logged in getLifeTimeEnergy)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 response_preview = lifetime_energy_response[:2000] if len(lifetime_energy_response) > 2000 else lifetime_energy_response
                 _LOGGER.debug("Response from lifetime energy endpoint: %s", response_preview)
@@ -425,13 +493,11 @@ class solaredgeoptimizers:
             else:
                 try:
                     lifetimeenergy = json.loads(lifetime_energy_response)
-                    # Log parsed lifetime energy data returned from endpoint
                     if _LOGGER.isEnabledFor(logging.DEBUG):
                         _LOGGER.debug("Parsed lifetime energy data (by optimizer/string ID): %s", lifetimeenergy)
                 except json.JSONDecodeError as e:
                     _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
                     lifetimeenergy = {}
-            # Update cache
             self._lifetime_energy_cache = lifetimeenergy
             self._lifetime_energy_cache_time = now
             if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -440,9 +506,14 @@ class solaredgeoptimizers:
             lifetimeenergy = self._lifetime_energy_cache
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("Using cached lifetime energy data")
+        return lifetimeenergy
 
-        # Collect all optimizer IDs first for parallel processing
-        # Use list comprehension for better performance than append in loop
+    def requestAllData(self):
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers (legacy): requestAllData starting")
+        solarsite = self.requestListOfAllPanels()
+        lifetimeenergy = self._get_cached_lifetime_energy()
+
         optimizer_ids = [
             optimizer.optimizerId
             for inverter in solarsite.inverters
@@ -450,43 +521,21 @@ class solaredgeoptimizers:
             for optimizer in string.optimizers
         ]
 
-        # Parallelize API calls using ThreadPoolExecutor for 10-20x speedup
-        data = []
-        # Use adaptive worker count based on CPU cores for better performance
-        max_workers = min(
-            os.cpu_count() or 4,  # Use CPU count, fallback to 4
-            len(optimizer_ids),
-            10  # Cap at 10 to avoid overwhelming server
-        )
+        max_workers = min(os.cpu_count() or 4, len(optimizer_ids), 10)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers (legacy): requestAllData fetching %d optimizers with max_workers=%d",
-                len(optimizer_ids),
-                max_workers,
+                len(optimizer_ids), max_workers,
             )
+        data = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all requests in parallel
-            future_to_id = {
-                executor.submit(self.requestSystemData, opt_id): opt_id 
-                for opt_id in optimizer_ids
-            }
-            
-            # Process results as they complete
+            future_to_id = {executor.submit(self.requestSystemData, opt_id): opt_id for opt_id in optimizer_ids}
             for future in as_completed(future_to_id):
                 optimizer_id = future_to_id[future]
                 try:
                     info = future.result()
                     if info is not None:
-                        # Look up by string key (JSON keys are strings); fallback to int for robustness
-                        optimizer_id_str = str(optimizer_id)
-                        energy_data = lifetimeenergy.get(optimizer_id_str) or lifetimeenergy.get(optimizer_id) or {}
-                        # Convert to kWh using API 'units' so we never show power (W) scale as energy (kWh)
-                        kWh = _lifetime_energy_to_kwh(energy_data)
-                        if kWh is not None:
-                            info.lifetime_energy = kWh
-                        else:
-                            _LOGGER.warning("Lifetime energy data missing for optimizer %s, setting to 0", optimizer_id)
-                            info.lifetime_energy = 0.0
+                        _apply_lifetime_energy_to_optimizer_info(info, optimizer_id, lifetimeenergy)
                         data.append(info)
                 except Exception as e:
                     _LOGGER.error("Error fetching data for optimizer %s: %s", optimizer_id, e)
@@ -937,133 +986,42 @@ class SolarEdgeAggregatedData:
 
 class SolarEdgeOptimizerData:
     """Data class for SolarEdge optimizer measurements and metadata."""
-    
+
     # Use __slots__ to reduce memory overhead and improve attribute access speed
     __slots__ = (
-        '_timezone', '_json_obj', 'serialnumber', 'panel_id', 'panel_description',
+        '_timezone', '_json_obj', '_has_valid_measurements', 'serialnumber', 'panel_id', 'panel_description',
         'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage',
         'power', 'voltage', 'lifetime_energy'
     )
 
-    def __init__(self, panelid, json_object, timezone=None):
-
-        # Store timezone for date parsing (default to UTC if not provided)
+    def __init__(self, panelid, json_object, timezone=None, has_valid_measurements=None):
         self._timezone = timezone if timezone is not None else pytz.UTC
+        # True when the API provided a non-empty measurements dict (used for One vs legacy fallback)
+        if has_valid_measurements is not None:
+            self._has_valid_measurements = bool(has_valid_measurements)
+        else:
+            self._has_valid_measurements = bool(json_object.get("measurements") if isinstance(json_object.get("measurements"), dict) else False)
 
         self.serialnumber = ""
         self.panel_id = ""
-        # Fixed spelling from "paneel" to "panel"
         self.panel_description = ""
         self.lastmeasurement = ""
         self.model = ""
         self.manufacturer = ""
-
         self.current = ""
         self.optimizer_voltage = ""
         self.power = ""
         self.voltage = ""
-
-        # Extra info
         self.lifetime_energy = ""
 
         if panelid is not None:
             self._json_obj = json_object
-
             self.serialnumber = json_object["serialNumber"]
             self.panel_id = panelid
-            # Fixed spelling from "paneel" to "panel"
             self.panel_description = json_object["description"]
             rawdate = json_object.get("lastMeasurementDate", "")
-            
-            # Support ISO 8601 format (e.g. "2026-02-13T13:50:41Z") from SolarEdge One API
-            try:
-                if "T" in rawdate and ("Z" in rawdate or "+" in rawdate or (len(rawdate) >= 6 and rawdate[-6] in "+-")):
-                    iso_str = rawdate.strip().replace("Z", "+00:00")
-                    self.lastmeasurement = datetime.fromisoformat(iso_str).astimezone(pytz.UTC)
-                else:
-                    raise ValueError("Not ISO format")
-            except (ValueError, TypeError):
-                # Simplified timezone handling - always parse as local time using Home Assistant timezone
-                # The SolarEdge API returns timestamps in the local timezone where the optimizers are installed,
-                # but since we don't know the optimizer locations, we use the Home Assistant timezone as a reasonable approximation.
-                # The date string format is typically: "Fri Jan 23 16:04:21 GMT 2026" where the time is local but labeled as GMT
-                try:
-                    # Clean the date string by removing any timezone indicators (GMT, UTC, etc.)
-                    date_str = rawdate
-                    date_str = re.sub(r'\s+(?:GMT|UTC|EST|CST|PST|EDT|CDT|PDT|[A-Z]{3})\s+', ' ', date_str)
-
-                    # Parse as naive datetime (no timezone info)
-                    naive_dt = datetime.strptime(date_str.strip(), "%a %b %d %H:%M:%S %Y")
-
-                    # Apply Home Assistant timezone (treat as local time)
-                    if naive_dt.tzinfo is None:
-                        if hasattr(self._timezone, 'localize'):
-                            local_dt = self._timezone.localize(naive_dt)
-                        else:
-                            local_dt = naive_dt.replace(tzinfo=self._timezone)
-                    else:
-                        local_dt = naive_dt
-
-                    # Convert to UTC for consistent storage
-                    self.lastmeasurement = local_dt.astimezone(pytz.UTC)
-
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "Timezone conversion for optimizer %s: raw='%s' | cleaned='%s' | naive=%s | local=%s (%s) | UTC=%s",
-                            panelid,
-                            rawdate,
-                            date_str.strip(),
-                            naive_dt,
-                            local_dt,
-                            str(self._timezone),
-                            self.lastmeasurement
-                        )
-                except (ValueError, IndexError) as e:
-                    _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
-                    self.lastmeasurement = datetime.now(pytz.UTC)
-
+            self.lastmeasurement = _parse_last_measurement_date(rawdate, panelid, self._timezone)
             self.model = json_object.get("model", "")
             self.manufacturer = json_object.get("manufacturer", "")
-
-            # Fixed unsafe dictionary access using .get() with defaults
-            # Handle cases where measurements might be missing, null, or have different structure
-            measurements = json_object.get("measurements", {})
-            if not measurements or not isinstance(measurements, dict):
-                # Only build keys list if logging is enabled to reduce overhead
-                available_keys = None
-                if _LOGGER.isEnabledFor(logging.WARNING):
-                    available_keys = list(json_object.keys()) if isinstance(json_object, dict) else "N/A"
-                _LOGGER.warning(
-                    "Missing or invalid measurements for optimizer %s (panel_id: %s). Available keys: %s",
-                    panelid,
-                    json_object.get("serialNumber", "unknown"),
-                    available_keys or "N/A"
-                )
-                measurements = {}
-            
-            # Handle null values and convert to float safely. Normalize locale decimal separator (e.g. "26,18" -> 26.18).
-            def safe_float(value, default=0.0):
-                """Safely convert value to float, handling None, empty strings, comma decimals, and invalid types."""
-                if value is None or value == "":
-                    return default
-                if isinstance(value, str):
-                    value = value.replace(",", ".")
-                try:
-                    return float(value)
-                except (ValueError, TypeError):
-                    return default
-
-            self.current = safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["current"]), 0.0)
-            self.optimizer_voltage = round(safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["optimizer_voltage"]), 0.0), 2)
-            self.power = round(safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["power"]), 0.0), 2)
-            self.voltage = round(safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["voltage"]), 0.0), 2)
-            
-            # Log if all measurements are zero to help diagnose API response issues
-            if self.current == 0.0 and self.power == 0.0 and self.voltage == 0.0 and self.optimizer_voltage == 0.0:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "All measurements are zero for optimizer %s (serial: %s). Measurements dict: %s",
-                        panelid,
-                        json_object.get("serialNumber", "unknown"),
-                        measurements,
-                    )
+            measurements = _normalize_measurements_dict(json_object, panelid)
+            _apply_measurements_to_optimizer_data(self, measurements, json_object, panelid)
