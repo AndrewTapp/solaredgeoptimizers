@@ -10,22 +10,36 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
 
-# Changed from absolute import to relative import to use local solaredgeoptimizers.py instead of site-packages version
-from .solaredgeoptimizers import solaredgeoptimizers
-from .solaredge_one_api import solaredge_one
+from .api_dual import SolarEdgeDualAPI
 from .const import (
     DOMAIN,
     LOGGER,
     CONF_SITE_ID,
-    CONF_USE_SOLAREDGE_ONE,
 )
 from .coordinator import MyCoordinator
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
+async def _migrate_remove_use_solaredge_one(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove deprecated use_solaredge_one from data and options (now always dual API)."""
+    data = dict(entry.data)
+    options = dict(entry.options)
+    changed = False
+    if "use_solaredge_one" in data:
+        del data["use_solaredge_one"]
+        changed = True
+    if "use_solaredge_one" in options:
+        del options["use_solaredge_one"]
+        changed = True
+    if changed:
+        hass.config_entries.async_update_entry(entry, data=data, options=options)
+        LOGGER.info("SolarEdge Optimizers: Migrated config entry %s (removed use_solaredge_one)", entry.entry_id)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SolarEdge Optimizers Data from a config entry."""
+    await _migrate_remove_use_solaredge_one(hass, entry)
 
     # Add detailed debugging for initial setup issues
     LOGGER.info("SolarEdge Optimizers: Starting setup for config entry: %s", entry.entry_id)
@@ -42,20 +56,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug(
-            "SolarEdge Optimizers: Creating API instance (use_solaredge_one from options=%s, from data=%s)",
-            entry.options.get(CONF_USE_SOLAREDGE_ONE),
-            entry.data.get(CONF_USE_SOLAREDGE_ONE),
-        )
-    use_solaredge_one = entry.options.get(CONF_USE_SOLAREDGE_ONE, entry.data.get(CONF_USE_SOLAREDGE_ONE, False))
-    api_class = solaredge_one if use_solaredge_one else solaredgeoptimizers
-    if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug(
-            "SolarEdge Optimizers: Using %s API for site %s",
-            "SolarEdge One" if use_solaredge_one else "legacy",
-            entry.data.get("siteid", "?"),
-        )
-    api = api_class(
+        LOGGER.debug("SolarEdge Optimizers: Creating dual API (One preferred, legacy fallback) for site %s", entry.data.get("siteid", "?"))
+    api = SolarEdgeDualAPI(
         entry.data["siteid"],
         entry.data["username"],
         entry.data["password"],
@@ -120,51 +122,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-def remove_entities_and_devices_for_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove all entities and devices for this config entry from entity and device registries.
+def _entity_matches_entry(e: Any, entry_id: str) -> bool:
+    """Return True if entity (or registry entry) belongs to the given config entry."""
+    if e is None:
+        return False
+    if getattr(e, "config_entry_id", None) == entry_id:
+        return True
+    uid = getattr(e, "unique_id", None)
+    return uid is not None and str(uid).startswith(entry_id)
 
-    Used by unload (when user removes the integration) and by config flow async_remove_entry.
-    Paths differ across Home Assistant versions; we try get_entries_for_config_entry_id /
-    get_devices_for_config_entry_id first, then fallbacks for older or different HA builds.
-    """
-    ent_reg = er.async_get(hass)
-    dev_reg = dr.async_get(hass)
-    entry_id = entry.entry_id
 
-    def _entity_matches(e: Any) -> bool:
-        if e is None:
-            return False
-        if getattr(e, "config_entry_id", None) == entry_id:
-            return True
-        uid = getattr(e, "unique_id", None)
-        return uid is not None and str(uid).startswith(entry_id)
-
-    # Entities: try HA index first, then iterate by config_entry_id/unique_id, then by keys
+def _collect_entity_ids_to_remove(ent_reg, entry_id: str) -> list[str]:
+    """Collect entity IDs in the registry that belong to this config entry (multiple HA paths)."""
     to_remove: list[str] = []
     if hasattr(ent_reg.entities, "get_entries_for_config_entry_id"):
         for e in ent_reg.entities.get_entries_for_config_entry_id(entry_id):
             to_remove.append(e.entity_id)
     if not to_remove and hasattr(ent_reg.entities, "values"):
         for entity in ent_reg.entities.values():
-            if _entity_matches(entity):
+            if _entity_matches_entry(entity, entry_id):
                 to_remove.append(entity.entity_id)
     if not to_remove:
         for maybe_key in ent_reg.entities:
             entity = ent_reg.async_get(maybe_key) if hasattr(ent_reg, "async_get") else None
             if entity is None and hasattr(ent_reg.entities, "data"):
                 entity = getattr(ent_reg.entities, "data", {}).get(maybe_key)
-            if _entity_matches(entity):
+            if _entity_matches_entry(entity, entry_id):
                 to_remove.append(getattr(entity, "entity_id", maybe_key))
-    for eid in to_remove:
-        ent_reg.async_remove(eid)
-        if LOGGER.isEnabledFor(logging.DEBUG):
-            LOGGER.debug(
-                "SolarEdge Optimizers: Removed entity %s for config entry %s",
-                eid,
-                entry_id,
-            )
+    return to_remove
 
-    # Devices: try HA index first, then iterate by config_entries, then site device by identifier
+
+def _collect_device_ids_to_remove(dev_reg, entry: ConfigEntry, entry_id: str) -> list[str]:
+    """Collect device IDs in the registry that belong to this config entry (multiple HA paths)."""
     dev_ids: list[str] = []
     if hasattr(dev_reg.devices, "get_devices_for_config_entry_id"):
         for dev in dev_reg.devices.get_devices_for_config_entry_id(entry_id):
@@ -179,21 +168,31 @@ def remove_entities_and_devices_for_entry(hass: HomeAssistant, entry: ConfigEntr
             site_dev = dev_reg.async_get_device(identifiers={(DOMAIN, f"site_{siteid}")})
             if site_dev:
                 dev_ids.append(site_dev.id)
-    for did in dev_ids:
+    return dev_ids
+
+
+def _remove_entities_for_entry(ent_reg, entity_ids: list[str], entry_id: str) -> None:
+    """Remove the given entity IDs from the entity registry and log at debug."""
+    for eid in entity_ids:
+        ent_reg.async_remove(eid)
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug("SolarEdge Optimizers: Removed entity %s for config entry %s", eid, entry_id)
+
+
+def _remove_devices_for_entry(dev_reg, device_ids: list[str], entry_id: str) -> None:
+    """Remove the given device IDs from the device registry and log at debug."""
+    for did in device_ids:
         dev_reg.async_remove_device(did)
         if LOGGER.isEnabledFor(logging.DEBUG):
-            LOGGER.debug(
-                "SolarEdge Optimizers: Removed device %s for config entry %s",
-                did,
-                entry_id,
-            )
+            LOGGER.debug("SolarEdge Optimizers: Removed device %s for config entry %s", did, entry_id)
 
-    if to_remove or dev_ids:
+
+def _log_removal_result(entity_ids: list[str], device_ids: list[str], entry_id: str) -> None:
+    """Log summary or warning when no entities/devices were found to remove."""
+    if entity_ids or device_ids:
         LOGGER.info(
             "SolarEdge Optimizers: Removed %d entities and %d devices for entry %s",
-            len(to_remove),
-            len(dev_ids),
-            entry_id,
+            len(entity_ids), len(device_ids), entry_id,
         )
     else:
         LOGGER.warning(
@@ -203,6 +202,23 @@ def remove_entities_and_devices_for_entry(hass: HomeAssistant, entry: ConfigEntr
             "installed so that cleanup can run.",
             entry_id,
         )
+
+
+def remove_entities_and_devices_for_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Remove all entities and devices for this config entry from entity and device registries.
+
+    Used by unload (when user removes the integration) and by config flow async_remove_entry.
+    Paths differ across Home Assistant versions; we try get_entries_for_config_entry_id /
+    get_devices_for_config_entry_id first, then fallbacks for older or different HA builds.
+    """
+    ent_reg = er.async_get(hass)
+    dev_reg = dr.async_get(hass)
+    entry_id = entry.entry_id
+    to_remove = _collect_entity_ids_to_remove(ent_reg, entry_id)
+    _remove_entities_for_entry(ent_reg, to_remove, entry_id)
+    dev_ids = _collect_device_ids_to_remove(dev_reg, entry, entry_id)
+    _remove_devices_for_entry(dev_reg, dev_ids, entry_id)
+    _log_removal_result(to_remove, dev_ids, entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
