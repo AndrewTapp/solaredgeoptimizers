@@ -15,11 +15,11 @@ If you are on a version prior to v2.4.0 (or want a clean registry after any upgr
 
 SolarEdge One is SolarEdge’s newer monitoring portal and API. It replaces the older “legacy” monitoring portal and its ad-hoc endpoints with a structured, service-oriented API under `monitoring.solaredge.com/services/...`.
 
-## Recommendation: prefer SolarEdge One
+## Dual API: One first, legacy fallback
 
-The **legacy API** is known to be unreliable, with **delayed readings** that can lag by **an hour or more**. Data can be stale or inconsistent, which affects live power, voltage, and optimizer values in Home Assistant.
+The integration **always tries SolarEdge One first**. If One returns no valid measurements (e.g. "Missing or invalid measurements" for all optimizers) or One login fails, it **automatically falls back** to the legacy SolarEdge API. When One starts returning valid data again, the integration switches back to One. You do not choose the API—the integration picks the best available source each time.
 
-**I recommend using the new SolarEdge One API** whenever your account supports it. Keep **Use SolarEdge One portal** enabled (it is on by default when adding the integration). Turn it off only if your account has not yet been migrated to the SolarEdge One portal. The new API generally provides more timely and reliable data.
+A site-level sensor **Obtained from** shows whether current data came from **"One API"** or **"Legacy API"**. The legacy API can have delayed readings (an hour or more); when One works, it generally provides more timely data.
 
 ## How it replaces the old API
 
@@ -29,7 +29,7 @@ The **legacy API** is known to be unreliable, with **delayed readings** that can
   - **Legacy**: Basic Auth + web session (cookies/CSRF), separate endpoints for layout, per-panel `systemData`, and layout/energy. Data is scraped from web-style URLs and responses.
   - **SolarEdge One**: OAuth/OIDC (PKCE) via `login.solaredge.com`; access token is then used as Bearer on all `/services/` calls. Layout comes from a single v2 layout endpoint; optimizer live + basic info from a POST to `/layout/information/optimizers`; lifetime energy from the energy-graph API. Cleaner, REST-style design.
 
-- **Same credentials**: Site ID, username, and password are unchanged; only the backend (portal and API) changes when “Use SolarEdge One portal” is on.
+- **Same credentials**: Site ID, username, and password are unchanged; the integration uses them for both One and legacy and chooses which backend to use automatically at each refresh.
 
 ## Benefits of SolarEdge One (for the integration)
 
@@ -40,5 +40,5 @@ The **legacy API** is known to be unreliable, with **delayed readings** that can
 
 ## In this integration
 
-- One config option (**Use SolarEdge One portal**, default **on**) chooses the backend.
-- Both backends implement the same `SolarEdgeAPIProtocol` and feed the same coordinator and sensor layer, so behaviour (sensors, hierarchy, aggregation) is the same; only the API client (legacy vs `solaredge_one_api`) and the exact endpoints/auth differ.
+- A **dual API** wrapper (`api_dual.py`) tries SolarEdge One first; if One has no valid measurements or fails, it uses the legacy API. There is no user option—the integration decides at each refresh.
+- Both backends implement the same `SolarEdgeAPIProtocol` and feed the same coordinator and sensor layer, so behaviour (sensors, hierarchy, aggregation) is the same; only the API client (legacy vs `solaredge_one_api`) and the exact endpoints/auth differ. The **Obtained from** sensor on the site device shows which source provided the current data.
