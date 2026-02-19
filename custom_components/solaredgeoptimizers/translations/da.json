@@ -18,7 +18,6 @@
           "siteid": "Placering-ID",
           "username": "Brugernavn (e-mail)",
           "password": "Adgangskode",
-          "use_solaredge_one": "Brug SolarEdge One-portalen",
           "entity_id_prefix": "Entity-ID-præfiks (valgfri)",
           "include_site_id_in_entity_id": "Inkluder sted-ID i enheds-ID"
         }
@@ -39,7 +38,6 @@
         "title": "Genkonfigurer {title}",
         "description": "Nuværende præfiks: {current_entity_id_prefix}. Lad feltet være tomt for intet præfiks. Gemning genstarter integrationen: entity ID'er og unique_ids kan ændres, så historik og statistik for eksisterende enheder kan gå tabt. Overvej sikkerhedskopi eller eksport af data først.",
         "data": {
-          "use_solaredge_one": "Brug SolarEdge One-portalen",
           "entity_id_prefix": "Entity-ID-præfiks (valgfri)",
           "include_site_id_in_entity_id": "Inkluder sted-ID i enheds-ID"
         }
@@ -83,6 +81,9 @@
       },
       "inverter_count": {
         "name": "Antal omformere"
+      },
+      "obtained_from": {
+        "name": "Hentet fra"
       }
     }
   },
