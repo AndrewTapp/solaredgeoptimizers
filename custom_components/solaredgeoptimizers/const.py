@@ -18,6 +18,8 @@ UPDATE_DELAY = timedelta(minutes=2)
 
 CHECK_TIME_DELTA = timedelta(hours=2)  # Legacy API: treat live values as stale after 2 hours
 CHECK_TIME_DELTA_SOLAREDGE_ONE = timedelta(hours=1)  # SolarEdge One: 1 hour stale threshold
+# When data is from legacy API, re-try One this often so we revert to One when it becomes available
+REVERT_TO_ONE_RETRY_INTERVAL = timedelta(minutes=30)
 
 SENSOR_TYPE_CURRENT = "Current"
 SENSOR_TYPE_OPT_VOLTAGE = "Optimizer_voltage"
