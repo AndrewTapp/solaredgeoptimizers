@@ -18,7 +18,6 @@
           "siteid": "Αναγνωριστικό τοποθεσίας",
           "username": "Όνομα χρήστη (email)",
           "password": "Κωδικός πρόσβασης",
-          "use_solaredge_one": "Χρήση πύλης SolarEdge One",
           "entity_id_prefix": "Πρόθεμα ID οντοτήτων (προαιρετικό)",
           "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων"
         }
@@ -39,7 +38,6 @@
         "title": "Επαναρύθμιση {title}",
         "description": "Τρέχον πρόθεμα: {current_entity_id_prefix}. Αφήστε το πεδίο κενό για απουσία προθέματος. Η αποθήκευση θα ξαναφορτώσει την ενσωμάτωση: τα entity ID και τα unique_ids μπορεί να αλλάξουν, οπότε το ιστορικό και τα στατιστικά υπαρχουσών οντοτήτων μπορεί να χαθούν. Εξετάστε το backup ή την εξαγωγή δεδομένων πρώτα.",
         "data": {
-          "use_solaredge_one": "Χρήση πύλης SolarEdge One",
           "entity_id_prefix": "Πρόθεμα ID οντοτήτων (προαιρετικό)",
           "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων"
         }
@@ -83,6 +81,9 @@
       },
       "inverter_count": {
         "name": "Αριθμός inverters"
+      },
+      "obtained_from": {
+        "name": "Λήφθηκε από"
       }
     }
   },
