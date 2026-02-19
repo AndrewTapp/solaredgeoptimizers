@@ -30,22 +30,22 @@ The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitorin
 
 - **Per-optimizer (per-panel)** sensors: voltage, current, optimizer voltage, power, lifetime energy, last measurement.
 - **Aggregated** sensors at **string**, **inverter**, and **site** level: current (average), voltage (average), power, lifetime energy, last measurement, and child counts (optimizer/string/inverter count).
-- A single **Last polled** sensor on the site device for monitoring update health.
+- A **Last polled** sensor and an **Obtained from** sensor on the site device (last polled = when the integration last fetched data; obtained from = "One API" or "Legacy API" depending on which source provided the current data).
 
 ### Features
 
 | Feature | Description |
 |--------|-------------|
-| **Config flow** | Single-step setup: Site ID, username, password, optional **Use SolarEdge One portal** (default **on**), optional Entity ID prefix, optional Include Site ID in Entity ID. Field order: site ID → username → password → Use SolarEdge One portal → Entity ID prefix → Include Site ID in Entity ID. One config entry per site (same site cannot be added twice). When legacy login returns 401, the flow can try SolarEdge One and, on success, save with Use SolarEdge One enabled. |
-| **Re-authentication** | When the API returns 401 (invalid or expired credentials), the integration raises `ConfigEntryAuthFailed`; Home Assistant shows a re-auth form (username, password). Only credentials are updated; options (Use SolarEdge One portal, entity ID prefix, Include Site ID in Entity ID) are preserved. Re-auth step and abort messages are translated. |
-| **Options (reconfigure)** | **Use SolarEdge One portal**, Entity ID prefix, and Include Site ID in Entity ID can be changed via the integration’s Configure (options flow) without removing the entry. The form shows Use SolarEdge One portal first (defaulting to the previously set value), then Entity ID prefix, then Include Site ID in Entity ID. Saving reloads the integration. Documented: entity IDs and unique_ids may change, so history/statistics can be lost. |
+| **Config flow** | Single-step setup: Site ID, username, password, optional Entity ID prefix, optional Include Site ID in Entity ID. Field order: site ID → username → password → Entity ID prefix → Include Site ID in Entity ID. One config entry per site (same site cannot be added twice). Validation uses dual API: login succeeds if either SolarEdge One or legacy returns 200. |
+| **Re-authentication** | When the API returns 401 (invalid or expired credentials), the integration raises `ConfigEntryAuthFailed`; Home Assistant shows a re-auth form (username, password). Only credentials are updated; options (entity ID prefix, Include Site ID in Entity ID) are preserved. Re-auth step and abort messages are translated. |
+| **Options (reconfigure)** | Entity ID prefix and Include Site ID in Entity ID can be changed via the integration’s Configure (options flow) without removing the entry. The form shows Entity ID prefix (description shows current prefix; leave empty to remove it) and Include Site ID in Entity ID. Saving reloads the integration. Documented: entity IDs and unique_ids may change, so history/statistics can be lost. |
 | **Cloud polling** | Uses SolarEdge’s cloud API; no local hardware discovery. |
-| **Adaptive polling** | Lightweight checks every ~2–15 minutes; full refresh only when new data is detected or on first boot. **Legacy:** one representative optimizer. **SolarEdge One:** up to 5 optimizers chosen at random, one batch API call (`requestSystemDataBatch`), so orientation/shade on a single panel doesn’t block updates. |
+| **Adaptive polling** | Lightweight checks every ~2–15 minutes; full refresh when new data is detected, on first boot, or **every 30 minutes when data is from legacy** (re-try One so the integration can switch back). When using **SolarEdge One:** up to 5 optimizers chosen at random, one batch API call (`requestSystemDataBatch`). When using **legacy API:** one representative optimizer. The integration tries One first; if One has no valid measurements or fails, it uses legacy. |
 | **Parallel API calls** | Optimizer data fetched in parallel for full refresh. |
 | **Sensor setup optimization** | After the coordinator’s first refresh, the sensor platform uses `coordinator.data` for optimizer info when present and only calls the API for optimizers missing from that data, avoiding duplicate fetches and speeding setup. |
 | **Caching** | Logical layout (1 h) and lifetime energy (1 h) cached to reduce API load. |
 | **Multi-language** | Config flow (including re-auth step and abort messages) and entity names translated; API locale follows HA language. |
-| **Stale handling** | Live values (V, I, P) zeroed when last measurement is older than threshold: **1 hour** (SolarEdge One) or **2 hours** (legacy API). |
+| **Stale handling** | Live values (V, I, P) zeroed when last measurement is older than threshold: **1 hour** when data is from One API, **2 hours** when from Legacy API. The **Obtained from** sensor on the site device shows "One API" or "Legacy API". |
 | **Reliability** | Temporary server/network errors (5xx, DNS) handled with cached data; connections closed on remove/reload. **SolarEdge One** optimizer data requests use a 60 s timeout and one automatic retry on read/connect timeout to reduce failures when the portal is slow. |
 | **Removal cleanup** | When the integration is deleted from **Settings → Integrations**, config flow’s `async_remove_entry` calls the shared helper `remove_entities_and_devices_for_entry` (defined in `__init__.py`), which removes all associated entities and devices from the registries. The same helper is used on unload. No leftover registry entries remain. |
 
@@ -72,7 +72,7 @@ flowchart TB
     end
 
     subgraph INT["Integration (solaredgeoptimizers)"]
-        API[API client: legacy or SolarEdge One]
+        API[Dual API: One first, legacy fallback]
     end
 
     subgraph SE["SolarEdge Cloud"]
@@ -95,11 +95,11 @@ flowchart TB
 
 | Component | Role |
 |-----------|------|
-| **Config flow** | Collects Site ID, username, password, optional Use SolarEdge One portal (default on), optional Entity ID prefix, optional Include Site ID in Entity ID; validates via `check_login()` (legacy or SolarEdge One per option); creates config entry with translated title and `use_solaredge_one`. On removal, `async_remove_entry` calls the shared helper `remove_entities_and_devices_for_entry` to clear entities and devices for that config entry. |
-| **`__init__.py`** | Sets up API client (with HA timezone and language), runs login check, creates coordinator, runs first refresh, forwards to sensor platform. Defines `remove_entities_and_devices_for_entry(hass, entry)`, used by both unload and config flow for registry cleanup. |
-| **Coordinator** | Runs every `UPDATE_DELAY` (2 min); implements adaptive polling (light check vs full refresh); builds data dict (optimizers + aggregated string/inverter/site); exposes data to sensors. Types the API client via `SolarEdgeAPIProtocol` (`api.py`) for clarity and future API variants. |
-| **Sensor platform** | At setup, removes existing sensor entities for this config entry so new entity IDs match current options (e.g. prefix, Include Site ID). Creates one device per site, inverter, string, optimizer; creates sensors (individual + aggregated). Uses `coordinator.data` for optimizer info when available (after first refresh), only calling the API for optimizers missing from that data; uses coordinator data and translation keys for names. |
-| **API client** | Either **legacy** (`solaredgeoptimizers.py`: Basic Auth, layout/systemData/energy) or **SolarEdge One** (`solaredge_one_api.py`: OAuth/Bearer, `/services/layout/...`). Both conform to `SolarEdgeAPIProtocol` (`api.py`). Layout and lifetime energy cached; parallel optimizer data for full refresh; locale/language from HA. |
+| **Config flow** | Collects Site ID, username, password, optional Entity ID prefix, optional Include Site ID in Entity ID; validates via dual API `check_login()` (succeeds if either One or legacy returns 200); creates config entry with translated title. On setup, migrates existing entries to remove deprecated `use_solaredge_one`. On removal, `async_remove_entry` calls the shared helper `remove_entities_and_devices_for_entry` to clear entities and devices for that config entry. |
+| **`__init__.py`** | Runs migration to remove `use_solaredge_one` from data/options; sets up dual API client (`SolarEdgeDualAPI` from `api_dual.py`, with HA timezone and language), runs login check, creates coordinator, runs first refresh, forwards to sensor platform. Defines `remove_entities_and_devices_for_entry(hass, entry)`, used by both unload and config flow for registry cleanup. |
+| **Coordinator** | Runs every `UPDATE_DELAY` (2 min); implements adaptive polling (light check vs full refresh); when data is from legacy, forces full refresh every 30 min (`REVERT_TO_ONE_RETRY_INTERVAL`) to re-try One; builds data dict (optimizers + aggregated string/inverter/site); exposes `_obtained_from` ("One API" or "Legacy API") to the Obtained from sensor. Types the API client via `SolarEdgeAPIProtocol` (`api.py`). |
+| **Sensor platform** | At setup, removes existing sensor entities for this config entry so new entity IDs match current options (e.g. prefix, Include Site ID). Creates one device per site, inverter, string, optimizer; creates sensors (individual + aggregated + **Last polled** + **Obtained from** on site device). Uses `coordinator.data` for optimizer info when available (after first refresh), only calling the API for optimizers missing from that data; uses coordinator data and translation keys for names. |
+| **API client** | **Dual API** (`api_dual.py`): tries **SolarEdge One** (`solaredge_one_api.py`) first; if One returns no valid measurements or fails (e.g. login), uses **legacy** (`solaredgeoptimizers.py`). Exposes `_obtained_from` for the site-level sensor. Both backends conform to `SolarEdgeAPIProtocol` (`api.py`). Layout and lifetime energy cached; parallel optimizer data for full refresh; locale/language from HA. |
 
 ---
 
@@ -111,6 +111,7 @@ How the physical layout maps to Home Assistant devices and entities:
 flowchart TD
     subgraph Site[Site device]
         LP[Last polled]
+        OF[Obtained from]
         S_P[Power]
         S_V[Voltage average]
         S_C[Current average]
@@ -174,7 +175,8 @@ sequenceDiagram
 
     U->>HA: Add integration (Site ID, user, pass)
     HA->>API: check_login()
-    API->>SE: GET layout/logical
+    Note over API: Dual API: try One, then legacy if needed
+    API->>SE: GET layout/logical (One or legacy)
     SE-->>API: 200 + layout
     API-->>HA: 200
     HA->>C: Create coordinator, first refresh
@@ -184,11 +186,12 @@ sequenceDiagram
     API-->>C: SolarEdgeSite (inverters/strings/optimizers)
     C->>HA: Register site/inverter/string devices
     C->>API: requestAllData()
-    API->>SE: getLifeTimeEnergy (cached 1h)
-    API->>SE: requestSystemData(opt_id) × N (parallel)
+    Note over API: Dual API: try One first; if no valid measurements or fail, call legacy
+    API->>SE: getLifeTimeEnergy / layout/energy (cached 1h)
+    API->>SE: requestSystemData(opt_id) × N or One batch (parallel)
     SE-->>API: per-optimizer data
-    API-->>C: list of SolarEdgeOptimizerData + lifetime
-    C->>C: _calculate_aggregated_data()
+    API-->>C: list of SolarEdgeOptimizerData + lifetime, _obtained_from set
+    C->>C: _calculate_aggregated_data(); store _obtained_from
     C-->>HA: data_dict (panel_id → data)
     HA->>C: async_setup_entry → sensor platform
     Note over HA,C: Sensor platform uses coordinator.data for optimizer info when present; only calls API for optimizers missing from data (avoids duplicate fetches)
@@ -213,13 +216,15 @@ flowchart LR
     NEW -->|No| REUSE
     FULL --> AGG[Aggregate string/inverter/site]
     REUSE --> AGG
-    AGG --> LAST[Update last_polled]
+    AGG --> LAST[Update last_polled and obtained_from]
 ```
 
+**Note:** A full refresh is also triggered when data is from legacy and at least 30 minutes have passed since the last full refresh (re-try One so the integration can switch back).
+
 - **Light check interval**: ~2 minutes when data is recent; ~15 minutes when data is old or missing.  
-- **Light check strategy**: **Legacy API** uses a single representative optimizer (`requestSystemData`). **SolarEdge One** uses up to 5 optimizers chosen at random from the site; one batch request (`requestSystemDataBatch`) returns live data for all of them. If any has a newer `lastMeasurement` than the coordinator’s latest, a full refresh is triggered. Random selection avoids always checking the same panel (e.g. one that’s often in shade).  
-- **Full refresh**: All optimizers + lifetime energy (from cache when possible).  
-- **Lifetime energy** from API is cached for 1 hour; aggregations are computed from that cache.  
+- **Light check strategy**: Which API is used follows the **last full refresh**. When the dual API last used **legacy** for full data, the light check uses a single representative optimizer (`requestSystemData`). When it last used **SolarEdge One**, the light check uses up to 5 optimizers chosen at random; one batch request (`requestSystemDataBatch`) returns live data for all of them. If any has a newer `lastMeasurement` than the coordinator’s latest, a full refresh is triggered. Random selection avoids always checking the same panel (e.g. one that’s often in shade).  
+- **Full refresh**: Coordinator calls the dual API's `requestAllData()`: dual API tries One first; if no valid measurements or fail, uses legacy; sets `_obtained_from`. All optimizers + lifetime energy (from cache when possible). When data is currently from **legacy** (`_obtained_from` = Legacy API), the coordinator forces a full refresh **every 30 minutes** (`REVERT_TO_ONE_RETRY_INTERVAL` in `const.py`) so One is re-tried and the integration can switch back when One is available.  
+- **Lifetime energy**: Dual API's `get_lifetime_energy_cached()` returns the cache from whichever API was last used for full data (One or legacy). TTL 1 hour; aggregations from that cache.  
 - **Sensor setup**: After the coordinator’s first refresh, the sensor platform receives `data_dict` and uses it for optimizer info when creating entities; it only calls the API for optimizers missing from that data, so setup avoids duplicate fetches and is faster.
 
 ---
@@ -239,23 +244,23 @@ flowchart LR
 2. Restart Home Assistant.  
 3. Add the integration as above.
 
-Ensure `custom_components/solaredgeoptimizers/` contains at least: `__init__.py`, `api.py`, `config_flow.py`, `const.py`, `coordinator.py`, `manifest.json`, `sensor.py`, `solaredgeoptimizers.py`, `solaredge_one_api.py`, `strings.json`, and the `translations/` folder.
+Ensure `custom_components/solaredgeoptimizers/` contains at least: `__init__.py`, `api.py`, `api_dual.py`, `config_flow.py`, `const.py`, `coordinator.py`, `manifest.json`, `sensor.py`, `solaredgeoptimizers.py`, `solaredge_one_api.py`, `strings.json`, and the `translations/` folder.
 
 ---
 
 ## 6. Configuration
 
-- **Single step**: Site ID, Username (email), Password, optional **Use SolarEdge One portal** (default **on**), optional **Entity ID prefix**, and optional **Include Site ID in Entity ID** (default **off**). **Field order** in the form: Site ID → Username → Password → Use SolarEdge One portal → Entity ID prefix → Include Site ID in Entity ID.  
-- **Use SolarEdge One portal**: Default **on** when adding the integration. When enabled, the integration uses the SolarEdge One API (`monitoring.solaredge.com/services/layout/...`) with OAuth (login at `login.solaredge.com`, Bearer token). Turn off only if your account still uses the legacy portal. Same Site ID, username, and password. If legacy login returns 401, the config flow can try SolarEdge One and, on success, save the entry with Use SolarEdge One enabled. When using SolarEdge One, optimizer and inverter devices show model (e.g. P405-4RM4MRM-NA25, SE5000H-RW000BNN4) and serial.  
+- **Single step**: Site ID, Username (email), Password, optional **Entity ID prefix**, and optional **Include Site ID in Entity ID** (default **off**). **Field order** in the form: Site ID → Username → Password → Entity ID prefix → Include Site ID in Entity ID.  
+- **Dual API**: The integration always uses a dual API: it tries the **SolarEdge One API** first (`monitoring.solaredge.com/services/layout/...`). If One returns no valid measurements (e.g. all optimizers with empty measurements) or One login fails, it automatically falls back to the **legacy** SolarEdge API. When One starts returning valid data again, the integration switches back to One—either when the light check sees newer data from One, or **every 30 minutes** when data is currently from legacy (coordinator forces a full refresh to re-try One). A site-level **Obtained from** sensor shows "One API" or "Legacy API". When data is from One, optimizer and inverter devices show model (e.g. P405-4RM4MRM-NA25, SE5000H-RW000BNN4) and serial. Validation: `check_login()` succeeds if either One or legacy returns 200.  
 - **One config entry per site**: The config flow sets `unique_id` to the Site ID. If you try to add the same site again, `_abort_if_unique_id_configured()` runs and the flow aborts with "Device is already configured". Multiple sites require one integration entry per site (each with a different Site ID).  
 - **Entity ID prefix**: Optional. If set (e.g. `se_`), all entity IDs start with that prefix (e.g. `sensor.se_power_9999999`). Normalised to lowercase with spaces as underscores. Leave blank for no prefix. Useful when running multiple sites or avoiding clashes with other integrations. When upgrading from an older version without removing the integration, this defaults to blank if the key is not present.  
 - **Include Site ID in Entity ID**: Optional, default **off**. When off, inverter/string/optimizer entity IDs omit the site ID (e.g. `sensor.power_1_1`); site level always includes the actual site ID (e.g. `sensor.power_9999999`). When on, all levels include the site ID in the path. When upgrading from an older version without removing the integration, this defaults to off if the key is not present.  
-- **Validation**: Calls `check_login()`: **Legacy** = `GET .../layout/logical` with HTTP Basic Auth; **SolarEdge One** = `GET .../services/layout/logical/generic/v2/site/{siteId}` with Bearer token (OAuth). Success = 200.  
+- **Validation**: Uses dual API `check_login()`: tries SolarEdge One first, then legacy; success if either returns 200.  
 - **Config entry title**: Translated, e.g. “SolarEdge Site 12345” (from `config.title_entry` with `%(siteid)s`).  
 - **Errors**: “Failed to connect”, “Invalid authentication”, “Unexpected error” (keys `cannot_connect`, `invalid_auth`, `unknown`); all translatable.  
 - **Abort**: “Device is already configured” when the same site is already set up; "Re-authentication successful" and "Re-authentication could not find the config entry." for the re-auth flow (all translatable).  
-- **Re-authentication**: If the API returns 401 (invalid or expired credentials), `__init__.py` raises `ConfigEntryAuthFailed`. Home Assistant then starts the reauth flow: `async_step_reauth` sets `unique_id` and runs `async_step_reauth_confirm`, which shows a form (title, description, username, password) from `config.step.reauth_confirm`. On success, only the entry’s username and password are updated in `entry.data`; options (Use SolarEdge One portal, entity ID prefix, Include Site ID in Entity ID) are left unchanged. The integration is then reloaded. Abort reasons: `reauth_successful`, `reauth_entry_missing`. All re-auth strings are in `translations/<code>.json`.  
-- **Options (reconfigure)**: Users can change **Use SolarEdge One portal**, **Entity ID prefix**, or **Include Site ID in Entity ID** without deleting the entry: use the integration’s **Configure** (options flow). The flow shows a form (step_id `init`; translations from **options.step.init**: title, description, data.use_solaredge_one, data.entity_id_prefix, data.include_site_id_in_entity_id). **Field order**: Use SolarEdge One portal first (defaulting to the previously set value from options or data), then Entity ID prefix, then Include Site ID in Entity ID. The description shows the current prefix (`{current_entity_id_prefix}`); leave the Entity ID prefix field empty to remove the prefix. Values are stored in `entry.options` and override `entry.data` when the integration reads config. On save, the options flow updates the entry and triggers a reload so sensors are recreated. **Important:** Changing these options can change entity IDs and `unique_id`s. When `unique_id` or entity ID changes, Home Assistant may treat entities as new, so **history and statistics for the previous entities can be lost**. The options form description warns users and recommends backing up or exporting data first.
+- **Re-authentication**: If the API returns 401 (invalid or expired credentials), `__init__.py` raises `ConfigEntryAuthFailed`. Home Assistant then starts the reauth flow: `async_step_reauth` sets `unique_id` and runs `async_step_reauth_confirm`, which shows a form (title, description, username, password) from `config.step.reauth_confirm`. On success, only the entry’s username and password are updated in `entry.data`; options (entity ID prefix, Include Site ID in Entity ID) are left unchanged. The integration is then reloaded. Abort reasons: `reauth_successful`, `reauth_entry_missing`. All re-auth strings are in `translations/<code>.json`.  
+- **Options (reconfigure)**: Users can change **Entity ID prefix** or **Include Site ID in Entity ID** without deleting the entry: use the integration’s **Configure** (options flow). The flow shows a form (step_id `init`; translations from **options.step.init**: title, description, data.entity_id_prefix, data.include_site_id_in_entity_id). **Field order**: Entity ID prefix, then Include Site ID in Entity ID. The description shows the current prefix (`{current_entity_id_prefix}`); leave the Entity ID prefix field empty to remove the prefix. Values are stored in `entry.options` and override `entry.data` when the integration reads config. On save, the options flow updates the entry and triggers a reload so sensors are recreated. **Important:** Changing these options can change entity IDs and `unique_id`s. When `unique_id` or entity ID changes, Home Assistant may treat entities as new, so **history and statistics for the previous entities can be lost**. The options form description warns users and recommends backing up or exporting data first.
 
 No YAML configuration is required; all configuration is via the config flow.
 
@@ -274,7 +279,7 @@ No YAML configuration is required; all configuration is via the config flow.
 | Lifetime energy | energy | kWh | Total energy (monotonic). Sourced from the API’s `unscaledEnergy` (Wh); the portal’s `units` field applies only to display values `energy` and `moduleEnergy`. At site level, when aggregated optimizer data is unreliable (e.g. very small total while portal has a real total), the site uses the portal’s total (sum of all `unscaledEnergy` from layout/energy) instead of aggregating. |
 | Last measurement | timestamp | — | Time of last measurement from portal. |
 
-- **Stale rule**: If last measurement is older than the threshold (1 h for SolarEdge One, 2 h for legacy), **Power, Voltage, Current, Optimizer voltage** are shown as **0**. Lifetime energy and Last measurement always show last known value.
+- **Stale rule**: If last measurement is older than the threshold (**1 h** when data is from One API, **2 h** when from Legacy API—see **Obtained from** sensor), **Power, Voltage, Current, Optimizer voltage** are shown as **0**. Lifetime energy and Last measurement always show last known value.
 
 ### Per-string (aggregated)
 
@@ -304,6 +309,7 @@ No YAML configuration is required; all configuration is via the config flow.
 | Same as inverter | But over all inverters. |
 | Inverter count | Number of inverters (always an integer). |
 | **Last polled** | (Site device only.) When the integration last successfully finished an update. |
+| **Obtained from** | (Site device only.) Which API provided the current data: **"One API"** or **"Legacy API"**. Entity ID: `sensor.[prefix]obtained_from_[site]` or `sensor.[prefix]obtained_from` when site ID is not included in entity IDs. |
 
 All aggregated sensors use the same naming pattern (e.g. “Power”, “Current (average)”) with the device name indicating the level. Entity IDs include the path so they are unique. When **Include Site ID in Entity ID** is **off** (default), inverter/string/optimizer IDs omit the site; site level and Last polled always show the site ID. When **on**, all levels include the site ID.
 
@@ -314,6 +320,7 @@ All aggregated sensors use the same naming pattern (e.g. “Power”, “Current
 | String   | `sensor.power_1_1`                             | `sensor.power_9999999_1_1`                    |
 | Optimizer| `sensor.power_1_1_1`                           | `sensor.power_9999999_1_1_1`                  |
 | Last polled | `sensor.last_polled`                        | `sensor.last_polled_9999999`                  |
+| Obtained from | `sensor.obtained_from`                    | `sensor.obtained_from_9999999`                |
 
 Child-count sensors: `inverter_count` at site level, `string_count` at inverter level, and `optimizer_count` at string level, with the same path suffix.
 
@@ -324,10 +331,10 @@ Child-count sensors: `inverter_count` at site level, `string_count` at inverter 
 | Item | Interval / TTL | Notes |
 |------|----------------|--------|
 | Coordinator tick | 2 minutes | `UPDATE_DELAY` in `const.py`. |
-| Light check | 2 min (recent data) or 15 min (old/none) | **Legacy:** single optimizer `requestSystemData`. **SolarEdge One:** up to 5 optimizers at random, one `requestSystemDataBatch`; if any has newer data, full refresh. |
-| Full refresh | When light check sees new data, or first boot / no data | `requestAllData()`: all optimizers + lifetime energy. |
-| Layout (panels) cache | 1 hour | `requestListOfAllPanels()` → `requestLogicalLayout()`. |
-| Lifetime energy cache | 1 hour | `get_lifetime_energy_cached()` → `getLifeTimeEnergy()`. Converted to kWh from `unscaledEnergy` (Wh); `units` applies only to display fields. |
+| Light check | 2 min (recent data) or 15 min (old/none) | When last full data was from **legacy:** single optimizer `requestSystemData`. When from **SolarEdge One:** up to 5 optimizers at random, one `requestSystemDataBatch`; if any has newer data, full refresh. |
+| Full refresh | When light check sees new data, first boot / no data, or **every 30 min when data is from legacy** (re-try One) | Dual API `requestAllData()`: tries One first; if no valid measurements or fail, uses legacy. Returns all optimizers + lifetime energy; sets `_obtained_from`. `REVERT_TO_ONE_RETRY_INTERVAL` = 30 min in `const.py`. |
+| Layout (panels) cache | 1 hour | `requestListOfAllPanels()` (dual API prefers One; fallback legacy). |
+| Lifetime energy cache | 1 hour | Dual API `get_lifetime_energy_cached()` returns cache from the API that was last used for full data (One or legacy). Converted to kWh from `unscaledEnergy` (Wh); `units` applies only to display fields. |
 | Full-refresh cooldown | 2 minutes | Avoids back-to-back full refreshes. |
 
 Aggregations (string/inverter/site) are computed in the coordinator from optimizer data and cached lifetime energy; they are not separate API calls. **Site lifetime energy** uses aggregated data when reliable; when aggregated is very small (&lt; 100 kWh) and the portal total (sum of all `unscaledEnergy` from layout/energy) is large (≥ 100 kWh), the site uses the portal total so installations with unreliable per-optimizer lifetime data still get a correct site total.
@@ -336,7 +343,7 @@ Aggregations (string/inverter/site) are computed in the coordinator from optimiz
 
 ## 9. Offline and stale data handling
 
-- **Threshold**: **SolarEdge One** uses `CHECK_TIME_DELTA_SOLAREDGE_ONE` = 1 hour; **legacy API** uses `CHECK_TIME_DELTA` = 2 hours (in `const.py`). The coordinator picks the threshold based on which API is in use.  
+- **Threshold**: When data is from **One API**, the coordinator uses `CHECK_TIME_DELTA_SOLAREDGE_ONE` = 1 hour; when from **Legacy API**, uses `CHECK_TIME_DELTA` = 2 hours (in `const.py`). The threshold follows the current data source (see **Obtained from** sensor).  
 - **Rule**: For each optimizer, if `lastmeasurement` is older than the threshold:
   - **Voltage, Current, Optimizer voltage, Power** → reported as **0** (so dashboards don’t show stale “live” values).
   - **Lifetime energy** and **Last measurement** → always last known value (historical view still possible).
@@ -346,8 +353,8 @@ Aggregations (string/inverter/site) are computed in the coordinator from optimiz
 
 ## 10. Internationalization (i18n)
 
-- **Config flow**: Labels (Site id, Username, Password, **Use SolarEdge One portal**, **Entity ID prefix (optional)**, **Include Site ID in Entity ID** — in that order), errors, abort messages (including **reauth_successful**, **reauth_entry_missing**), and config entry title are translated. The **re-authentication** step (`config.step.reauth_confirm`: title, description, data.username, data.password) is translated in all supported languages.
-- **Options flow (Reconfigure dialog)**: The Configure form uses the **options** translation section (`options.step.init`: title, description, data.use_solaredge_one, data.entity_id_prefix, data.include_site_id_in_entity_id). Field order: Use SolarEdge One portal first, then Entity ID prefix, then Include Site ID in Entity ID. The integration sets `translation_domain` to the integration domain so the frontend loads these strings.  
+- **Config flow**: Labels (Site id, Username, Password, **Entity ID prefix (optional)**, **Include Site ID in Entity ID** — in that order), errors, abort messages (including **reauth_successful**, **reauth_entry_missing**), and config entry title are translated. The **re-authentication** step (`config.step.reauth_confirm`: title, description, data.username, data.password) is translated in all supported languages.
+- **Options flow (Reconfigure dialog)**: The Configure form uses the **options** translation section (`options.step.init`: title, description, data.entity_id_prefix, data.include_site_id_in_entity_id). Field order: Entity ID prefix, then Include Site ID in Entity ID. The integration sets `translation_domain` to the integration domain so the frontend loads these strings.  
 - **Entity names**: Sensor names (Power, Voltage, Last measurement, etc.) use `translation_key` and are translated.  
 - **API**: `locale` and `Accept-Language` (and cookie `SolarEdge_Locale`) follow HA language (e.g. `en`, `de`, `nl`). The SolarEdge API may return measurement keys in the user’s language (e.g. “Leistung [W]” in German); the integration recognises multiple locale variants and normalises decimal separators (e.g. comma to dot) so power/current/voltage work in all supported languages.
 
@@ -381,9 +388,9 @@ Translation files: `translations/<code>.json` with **config**, **options**, **en
 
 ## 11. API client and SolarEdge portal
 
-The integration supports two API back ends. Which one is used is determined by the **Use SolarEdge One portal** option (default **on** when adding the integration).
+The integration uses a **dual API** (`api_dual.py`): it always tries **SolarEdge One** first; if One returns no valid optimizer measurements or One login fails, it falls back to the **legacy** API. The site-level **Obtained from** sensor shows "One API" or "Legacy API". There is no user option to choose the API.
 
-### Legacy API (when "Use SolarEdge One portal" is off)
+### Legacy API (used when SolarEdge One has no valid data or fails)
 
 | Purpose | Method | Endpoint (concept) |
 |---------|--------|---------------------|
@@ -395,7 +402,7 @@ The integration supports two API back ends. Which one is used is determined by t
 - **Auth**: HTTP Basic Auth (username/password) for layout and systemData; web session (cookies + CSRF) for energy endpoint.  
 - **Locale**: From HA language (e.g. `en` → `en_US`); used in `systemData` and request headers/cookies.
 
-### SolarEdge One API (when “Use SolarEdge One portal” is enabled)
+### SolarEdge One API (tried first by the dual API)
 
 | Purpose | Method | Endpoint (concept) |
 |---------|--------|---------------------|
@@ -415,17 +422,17 @@ The layout/energy (legacy) or energy-graph (SolarEdge One) response provides per
 
 ### Caching
 
-- **Layout**: 1 h TTL; keyed by time; avoids repeated layout calls during setup and polling.  
-- **Lifetime energy**: 1 h TTL; used by `requestAllData()` and coordinator aggregation.  
-- **Panels list**: Same as layout (returned by `requestListOfAllPanels()`).
+- **Layout**: 1 h TTL (in One and legacy clients); dual API prefers One for `requestListOfAllPanels()`; avoids repeated layout calls during setup and polling.  
+- **Lifetime energy**: 1 h TTL in each backend; the dual API's `get_lifetime_energy_cached()` returns the cache from whichever backend was last used for full data (One or legacy). Used by coordinator aggregation.  
+- **Panels list**: Same as layout (returned by `requestListOfAllPanels()`; dual API delegates to One first, then legacy on failure).
 
 ### Data models (conceptual)
 
 - **SolarEdgeSite**: `siteId`, `inverters[]`.  
 - **SolarEdgeInverter**: `inverterId`, `serialNumber`, `displayName`, `strings[]`.  
 - **SolarEdgeString**: `stringId`, `displayName`, `optimizers[]`.  
-- **SolarlEdgeOptimizer**: `optimizerId`, `serialNumber`, `displayName`.  
-- **SolarEdgeOptimizerData**: `panel_id`, `voltage`, `current`, `power`, `optimizer_voltage`, `lifetime_energy` (kWh from API `unscaledEnergy`), `lastmeasurement`, etc.  
+- **SolarEdgeOptimizer**: `optimizerId`, `serialNumber`, `displayName`.  
+- **SolarEdgeOptimizerData**: `panel_id`, `voltage`, `current`, `power`, `optimizer_voltage`, `lifetime_energy` (kWh from API `unscaledEnergy`), `lastmeasurement`, `_has_valid_measurements` (True when the API provided a non-empty measurements dict; used by dual API to decide if One data is valid or to fall back to legacy), etc.  
 - **SolarEdgeAggregatedData**: `panel_id`, `entity_type` (string/inverter/site), same measurement fields plus `child_count`, etc.
 
 ---
@@ -435,7 +442,7 @@ The layout/energy (legacy) or energy-graph (SolarEdge One) response provides per
 - **Log namespace**: The integration uses `logging.getLogger(__name__)` per module (e.g. `solaredgeoptimizers.sensor`); the top-level logger name is `solaredgeoptimizers`.  
 - **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures. All debug calls are guarded with `isEnabledFor(logging.DEBUG)`, so there is no performance cost when the log level is `info` or higher.
 
-**What debug logging covers:** Config flow (user form, validating input, unique_id check, creating entry with title and use_solaredge_one, reauth form, options/reconfigure form when showing — with current prefix/use_solaredge_one/include_site_id — or saving, removal and device count); setup (API instance — legacy or SolarEdge One — from options/data, login check, coordinator with include_site_id_in_entity_id, inverter models fetch for SolarEdge One, site/inverter/string device creation with model, platform forward, coordinator stored); unload (unload start, platform result, API session close, registry cleanup when nothing to remove, unload complete); coordinator (panel list request, representative optimizers or random batch for SolarEdge One, update cycle — do_full_refresh, should_light_check, measurement_age, desired_interval, latest_measurement — adaptive light check and full refresh, full refresh vs reuse item count, lifetime energy entry count, timezone, update complete); sensor platform (setup entry, base_name and include_site_id and site_id, adding optimizer with panel_id/serial/model, aggregated sensors, entity count, skip on exception); API client (legacy: login, layout, requestAllData start/complete, system data, get_lifetime_energy_cached hit/miss/entry count, lifetime energy; SolarEdge One: OAuth steps, token, get_inverter_models request/result, requestLogicalLayout, requestSystemData/requestSystemDataBatch, timeout retry (warning), _build_optimizer_data_from_response, requestAllData, cache, errors). Enable with `logger: logs: solaredgeoptimizers: debug` in `configuration.yaml`.
+**What debug logging covers:** Config flow (user form, validating input, unique_id check, creating entry with title, reauth form, options/reconfigure form when showing — with current prefix/include_site_id — or saving, removal and device count); setup (dual API, login check, coordinator with include_site_id_in_entity_id, inverter models fetch, site/inverter/string device creation with model, platform forward, coordinator stored); unload (unload start, platform result, API session close, registry cleanup when nothing to remove, unload complete); coordinator (panel list request, representative optimizers or random batch, update cycle — do_full_refresh, should_light_check, measurement_age, desired_interval, latest_measurement, obtained_from, revert-to-One retry when data from legacy — adaptive light check and full refresh, full refresh vs reuse item count, lifetime energy entry count, timezone, update complete); sensor platform (setup entry, base_name and include_site_id and site_id, adding optimizer with panel_id/serial/model, aggregated sensors, obtained_from sensor, entity count, skip on exception); API client (dual API: fallback to legacy when One has no valid measurements or fails; legacy: login, layout, requestAllData, get_lifetime_energy_cached; SolarEdge One: OAuth steps, token, get_inverter_models, requestSystemData/requestSystemDataBatch, timeout retry (warning), _build_optimizer_data_from_response, requestAllData, cache, errors). Enable with `logger: logs: solaredgeoptimizers: debug` in `configuration.yaml`.
 
 ### Logging
 
@@ -459,10 +466,10 @@ logger:
 
 | Symptom | What to check |
 |--------|----------------|
-| “Invalid authentication” | Correct Site ID, email, password; account can log in at monitoring.solaredge.com. If your account uses the new SolarEdge One portal, ensure **Use SolarEdge One portal** is enabled in the config form (it defaults to on). |
+| “Invalid authentication” | Correct Site ID, email, password; account can log in at monitoring.solaredge.com. The integration tries SolarEdge One first and falls back to the legacy API; login succeeds if either returns 200. |
 | “Failed to connect” | Network, firewall, DNS; outbound HTTPS to monitoring.solaredge.com. |
 | Config entry not loading | Logs for `ConfigEntryNotReady`; first refresh may fail if API is slow or returns errors. |
-| Sensors stay 0 | Last measurement age (2 h rule); check “Last measurement” and “Last polled”; debug logs for API responses. If using a non-English HA language, ensure you’re on a version that supports locale-aware measurement keys (e.g. “Leistung [W]” for German). |
+| Sensors stay 0 | Last measurement age: 1 h when Obtained from is One API, 2 h when Legacy API. Check “Last measurement”, Last polled, and Obtained from; debug logs for API responses. If using a non-English HA language, ensure you’re on a version that supports locale-aware measurement keys (e.g. “Leistung [W]” for German). |
 | Slow first load | Many optimizers → many parallel requests; layout and lifetime energy cached after first run. |
 | Duplicate entity IDs (e.g. sensor.power_2) | Use a unique Entity ID prefix per site, or ensure you’re on a version that uses the new path-based entity IDs (site in path). |
 | Entity IDs show a device prefix (e.g. sensor.site_123_power_123 instead of sensor.power_123) | Rare (can depend on locale/HA version). Remove the integration, restart Home Assistant, then add the integration again after updating to the latest version so entity IDs are created with the correct path-based format. |
@@ -482,15 +489,16 @@ logger:
 
 ```
 solaredgeoptimizers/
-├── __init__.py            # Entry point, setup, API + coordinator creation (legacy or SolarEdge One), remove_entities_and_devices_for_entry (shared cleanup) and helpers for entity/device collection and removal
+├── __init__.py            # Entry point, migration (remove use_solaredge_one), setup dual API + coordinator, remove_entities_and_devices_for_entry (shared cleanup) and helpers
 ├── api.py                 # SolarEdgeAPIProtocol: typing protocol for API clients (used by coordinator)
-├── config_flow.py         # Config flow, validation, translated title, async_remove_entry (calls shared cleanup helper)
-├── const.py               # DOMAIN, intervals, sensor type constants, CONF_USE_SOLAREDGE_ONE, CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, etc.
-├── coordinator.py         # DataUpdateCoordinator, adaptive polling, aggregation (my_api: SolarEdgeAPIProtocol)
+├── api_dual.py            # SolarEdgeDualAPI: tries One first, falls back to legacy when One has no valid measurements or fails; exposes _obtained_from
+├── config_flow.py         # Config flow, validation (dual API), translated title, async_remove_entry (calls shared cleanup helper)
+├── const.py               # DOMAIN, intervals, sensor type constants, CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, etc.
+├── coordinator.py         # DataUpdateCoordinator, adaptive polling, revert-to-One retry (30 min when from legacy), aggregation, _obtained_from (my_api: SolarEdgeAPIProtocol)
 ├── hacs.json              # HACS metadata
 ├── info.md                # Integration info (e.g. for HACS)
 ├── manifest.json         # Domain, version, requirements (e.g. jsonfinder)
-├── sensor.py              # Sensor entities (optimizer, aggregated, last polled); at setup removes existing sensor entities for this entry then creates new ones using coordinator.data when available (only calls API for optimizers missing from coordinator)
+├── sensor.py              # Sensor entities (optimizer, aggregated, last polled, obtained_from); at setup removes existing sensor entities for this entry then creates new ones using coordinator.data when available (only calls API for optimizers missing from coordinator)
 ├── solaredgeoptimizers.py # Legacy API client, data models, SolarEdge legacy API calls
 ├── solaredge_one_api.py   # SolarEdge One API client (OAuth, /services/layout/..., optimizer requests with 60 s timeout and retry)
 ├── strings.json           # Config flow strings (references to common keys)
@@ -507,12 +515,13 @@ solaredgeoptimizers/
 |----------|--------|--------|
 | `DOMAIN` | `"solaredgeoptimizers"` | Integration domain. |
 | `CONF_SITE_ID` | `"siteid"` | Config key for Site ID; used in config flow and reauth. |
-| `CONF_USE_SOLAREDGE_ONE` | `"use_solaredge_one"` | Optional config key; when true, use SolarEdge One portal API. Default **true** in config flow when adding; default **false** when key is missing (e.g. upgraded entries). Options flow can override; read from `entry.options` then `entry.data`. |
+| *(deprecated)* | `use_solaredge_one` | No longer used; removed by migration on setup. The integration always uses the dual API (One first, legacy fallback). |
 | `CONF_ENTITY_PREFIX` | `"entity_id_prefix"` | Optional config key for entity ID prefix (e.g. `se_`). |
 | `CONF_INCLUDE_SITE_ID_IN_ENTITY_ID` | `"include_site_id_in_entity_id"` | Optional config key; when true, entity IDs for inverter/string/optimizer include the site ID (default false). Site level always includes site ID. |
 | `UPDATE_DELAY` | 2 minutes | Coordinator update interval. |
 | `CHECK_TIME_DELTA` | 2 hours | Age threshold for zeroing live values (legacy API). |
 | `CHECK_TIME_DELTA_SOLAREDGE_ONE` | 1 hour | Age threshold for zeroing live values when using SolarEdge One API. |
+| `REVERT_TO_ONE_RETRY_INTERVAL` | 30 minutes | When data is from legacy API, coordinator forces a full refresh this often to re-try SolarEdge One so the integration can switch back when One is available. |
 | `SENSOR_TYPE_*` | e.g. `Current`, `Power`, `Voltage` | Sensor type identifiers for individual and aggregated sensors. |
 
 ---
