@@ -104,7 +104,7 @@ If your SolarEdge credentials expire or become invalid (for example after a pass
 
 - Temporary problems on SolarEdge’s servers (e.g. HTTP 5xx errors) or network/DNS issues (e.g. “Failed to resolve monitoring.solaredge.com”) are handled without crashing: the integration uses cached data where possible and will try again on the next update.
 - If the inverter information API returns **403 Forbidden** (e.g. some accounts lack that permission), the integration still works: inverter and optimizer devices use position-based identity, so model names may be missing but all sensors and devices function.
-- A full refresh can take several minutes on sites with many optimizers (lifetime energy is fetched per optimizer). The integration allows up to **10 minutes** for a full refresh before timing out.
+- A full refresh can take several minutes on sites with many optimizers. When the lifetime-energy cache is cold, the integration fetches it **in parallel** (thread pool) instead of one request per optimizer, so large sites complete much faster. The integration allows up to **15 minutes** for a full refresh before timing out.
 - Connections and sessions are closed properly when the integration is removed or reloaded, so it's safe to run for long periods.
 - When you **delete the integration** (remove the config entry), the integration removes all associated entities and devices from the registries via a shared cleanup routine (used by both the config flow and unload), so no leftover entries remain. Delete from **Settings → Devices & services → Integrations** (not only from HACS) so that this cleanup runs.
 
