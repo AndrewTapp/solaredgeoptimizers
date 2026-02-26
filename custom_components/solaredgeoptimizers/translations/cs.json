@@ -58,6 +58,9 @@
       "optimizer_voltage": {
         "name": "Napětí optimizéru"
       },
+      "temperature": {
+        "name": "Teplota"
+      },
       "lifetime_energy": {
         "name": "Celková energie"
       },
