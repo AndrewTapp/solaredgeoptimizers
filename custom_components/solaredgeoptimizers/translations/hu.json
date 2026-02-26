@@ -58,6 +58,9 @@
       "optimizer_voltage": {
         "name": "Optimalizáló feszültség"
       },
+      "temperature": {
+        "name": "Hőmérséklet"
+      },
       "lifetime_energy": {
         "name": "Összes energia"
       },
