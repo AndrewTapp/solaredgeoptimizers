@@ -58,6 +58,9 @@
       "optimizer_voltage": {
         "name": "Optimointilaitteen jännite"
       },
+      "temperature": {
+        "name": "Lämpötila"
+      },
       "lifetime_energy": {
         "name": "Kokonaisenergia"
       },
