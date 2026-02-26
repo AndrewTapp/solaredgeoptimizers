@@ -58,6 +58,9 @@
       "optimizer_voltage": {
         "name": "优化器电压"
       },
+      "temperature": {
+        "name": "温度"
+      },
       "lifetime_energy": {
         "name": "总发电量"
       },
