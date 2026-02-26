@@ -91,6 +91,101 @@ def _parse_login_form(html: str):
     return parser.form_action, parser.form_method, parser.inputs
 
 
+def _perform_oauth_pkce_login(session: Session, username: str, password: str) -> tuple[str, str | None]:
+    """
+    Perform OAuth PKCE flow: GET login page, POST credentials, extract code from callback, exchange for tokens.
+    Returns (access_token, refresh_token). Caller must use a Session with User-Agent set.
+    """
+    code_verifier, code_challenge = _pkce_verifier_and_challenge()
+    login_params = {
+        "lang": "en",
+        "response_type": "code",
+        "client_id": SOLAREDGE_ONE_CLIENT_ID,
+        "scope": "email openid",
+        "redirect_uri": MFE_AUTH_CALLBACK,
+        "code_challenge_method": "S256",
+        "code_challenge": code_challenge,
+    }
+    login_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
+
+    with session.get(login_url, timeout=30) as r:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: GET login page -> %s", r.status_code)
+        login_page_html = r.text
+        login_page_url = r.url
+
+    if not login_page_url.startswith(LOGIN_BASE):
+        _LOGGER.warning("SolarEdge One: login page not on login.solaredge.com: %s", login_page_url)
+        raise requests.RequestException("Login page redirect failed")
+
+    _, _, form_inputs = _parse_login_form(login_page_html)
+    post_body = {k: v for k, v in (form_inputs or {}).items() if k not in ("username", "password", "email")}
+    post_body["username"] = username
+    post_body["password"] = password
+
+    post_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
+    post_headers = {
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "Accept": "*/*",
+        "Origin": LOGIN_BASE,
+        "Referer": login_page_url,
+    }
+
+    with session.post(post_url, data=post_body, headers=post_headers, timeout=30, allow_redirects=True) as r:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: POST login -> %s, URL: %s", r.status_code, r.url)
+        if r.status_code >= 400:
+            body_preview = (r.text or "")[:500]
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One: login POST %s response: %s", r.status_code, body_preview)
+        final_url = r.url
+        if r.status_code == 204 and "Location" in r.headers:
+            callback_url = r.headers["Location"]
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One: 204 response, following Location: %s", callback_url)
+            with session.get(callback_url, timeout=30, allow_redirects=True) as r2:
+                final_url = r2.url
+
+    if MFE_AUTH_CALLBACK not in final_url:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: did not reach callback (final URL: %s)", final_url)
+        raise requests.RequestException("OAuth callback failed")
+    parsed_cb = urlparse(final_url)
+    q = parse_qs(parsed_cb.query)
+    code = (q.get("code") or [None])[0]
+    if not code:
+        _LOGGER.warning("SolarEdge One: no code in callback URL")
+        raise requests.RequestException("OAuth callback missing code")
+
+    token_data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": SOLAREDGE_ONE_CLIENT_ID,
+        "redirect_uri": MFE_AUTH_CALLBACK,
+        "code_verifier": code_verifier,
+    }
+    token_headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "*/*",
+        "Origin": BASE_URL,
+        "Referer": f"{BASE_URL}/",
+        "User-Agent": session.headers["User-Agent"],
+    }
+    with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=30) as r:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: POST oauth2/token -> %s", r.status_code)
+        r.raise_for_status()
+        tok = r.json()
+    access_token = tok.get("access_token")
+    refresh_token = tok.get("refresh_token")
+    if not access_token:
+        _LOGGER.warning("SolarEdge One: token response missing access_token")
+        raise requests.RequestException("No access_token in token response")
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug("SolarEdge One: OAuth login complete, access token obtained")
+    return access_token, refresh_token
+
+
 def _parse_site_id_from_uuid(uuid_str: str) -> str | None:
     """Extract numeric site ID from v2 uuid e.g. a0000000-0000-0000-0000-000002065855 -> 2065855."""
     if not uuid_str:
@@ -258,105 +353,12 @@ class solaredge_one:
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: No token; starting OAuth PKCE login flow")
-        code_verifier, code_challenge = _pkce_verifier_and_challenge()
         with Session() as session:
             session.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
-
-            # (1) Build login URL with our PKCE challenge (so we can exchange code with our verifier)
-            login_params = {
-                "lang": "en",
-                "response_type": "code",
-                "client_id": SOLAREDGE_ONE_CLIENT_ID,
-                "scope": "email openid",
-                "redirect_uri": MFE_AUTH_CALLBACK,
-                "code_challenge_method": "S256",
-                "code_challenge": code_challenge,
-            }
-            login_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
-
-            # (2) GET login page (cookies, form)
-            with session.get(login_url, timeout=30) as r:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: GET login page -> %s", r.status_code)
-                login_page_html = r.text
-                login_page_url = r.url
-
-            if not login_page_url.startswith(LOGIN_BASE):
-                _LOGGER.warning("SolarEdge One: login page not on login.solaredge.com: %s", login_page_url)
-                raise requests.RequestException("Login page redirect failed")
-
-            # (3) Build POST body: use parsed form hidden fields if any, then add credentials.
-            # Do not duplicate URL query params in body (can cause 400). Only add username/password.
-            form_action, _, form_inputs = _parse_login_form(login_page_html)
-            # Start from parsed hidden fields only (no URL params) so we don't send duplicate client_id etc.
-            post_body = {k: v for k, v in (form_inputs or {}).items() if k not in ("username", "password", "email")}
-            post_body["username"] = self.username
-            post_body["password"] = self.password
-
-            post_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
-            post_headers = {
-                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-                "Accept": "*/*",
-                "Origin": LOGIN_BASE,
-                "Referer": login_page_url,
-            }
-
-            # (4) POST credentials (allow_redirects to capture callback URL with code)
-            with session.post(post_url, data=post_body, headers=post_headers, timeout=30, allow_redirects=True) as r:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: POST login -> %s, URL: %s", r.status_code, r.url)
-                if r.status_code >= 400:
-                    body_preview = (r.text or "")[:500]
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug("SolarEdge One: login POST %s response: %s", r.status_code, body_preview)
-                final_url = r.url
-                if r.status_code == 204 and "Location" in r.headers:
-                    callback_url = r.headers["Location"]
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug("SolarEdge One: 204 response, following Location: %s", callback_url)
-                    with session.get(callback_url, timeout=30, allow_redirects=True) as r2:
-                        final_url = r2.url
-
-            # (5) Extract code from callback URL
-            if MFE_AUTH_CALLBACK not in final_url:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: did not reach callback (final URL: %s)", final_url)
-                raise requests.RequestException("OAuth callback failed")
-            parsed_cb = urlparse(final_url)
-            q = parse_qs(parsed_cb.query)
-            code = (q.get("code") or [None])[0]
-            if not code:
-                _LOGGER.warning("SolarEdge One: no code in callback URL")
-                raise requests.RequestException("OAuth callback missing code")
-
-            # (6) Exchange code for tokens at /oauth2/token
-            token_data = {
-                "grant_type": "authorization_code",
-                "code": code,
-                "client_id": SOLAREDGE_ONE_CLIENT_ID,
-                "redirect_uri": MFE_AUTH_CALLBACK,
-                "code_verifier": code_verifier,
-            }
-            token_headers = {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "*/*",
-                "Origin": BASE_URL,
-                "Referer": f"{BASE_URL}/",
-                "User-Agent": session.headers["User-Agent"],
-            }
-            with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=30) as r:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: POST oauth2/token -> %s", r.status_code)
-                r.raise_for_status()
-                tok = r.json()
-            self._access_token = tok.get("access_token")
-            self._refresh_token = tok.get("refresh_token")
-            if not self._access_token:
-                _LOGGER.warning("SolarEdge One: token response missing access_token")
-                raise requests.RequestException("No access_token in token response")
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: OAuth login complete, access token obtained")
-            return self._access_token
+            self._access_token, self._refresh_token = _perform_oauth_pkce_login(
+                session, self.username, self.password
+            )
+        return self._access_token
 
     def _request_headers(self):
         """Headers for /services/ requests; use Bearer token from OAuth."""
@@ -758,9 +760,11 @@ class solaredge_one:
                             serials.append(opt.optimizerId)
                 result = {}
                 today = datetime.now().strftime("%Y-%m-%d")
-                # Use a long start date to get lifetime
                 start_date = "2010-01-01"
-                for serial in serials:
+                # Fetch lifetime energy in parallel to avoid 50+ sequential calls (each ~18–20s)
+                max_workers = min(os.cpu_count() or 4, len(serials), 10)
+
+                def _fetch_one_lifetime(serial):
                     try:
                         path = f"/services/layout/energy-graph/site/{self.siteid}/optimizers"
                         params = {
@@ -772,9 +776,17 @@ class solaredge_one:
                         data = self._get(path, params=params, timeout=30)
                         total_wh = data.get("totalEnergy")
                         if total_wh is not None:
-                            result[str(serial)] = {"unscaledEnergy": float(total_wh)}
+                            return (str(serial), {"unscaledEnergy": float(total_wh)})
                     except Exception as e:  # pylint: disable=broad-except
                         _LOGGER.warning("SolarEdge One: Lifetime energy for %s failed: %s", serial, e)
+                    return (str(serial), None)
+
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_to_serial = {executor.submit(_fetch_one_lifetime, s): s for s in serials}
+                    for future in as_completed(future_to_serial):
+                        serial, entry = future.result()
+                        if entry is not None:
+                            result[serial] = entry
 
                 self._lifetime_energy_cache = result
                 self._lifetime_energy_cache_time = now
