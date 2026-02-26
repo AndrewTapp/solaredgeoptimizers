@@ -58,6 +58,9 @@
       "optimizer_voltage": {
         "name": "Τάση βελτιστοποιητή"
       },
+      "temperature": {
+        "name": "Θερμοκρασία"
+      },
       "lifetime_energy": {
         "name": "Συνολική ενέργεια"
       },
