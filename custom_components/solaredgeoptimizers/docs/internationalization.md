@@ -6,7 +6,7 @@ This document describes how the SolarEdge Optimizers integration supports multip
 
 ### Config flow (add-integration)
 
-- **Form labels**: Site id, Username, Password, **Use SolarEdge One portal** (from `config.step.user.data.use_solaredge_one`), Entity ID prefix (optional), Include Site ID in Entity ID — from `config.step.user.data.*` in each `translations/<code>.json`.
+- **Form labels**: Site id, Username, Password, Entity ID prefix (optional), Include Site ID in Entity ID — from `config.step.user.data.*` in each `translations/<code>.json`.
 - **Errors**: "Failed to connect", "Invalid authentication", "Unexpected error" — from `config.error.*`.
 - **Abort**: "Device is already configured" — from `config.abort.already_configured`. Re-auth flow: `config.abort.reauth_successful`, `config.abort.reauth_entry_missing`.
 - **Re-authentication step**: When credentials expire, the re-auth form (title, description, username, password) — from `config.step.reauth_confirm`.
@@ -19,7 +19,7 @@ This document describes how the SolarEdge Optimizers integration supports multip
 
 ### Entities and devices
 
-- **Sensor entity names**: Power, Voltage, Current, Last measurement, Lifetime energy, Optimizer voltage, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Last polled — from `entity.sensor.<translation_key>.name`.
+- **Sensor entity names**: Power, Voltage, Current, Optimizer voltage, Temperature, Lifetime energy, Last measurement, Last polled, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Obtained from — from `entity.sensor.<translation_key>.name`.
 - **Device names**: Site, Inverter, String, Optimizer device names use `device.site_device`, `device.inverter_device`, `device.string_device`, `device.optimizer_device` with placeholders `{site_id}` or `{display_name}`. Display names follow the hierarchy Site [site], Inverter [site].[i], String [site].[i].[s], Optimizer [site].[i].[s].[o] so multiple sites stay distinct; labels (e.g. "Site", "Wechselrichter") are translated.
 
 ### API requests
@@ -34,7 +34,7 @@ This document describes how the SolarEdge Optimizers integration supports multip
 
 ## Supported languages
 
-See the [Translations](../../README.md#translations) section in the main README for the full list of language codes (en, nl, de, fr, es, it, pl, pt, sv, cs, tr, el, hu, ru, zh, ja, da, nb, fi).
+See the [Translations](../README.md#translations) section in the main README for the full list of language codes (cs, da, de, el, en, es, fi, fr, hu, it, ja, nb, nl, pl, pt, ru, sv, tr, zh).
 
 ## Adding a new language
 
