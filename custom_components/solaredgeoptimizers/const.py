@@ -20,6 +20,10 @@ CHECK_TIME_DELTA = timedelta(hours=2)  # Legacy API: treat live values as stale 
 CHECK_TIME_DELTA_SOLAREDGE_ONE = timedelta(hours=1)  # SolarEdge One: 1 hour stale threshold
 # When data is from legacy API, re-try One this often so we revert to One when it becomes available
 REVERT_TO_ONE_RETRY_INTERVAL = timedelta(minutes=30)
+# Adaptive polling: min interval between light check and full refresh trigger (avoid thundering herd)
+LIGHT_CHECK_MIN_INTERVAL = timedelta(minutes=2)
+# Site lifetime: use portal total when aggregated optimizer data is below this (kWh)
+RELIABLE_THRESHOLD_KWH = 100.0
 
 SENSOR_TYPE_CURRENT = "Current"
 SENSOR_TYPE_OPT_VOLTAGE = "Optimizer_voltage"
@@ -30,6 +34,7 @@ SENSOR_TYPE_LASTMEASUREMENT = "Last_Measurement"
 SENSOR_TYPE_LASTPOLLED = "Last_Polled"
 SENSOR_TYPE_CHILD_COUNT = "Child_count"
 SENSOR_TYPE_ACTIVE_CHILD_COUNT = "Active_child_count"
+SENSOR_TYPE_TEMPERATURE = "Temperature"
 
 # Sensors for individual optimizers
 SENSOR_TYPE_INDIVIDUAL = [
@@ -37,6 +42,7 @@ SENSOR_TYPE_INDIVIDUAL = [
     SENSOR_TYPE_OPT_VOLTAGE,
     SENSOR_TYPE_POWER,
     SENSOR_TYPE_VOLTAGE,
+    SENSOR_TYPE_TEMPERATURE,
     SENSOR_TYPE_ENERGY,
     SENSOR_TYPE_LASTMEASUREMENT,
 ]
