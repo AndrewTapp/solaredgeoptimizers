@@ -590,6 +590,51 @@ class MyCoordinator(DataUpdateCoordinator):
             return True
         return (now_utc - self._last_light_check_utc) >= desired_interval
 
+    async def _fetch_light_check_rep_list(self):
+        """Fetch representative optimizer data for light check (batch or single). Returns list of data items."""
+        if self._light_check_optimizer_ids and self._has_batch_api:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "Adaptive polling lightweight check (batch, %d optimizers)",
+                    len(self._light_check_optimizer_ids),
+                )
+            return await self.hass.async_add_executor_job(
+                self.my_api.requestSystemDataBatch,
+                self._light_check_optimizer_ids,
+            )
+        rep_list = []
+        if self._representative_optimizer_id:
+            rep_info = await self.hass.async_add_executor_job(
+                self.my_api.requestSystemData,
+                self._representative_optimizer_id,
+            )
+            rep_list = [rep_info] if rep_info else []
+        if _LOGGER.isEnabledFor(logging.DEBUG) and self._representative_optimizer_id:
+            _LOGGER.debug(
+                "Adaptive polling lightweight check (opt_id=%s)",
+                self._representative_optimizer_id,
+            )
+        return rep_list
+
+    def _light_check_should_trigger_full_refresh(self, rep_list, latest_measurement, now_utc) -> bool:
+        """True if any rep_list item has newer lastmeasurement and cooldown passed."""
+        for rep_info in rep_list or []:
+            rep_lm = getattr(rep_info, "lastmeasurement", None) if rep_info else None
+            if not isinstance(rep_lm, datetime):
+                continue
+            if latest_measurement is not None and rep_lm <= latest_measurement:
+                continue
+            if self._last_full_fetch_utc is not None and (now_utc - self._last_full_fetch_utc) < LIGHT_CHECK_MIN_INTERVAL:
+                continue
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "Adaptive polling detected new data (rep_last=%s > latest=%s); scheduling full refresh",
+                    rep_lm,
+                    latest_measurement,
+                )
+            return True
+        return False
+
     async def _run_light_check(self, now_utc, latest_measurement) -> bool:
         """
         Run lightweight check (batch or single optimizer). Return True if caller should set do_full_refresh.
@@ -597,43 +642,8 @@ class MyCoordinator(DataUpdateCoordinator):
         """
         self._last_light_check_utc = now_utc
         try:
-            if self._light_check_optimizer_ids and self._has_batch_api:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "Adaptive polling lightweight check (batch, %d optimizers)",
-                        len(self._light_check_optimizer_ids),
-                    )
-                rep_list = await self.hass.async_add_executor_job(
-                    self.my_api.requestSystemDataBatch,
-                    self._light_check_optimizer_ids,
-                )
-            else:
-                rep_list = []
-                if self._representative_optimizer_id:
-                    rep_info = await self.hass.async_add_executor_job(
-                        self.my_api.requestSystemData,
-                        self._representative_optimizer_id,
-                    )
-                    rep_list = [rep_info] if rep_info else []
-                if _LOGGER.isEnabledFor(logging.DEBUG) and self._representative_optimizer_id:
-                    _LOGGER.debug(
-                        "Adaptive polling lightweight check (opt_id=%s)",
-                        self._representative_optimizer_id,
-                    )
-            for rep_info in rep_list or []:
-                rep_lm = getattr(rep_info, "lastmeasurement", None) if rep_info else None
-                if isinstance(rep_lm, datetime) and (
-                    latest_measurement is None or rep_lm > latest_measurement
-                ):
-                    if self._last_full_fetch_utc is None or (now_utc - self._last_full_fetch_utc) >= LIGHT_CHECK_MIN_INTERVAL:
-                        if _LOGGER.isEnabledFor(logging.DEBUG):
-                            _LOGGER.debug(
-                                "Adaptive polling detected new data (rep_last=%s > latest=%s); scheduling full refresh",
-                                rep_lm,
-                                latest_measurement,
-                            )
-                        return True
-            return False
+            rep_list = await self._fetch_light_check_rep_list()
+            return self._light_check_should_trigger_full_refresh(rep_list, latest_measurement, now_utc)
         except Exception as e:  # pylint: disable=broad-except
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("Lightweight update check failed: %s", e)
@@ -739,8 +749,8 @@ class MyCoordinator(DataUpdateCoordinator):
         so entities can quickly look up their data.
         """
         try:
-            # Allow up to 10 min for sites with many optimizers (lifetime energy can be many sequential requests)
-            async with asyncio.timeout(600):
+            # Allow up to 15 min for initial/cold-cache refresh (many optimizers + lifetime energy fetch)
+            async with asyncio.timeout(900):
                 now_utc = datetime.now(timezone.utc)
                 current_data = getattr(self, "data", None)
                 is_data_dict = isinstance(current_data, dict)
