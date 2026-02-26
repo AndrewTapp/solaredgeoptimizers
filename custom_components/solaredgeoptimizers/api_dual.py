@@ -55,7 +55,7 @@ class SolarEdgeDualAPI:
         """Prefer One for layout; fall back to legacy on failure."""
         try:
             return self._one.requestListOfAllPanels()
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             _LOGGER.warning("SolarEdge Dual API: One requestListOfAllPanels failed (%s), trying legacy", e)
             return self._legacy.requestListOfAllPanels()
 
@@ -79,7 +79,7 @@ class SolarEdgeDualAPI:
         data_list = None
         try:
             data_list = self._one.requestAllData()
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             _LOGGER.warning(
                 "SolarEdge Dual API: One requestAllData failed (%s), falling back to legacy",
                 e,
@@ -99,7 +99,7 @@ class SolarEdgeDualAPI:
                 "SolarEdge Dual API: Using Legacy API data (One had no valid measurements or failed)"
             )
             return data_list or []
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             _LOGGER.error("SolarEdge Dual API: Legacy requestAllData also failed: %s", e)
             # Return One result if we have it (even if invalid) so UI doesn't break
             if data_list is not None:
