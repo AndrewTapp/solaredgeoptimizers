@@ -58,6 +58,9 @@
       "optimizer_voltage": {
         "name": "Tensione ottimizzatore"
       },
+      "temperature": {
+        "name": "Temperatura"
+      },
       "lifetime_energy": {
         "name": "Energia totale"
       },
