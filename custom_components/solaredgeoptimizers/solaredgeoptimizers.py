@@ -112,22 +112,22 @@ def _parse_system_data_json(json_object, item_id, timezone):
     if not isinstance(json_object, dict):
         _LOGGER.error("Unexpected data type returned for optimizer %s: %s", item_id, type(json_object))
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Response data: %s", json_object)
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Response data: %s", json_object)
         return None
     if json_object.get("lastMeasurementDate") == "":
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Skipping optimizer %s without measurements", item_id)
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Skipping optimizer %s without measurements", item_id)
         return None
     try:
         return SolarEdgeOptimizerData(item_id, json_object, timezone)
     except KeyError as e:
         _LOGGER.error("Missing expected key in response for optimizer %s: %s", item_id, e)
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Response data: %s", json_object)
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Response data: %s", json_object)
         return None
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Response data: %s", json_object)
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Response data: %s", json_object)
         raise Exception("Error while processing data") from e
 
 
@@ -363,7 +363,7 @@ class solaredgeoptimizers:
                 _LOGGER.info("SolarEdge Optimizers: Login check completed - Status: %s", r.status_code)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("SolarEdge Optimizers: Login check response headers: %s", dict(r.headers))
-                    _LOGGER.debug("Login check response body length: %s bytes", len(r.text))
+                    _LOGGER.debug("SolarEdge Optimizers: Login check response body length: %s bytes", len(r.text))
                 return r.status_code
         except requests.exceptions.Timeout as e:
             _LOGGER.error("SolarEdge Optimizers: Login check timed out after 30s: %s", e)
@@ -374,7 +374,7 @@ class solaredgeoptimizers:
         except requests.exceptions.RequestException as e:
             _LOGGER.error("SolarEdge Optimizers: Login check request error: %s", e)
             raise
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             _LOGGER.error("SolarEdge Optimizers: Login check unexpected error: %s", e)
             raise
 
@@ -412,7 +412,7 @@ class solaredgeoptimizers:
         except requests.exceptions.RequestException as e:
             _LOGGER.error("SolarEdge Optimizers: Logical layout request error: %s", e)
             raise
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             _LOGGER.error("SolarEdge Optimizers: Logical layout unexpected error: %s", e)
             raise
 
@@ -445,7 +445,7 @@ class solaredgeoptimizers:
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("SolarEdge Optimizers: Raw layout data: %s", raw_layout[:1000] if len(raw_layout) > 1000 else raw_layout)
                 raise
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.error("SolarEdge Optimizers: Unexpected error in requestListOfAllPanels: %s", e)
                 raise
         else:
@@ -537,7 +537,7 @@ class solaredgeoptimizers:
                     if info is not None:
                         _apply_lifetime_energy_to_optimizer_info(info, optimizer_id, lifetimeenergy)
                         data.append(info)
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-except
                     _LOGGER.error("Error fetching data for optimizer %s: %s", optimizer_id, e)
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -579,7 +579,7 @@ class solaredgeoptimizers:
         try:
             # Note: the timestamp provided by SolarEdge is not a pure POSIX timestamp, but in fact contains a timezone offset.
             return {datetime.utcfromtimestamp(pair['date']/1000).astimezone(pytz.utc): pair['value'] for pair in json_object['dateValuePairs']}
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             raise Exception("Error while processing data") from e
 
     def requestPanelHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
@@ -740,7 +740,7 @@ class solaredgeoptimizers:
                 self._thread_local.session.close()
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("Closed thread-local session")
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.warning("Error closing thread-local session: %s", e)
             finally:
                 self._thread_local.session = None
@@ -991,7 +991,7 @@ class SolarEdgeOptimizerData:
     __slots__ = (
         '_timezone', '_json_obj', '_has_valid_measurements', 'serialnumber', 'panel_id', 'panel_description',
         'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage',
-        'power', 'voltage', 'lifetime_energy'
+        'power', 'voltage', 'temperature', 'lifetime_energy'
     )
 
     def __init__(self, panelid, json_object, timezone=None, has_valid_measurements=None):
@@ -1012,6 +1012,7 @@ class SolarEdgeOptimizerData:
         self.optimizer_voltage = ""
         self.power = ""
         self.voltage = ""
+        self.temperature = ""
         self.lifetime_energy = ""
 
         if panelid is not None:
