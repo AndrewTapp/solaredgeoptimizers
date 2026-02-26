@@ -77,7 +77,7 @@ async def validate_input(
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
         _LOGGER.warning("Connection or timeout during login check: %s", e)
         raise CannotConnect from e
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         _LOGGER.exception("Login check failed: %s", e)
         raise CannotConnect from e
 
