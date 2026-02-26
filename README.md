@@ -5,7 +5,7 @@
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.me/AndrewJTapp)
 [![Donate](https://img.shields.io/badge/Donate-BuyMeACoffee-green.svg)](https://buymeacoffee.com/andrewtapp)
 
-This integration brings your SolarEdge optimizer data from the SolarEdge monitoring portal into Home Assistant. You can see current production, voltage, power, and lifetime energy at the level of individual optimizers, strings, inverters, or the whole site.
+This integration brings your SolarEdge optimizer data from the SolarEdge monitoring portal into Home Assistant. You can see current production, voltage, power, temperature (SolarEdge One only), and lifetime energy at the level of individual optimizers, strings, inverters, or the whole site.
 
 **📖 [Technical documentation (Wiki)](https://github.com/AndrewTapp/solaredgeoptimizers/wiki)** — architecture, data flow, sensors reference, troubleshooting, and more.
 
@@ -50,6 +50,7 @@ Your solar system is organised in a simple hierarchy. Device and entity names in
 ### Per optimizer (each panel)
 
 - **Voltage**, **Current**, **Optimizer voltage**, **Power** – Live values when the optimizer is reporting.
+- **Temperature** – Optimizer temperature (°C), from the SolarEdge One API (layout/energy by-inverter with `include-max-temperature`). Only available when using the One API; shown as “unknown” when missing or when using the legacy API. When the integration is not doing a full refresh (e.g. reusing data after a light check), it still refreshes temperatures about every 15 minutes via a cached API call, so temperature stays up to date even when power/voltage are not updating.
 - **Lifetime energy** – Total energy produced (kWh); this only goes up over time. The integration uses the API’s raw energy value (unscaledEnergy, in Wh) so it updates correctly regardless of how the portal displays units (Wh/kWh/MWh). When optimizer-level lifetime data is reliable, site lifetime is the sum of optimizers; when it is not (e.g. mixed or missing data), the site uses the portal’s total directly.
 - **Last measurement** – When the portal last had a reading for this optimizer.
 
@@ -72,12 +73,24 @@ Names are kept short (e.g. “Current (average)”, “Power”) because the dev
 - The integration checks for new data every few minutes. It does a lightweight check (one or a few optimizers) to see if the portal has new readings; when it detects new data, a full refresh runs so all sensors update. When using **SolarEdge One**, up to five optimizers are chosen at random for each check so different orientations and shade don't block updates; when falling back to the legacy API, a single representative optimizer is used for the light check. When data is currently from the **legacy** API, the integration also forces a full refresh **every 30 minutes** so it re-tries the SolarEdge One API and can switch back to One when it becomes available again.
 - **Lifetime energy** is only refreshed from the portal about once per hour, because that value changes slowly. It is derived from the API’s unscaled energy (Wh), not the display units, so values update correctly. Totals for strings, inverters, and the site are calculated from that data.
 
-So in normal use you see updates every few minutes when the portal has new data, and lifetime energy at most once per hour.
+- **Temperature** (SolarEdge One only): When the integration does not perform a full refresh (e.g. it reuses existing data after a light check), it still refreshes optimizer temperatures about every 15 minutes via a cached temperature API. So temperature sensors stay updated even when power, voltage, and current are not being refreshed.
+
+So in normal use you see updates every few minutes when the portal has new data; temperature (when using One API) is refreshed about every 15 minutes even when there is no full refresh, and lifetime energy at most once per hour.
 
 ## When an Optimizer Is Offline or Not Reporting
 
 - If the **last measurement** is older than the stale threshold, **Voltage**, **Current**, **Optimizer voltage**, and **Power** are shown as **0** for that optimizer (and any aggregates that depend on it). This avoids showing stale “live” values. The threshold is **1 hour** when data is from **One API** and **2 hours** when from **Legacy API**. Check the **Obtained from** sensor to see which API is in use.
+- **Temperature** (when available from SolarEdge One) is not zeroed when stale; it shows the last known value or “unknown” if missing.
 - **Lifetime energy** and **Last measurement** always show the last known values, so you can still see historical production even when a panel is temporarily offline.
+
+## Replacing optimizers or inverters (hardware swap)
+
+When an optimizer or inverter is replaced (e.g. after a hardware failure), the integration keeps **one device and one set of sensors per logical position**. Devices and entities are identified by position (e.g. inverter 1, string 1, optimizer 17), not by serial number. So when you swap in new hardware at the same position:
+
+- The **same** sensor (e.g. Power for optimizer 1.1.17) continues to show data; after the next refresh it shows the **new** unit’s values. No duplicate entities.
+- Inverter and string devices are also identified by position, so replacing an inverter does not create a second inverter device. String and inverter sensors attach to those same position-based devices, so the hierarchy (site → inverter → string → optimizer) stays correct.
+
+If you already see duplicate sensors or devices from an earlier swap, remove the integration (**Settings → Devices & services → Integrations** → SolarEdge Optimizers → **Delete**) and add it again. That cleans up the registry and leaves a single set of position-based devices and sensors.
 
 ## One config entry per site
 
@@ -90,6 +103,8 @@ If your SolarEdge credentials expire or become invalid (for example after a pass
 ## Reliability and Errors
 
 - Temporary problems on SolarEdge’s servers (e.g. HTTP 5xx errors) or network/DNS issues (e.g. “Failed to resolve monitoring.solaredge.com”) are handled without crashing: the integration uses cached data where possible and will try again on the next update.
+- If the inverter information API returns **403 Forbidden** (e.g. some accounts lack that permission), the integration still works: inverter and optimizer devices use position-based identity, so model names may be missing but all sensors and devices function.
+- A full refresh can take several minutes on sites with many optimizers (lifetime energy is fetched per optimizer). The integration allows up to **10 minutes** for a full refresh before timing out.
 - Connections and sessions are closed properly when the integration is removed or reloaded, so it's safe to run for long periods.
 - When you **delete the integration** (remove the config entry), the integration removes all associated entities and devices from the registries via a shared cleanup routine (used by both the config flow and unload), so no leftover entries remain. Delete from **Settings → Devices & services → Integrations** (not only from HACS) so that this cleanup runs.
 
@@ -130,7 +145,7 @@ logger:
     solaredgeoptimizers: debug
 ```
 
-Restart Home Assistant for the change to take effect. Debug logging covers the full lifecycle: config flow (user form, validation, unique_id check, entry creation, reauth form, options/reconfigure form when showing or saving, removal), setup and unload (dual API, coordinator, platform forward, API session close, registry cleanup), coordinator updates (inverter models fetch, device creation with model, adaptive polling, full refresh vs reuse, obtained_from source, revert-to-One retry every 30 min when data from legacy, representative optimizers or random batch, lifetime energy entries, update complete), sensor setup (base_name, include_site_id, per-optimizer serial/model, aggregated sensors, obtained_from sensor, entity count), and API requests (SolarEdge One: OAuth, token, GET/POST to /services/, optimizer/inverter information, cache hit/miss; legacy: login, layout, system data, lifetime energy; dual API: fallback to legacy when One has no valid measurements or fails). All debug output is guarded so there is no performance cost when the log level is `info`. Turn logging back to `info` when you are done.
+Restart Home Assistant for the change to take effect. Debug logging covers the full lifecycle: config flow (user form, validation, unique_id check, entry creation, reauth form, options/reconfigure form when showing or saving, removal), setup and unload (dual API, coordinator, platform forward, API session close, registry cleanup), coordinator updates (inverter models fetch, device creation with model, adaptive polling, full refresh vs reuse, obtained_from source, revert-to-One retry every 30 min when data from legacy, representative optimizers or random batch, lifetime energy entries, update complete), sensor setup (base_name, include_site_id, per-optimizer serial/model, aggregated sensors, obtained_from sensor, entity count), and API requests (SolarEdge One: OAuth, token, GET/POST to /services/, optimizer/inverter information, cache hit/miss; legacy: login, layout, system data, lifetime energy; dual API: fallback to legacy when One has no valid measurements or fails). All debug output is guarded with `isEnabledFor(logging.DEBUG)`, so there is no performance cost when the log level is `info`. Debug messages use consistent prefixes (e.g. `SolarEdge Optimizers`, `SolarEdge Optimizers coordinator`, `SolarEdge Optimizers sensor`, `SolarEdge One`, `SolarEdge Optimizers (legacy)`) so you can filter logs easily. Turn logging back to `info` when you are done.
 
 ## Translations
 
