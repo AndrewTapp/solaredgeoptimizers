@@ -73,7 +73,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except (ConnectTimeout, HTTPError) as ex:
         LOGGER.error("SolarEdge Optimizers: Could not retrieve details from SolarEdge API: %s", ex)
         raise ConfigEntryNotReady from ex
-    except Exception as ex:
+    except Exception as ex:  # pylint: disable=broad-except
         LOGGER.error("SolarEdge Optimizers: Unexpected error during login check: %s", ex)
         raise ConfigEntryNotReady from ex
 
@@ -103,7 +103,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_config_entry_first_refresh()
         LOGGER.info("SolarEdge Optimizers: Initial coordinator refresh completed successfully")
-    except Exception as ex:
+    except Exception as ex:  # pylint: disable=broad-except
         LOGGER.error("SolarEdge Optimizers: Initial coordinator refresh failed: %s", ex)
         raise
 
