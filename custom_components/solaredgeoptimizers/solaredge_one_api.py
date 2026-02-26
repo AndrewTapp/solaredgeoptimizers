@@ -85,8 +85,9 @@ def _parse_login_form(html: str):
     parser = _FormParser()
     try:
         parser.feed(html)
-    except Exception as e:
-        _LOGGER.debug("HTML form parse error (non-fatal): %s", e)
+    except Exception as e:  # pylint: disable=broad-except
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: HTML form parse error (non-fatal): %s", e)
     return parser.form_action, parser.form_method, parser.inputs
 
 
@@ -242,6 +243,9 @@ class solaredge_one:
         self._lifetime_energy_cache = None
         self._lifetime_energy_cache_time = None
         self._lifetime_energy_cache_ttl = timedelta(hours=1)
+        self._temperature_cache = None
+        self._temperature_cache_time = None
+        self._temperature_cache_ttl = timedelta(minutes=15)
         self._access_token = None
         self._refresh_token = None
 
@@ -255,101 +259,104 @@ class solaredge_one:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: No token; starting OAuth PKCE login flow")
         code_verifier, code_challenge = _pkce_verifier_and_challenge()
-        session = Session()
-        session.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+        with Session() as session:
+            session.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
-        # (1) Build login URL with our PKCE challenge (so we can exchange code with our verifier)
-        login_params = {
-            "lang": "en",
-            "response_type": "code",
-            "client_id": SOLAREDGE_ONE_CLIENT_ID,
-            "scope": "email openid",
-            "redirect_uri": MFE_AUTH_CALLBACK,
-            "code_challenge_method": "S256",
-            "code_challenge": code_challenge,
-        }
-        login_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
+            # (1) Build login URL with our PKCE challenge (so we can exchange code with our verifier)
+            login_params = {
+                "lang": "en",
+                "response_type": "code",
+                "client_id": SOLAREDGE_ONE_CLIENT_ID,
+                "scope": "email openid",
+                "redirect_uri": MFE_AUTH_CALLBACK,
+                "code_challenge_method": "S256",
+                "code_challenge": code_challenge,
+            }
+            login_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
 
-        # (2) GET login page (cookies, form)
-        with session.get(login_url, timeout=30) as r:
-            _LOGGER.debug("SolarEdge One GET login page -> %s", r.status_code)
-            login_page_html = r.text
-            login_page_url = r.url
-
-        if not login_page_url.startswith(LOGIN_BASE):
-            _LOGGER.warning("SolarEdge One: login page not on login.solaredge.com: %s", login_page_url)
-            raise requests.RequestException("Login page redirect failed")
-
-        # (3) Build POST body: use parsed form hidden fields if any, then add credentials.
-        # Do not duplicate URL query params in body (can cause 400). Only add username/password.
-        form_action, _, form_inputs = _parse_login_form(login_page_html)
-        # Start from parsed hidden fields only (no URL params) so we don't send duplicate client_id etc.
-        post_body = {k: v for k, v in (form_inputs or {}).items() if k not in ("username", "password", "email")}
-        post_body["username"] = self.username
-        post_body["password"] = self.password
-
-        post_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
-        post_headers = {
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            "Accept": "*/*",
-            "Origin": LOGIN_BASE,
-            "Referer": login_page_url,
-        }
-
-        # (4) POST credentials (allow_redirects to capture callback URL with code)
-        with session.post(post_url, data=post_body, headers=post_headers, timeout=30, allow_redirects=True) as r:
-            _LOGGER.debug("SolarEdge One POST login -> %s, URL: %s", r.status_code, r.url)
-            if r.status_code >= 400:
-                body_preview = (r.text or "")[:500]
-                # DEBUG: when using dual-API, login failure is expected and legacy is used; avoid log spam
-                _LOGGER.debug("SolarEdge One login POST %s response: %s", r.status_code, body_preview)
-            final_url = r.url
-            if r.status_code == 204 and "Location" in r.headers:
-                callback_url = r.headers["Location"]
+            # (2) GET login page (cookies, form)
+            with session.get(login_url, timeout=30) as r:
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: 204 response, following Location: %s", callback_url)
-                with session.get(callback_url, timeout=30, allow_redirects=True) as r2:
-                    final_url = r2.url
+                    _LOGGER.debug("SolarEdge One: GET login page -> %s", r.status_code)
+                login_page_html = r.text
+                login_page_url = r.url
 
-        # (5) Extract code from callback URL
-        if MFE_AUTH_CALLBACK not in final_url:
-            # DEBUG: when using dual-API, One login failure is expected and legacy is used; avoid log spam
-            _LOGGER.debug("SolarEdge One: did not reach callback (final URL: %s)", final_url)
-            raise requests.RequestException("OAuth callback failed")
-        parsed_cb = urlparse(final_url)
-        q = parse_qs(parsed_cb.query)
-        code = (q.get("code") or [None])[0]
-        if not code:
-            _LOGGER.warning("SolarEdge One: no code in callback URL")
-            raise requests.RequestException("OAuth callback missing code")
+            if not login_page_url.startswith(LOGIN_BASE):
+                _LOGGER.warning("SolarEdge One: login page not on login.solaredge.com: %s", login_page_url)
+                raise requests.RequestException("Login page redirect failed")
 
-        # (6) Exchange code for tokens at /oauth2/token
-        token_data = {
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": SOLAREDGE_ONE_CLIENT_ID,
-            "redirect_uri": MFE_AUTH_CALLBACK,
-            "code_verifier": code_verifier,
-        }
-        token_headers = {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "*/*",
-            "Origin": BASE_URL,
-            "Referer": f"{BASE_URL}/",
-            "User-Agent": session.headers["User-Agent"],
-        }
-        with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=30) as r:
-            _LOGGER.debug("SolarEdge One POST oauth2/token -> %s", r.status_code)
-            r.raise_for_status()
-            tok = r.json()
-        self._access_token = tok.get("access_token")
-        self._refresh_token = tok.get("refresh_token")
-        if not self._access_token:
-            _LOGGER.warning("SolarEdge One: token response missing access_token")
-            raise requests.RequestException("No access_token in token response")
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: OAuth login complete, access token obtained")
-        return self._access_token
+            # (3) Build POST body: use parsed form hidden fields if any, then add credentials.
+            # Do not duplicate URL query params in body (can cause 400). Only add username/password.
+            form_action, _, form_inputs = _parse_login_form(login_page_html)
+            # Start from parsed hidden fields only (no URL params) so we don't send duplicate client_id etc.
+            post_body = {k: v for k, v in (form_inputs or {}).items() if k not in ("username", "password", "email")}
+            post_body["username"] = self.username
+            post_body["password"] = self.password
+
+            post_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
+            post_headers = {
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                "Accept": "*/*",
+                "Origin": LOGIN_BASE,
+                "Referer": login_page_url,
+            }
+
+            # (4) POST credentials (allow_redirects to capture callback URL with code)
+            with session.post(post_url, data=post_body, headers=post_headers, timeout=30, allow_redirects=True) as r:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge One: POST login -> %s, URL: %s", r.status_code, r.url)
+                if r.status_code >= 400:
+                    body_preview = (r.text or "")[:500]
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("SolarEdge One: login POST %s response: %s", r.status_code, body_preview)
+                final_url = r.url
+                if r.status_code == 204 and "Location" in r.headers:
+                    callback_url = r.headers["Location"]
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("SolarEdge One: 204 response, following Location: %s", callback_url)
+                    with session.get(callback_url, timeout=30, allow_redirects=True) as r2:
+                        final_url = r2.url
+
+            # (5) Extract code from callback URL
+            if MFE_AUTH_CALLBACK not in final_url:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge One: did not reach callback (final URL: %s)", final_url)
+                raise requests.RequestException("OAuth callback failed")
+            parsed_cb = urlparse(final_url)
+            q = parse_qs(parsed_cb.query)
+            code = (q.get("code") or [None])[0]
+            if not code:
+                _LOGGER.warning("SolarEdge One: no code in callback URL")
+                raise requests.RequestException("OAuth callback missing code")
+
+            # (6) Exchange code for tokens at /oauth2/token
+            token_data = {
+                "grant_type": "authorization_code",
+                "code": code,
+                "client_id": SOLAREDGE_ONE_CLIENT_ID,
+                "redirect_uri": MFE_AUTH_CALLBACK,
+                "code_verifier": code_verifier,
+            }
+            token_headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "*/*",
+                "Origin": BASE_URL,
+                "Referer": f"{BASE_URL}/",
+                "User-Agent": session.headers["User-Agent"],
+            }
+            with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=30) as r:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge One: POST oauth2/token -> %s", r.status_code)
+                r.raise_for_status()
+                tok = r.json()
+            self._access_token = tok.get("access_token")
+            self._refresh_token = tok.get("refresh_token")
+            if not self._access_token:
+                _LOGGER.warning("SolarEdge One: token response missing access_token")
+                raise requests.RequestException("No access_token in token response")
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One: OAuth login complete, access token obtained")
+            return self._access_token
 
     def _request_headers(self):
         """Headers for /services/ requests; use Bearer token from OAuth."""
@@ -416,7 +423,16 @@ class solaredge_one:
             # API accepts comma-separated inverter-serials
             params = {"inverter-serials": ",".join(str(s).strip() for s in serials if s)}
             data = self._get(path, params=params, timeout=30)
-        except (requests.HTTPError, requests.RequestException) as e:
+        except requests.HTTPError as e:
+            if e.response is not None and e.response.status_code == 403:
+                _LOGGER.warning(
+                    "SolarEdge One: Inverter information returned 403 Forbidden (insufficient permissions). "
+                    "Inverter model names will not be shown; devices still work with position-based identity."
+                )
+            else:
+                _LOGGER.warning("SolarEdge One: Failed to fetch inverter information: %s", e)
+            return {}
+        except requests.RequestException as e:
             _LOGGER.warning("SolarEdge One: Failed to fetch inverter information: %s", e)
             return {}
         result = {}
@@ -444,7 +460,7 @@ class solaredge_one:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge One: check_login failed with HTTP %s", code)
             return code
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge One: check_login failed: %s", e)
             return 0
@@ -484,6 +500,65 @@ class solaredge_one:
                     now - self._panels_cache_time,
                 )
         return self._panels_cache
+
+    def get_optimizer_temperatures_cached(self):
+        """
+        Return dict optimizer_serial -> temperature (float, Celsius) from layout/energy/site/.../by-inverter
+        with include-max-temperature=true. Cached for 15 minutes.
+        """
+        now = datetime.now()
+        if (
+            self._temperature_cache is not None
+            and self._temperature_cache_time is not None
+            and (now - self._temperature_cache_time) <= self._temperature_cache_ttl
+        ):
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge One: Using cached optimizer temperatures (age: %s)",
+                    now - self._temperature_cache_time,
+                )
+            return self._temperature_cache
+        try:
+            site = self.requestListOfAllPanels()
+            inverter_serials = [inv.serialNumber for inv in site.inverters if getattr(inv, "serialNumber", None)]
+            if not inverter_serials:
+                self._temperature_cache = {}
+                self._temperature_cache_time = now
+                return self._temperature_cache
+            today = now.strftime("%Y-%m-%d")
+            path = f"/services/layout/energy/site/{self.siteid}/by-inverter"
+            params = {
+                "start-date": today,
+                "end-date": today,
+                "inverter-serials": ",".join(inverter_serials),
+                "include-max-temperature": "true",
+            }
+            data = self._get(path, params=params, timeout=30)
+            result = {}
+            for inv_block in data.get("inverters") or []:
+                for opt in inv_block.get("optimizers") or []:
+                    serial = (opt.get("serial") or "").strip()
+                    temp_obj = opt.get("temperature")
+                    if serial and isinstance(temp_obj, dict):
+                        t = temp_obj.get("temperature")
+                        if t is not None:
+                            try:
+                                result[serial] = round(float(t), 1)
+                            except (TypeError, ValueError):
+                                pass
+            self._temperature_cache = result
+            self._temperature_cache_time = now
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge One: Refreshed optimizer temperature cache (%d optimizers)",
+                    len(result),
+                )
+            return result
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.warning("SolarEdge One: Optimizer temperatures fetch failed: %s. Using previous cache.", e)
+            if self._temperature_cache is None:
+                self._temperature_cache = {}
+        return self._temperature_cache or {}
 
     def _build_optimizer_data_from_response(self, item_id: str, live: dict, basic: dict):
         """Build SolarEdgeOptimizerData from API live/basic dicts for one optimizer. Returns None on error."""
@@ -531,7 +606,7 @@ class solaredge_one:
             return SolarEdgeOptimizerData(
                 item_id, json_object, self._timezone, has_valid_measurements=bool(measurements)
             )
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             _LOGGER.error("SolarEdge One: Error building optimizer data for %s: %s", item_id, e)
             return None
 
@@ -563,7 +638,12 @@ class solaredge_one:
         live_map = data.get("serialToLiveData") or {}
         live = live_map.get(item_id) or {}
         basic = next((b for b in basic_list if (b.get("serial") or "").strip() == (item_id or "").strip()), None) or {}
-        return self._build_optimizer_data_from_response(item_id, live, basic)
+        info = self._build_optimizer_data_from_response(item_id, live, basic)
+        if info is not None:
+            temp_map = self.get_optimizer_temperatures_cached()
+            if item_id in temp_map:
+                info.temperature = temp_map[item_id]
+        return info
 
     def requestSystemDataBatch(self, item_ids: list):
         """
@@ -599,6 +679,10 @@ class solaredge_one:
             live = live_map.get(item_id) or {}
             basic = next((b for b in basic_list if (b.get("serial") or "").strip() == (str(item_id) or "").strip()), None) or {}
             result.append(self._build_optimizer_data_from_response(item_id, live, basic))
+        temp_map = self.get_optimizer_temperatures_cached()
+        for i, item_id in enumerate(item_ids):
+            if result[i] is not None and item_id in temp_map:
+                result[i].temperature = temp_map[item_id]
         return result
 
     def requestAllData(self):
@@ -607,6 +691,7 @@ class solaredge_one:
             _LOGGER.debug("SolarEdge One: requestAllData starting")
         site = self.requestListOfAllPanels()
         lifetimeenergy = self.get_lifetime_energy_cached()
+        temperature_map = self.get_optimizer_temperatures_cached()
         optimizer_ids = [
             opt.optimizerId
             for inv in site.inverters
@@ -637,8 +722,10 @@ class solaredge_one:
                             info.lifetime_energy = round(kWh, 3)  # lifetime energy to 3 dp
                         else:
                             info.lifetime_energy = 0.0
+                        if oid in temperature_map:
+                            info.temperature = temperature_map[oid]
                         data.append(info)
-                except Exception as e:
+                except Exception as e:  # pylint: disable=broad-except
                     _LOGGER.error("SolarEdge One: Error fetching data for optimizer %s: %s", oid, e)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: requestAllData complete, %d optimizers with data", len(data))
@@ -686,7 +773,7 @@ class solaredge_one:
                         total_wh = data.get("totalEnergy")
                         if total_wh is not None:
                             result[str(serial)] = {"unscaledEnergy": float(total_wh)}
-                    except Exception as e:
+                    except Exception as e:  # pylint: disable=broad-except
                         _LOGGER.warning("SolarEdge One: Lifetime energy for %s failed: %s", serial, e)
 
                 self._lifetime_energy_cache = result
@@ -697,7 +784,7 @@ class solaredge_one:
                         "SolarEdge One: Decoded lifetime energy data (by optimizer serial): %s",
                         result,
                     )
-            except Exception as e:
+            except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.warning("SolarEdge One: Lifetime energy fetch failed: %s. Using previous cache.", e)
                 if self._lifetime_energy_cache is None:
                     self._lifetime_energy_cache = {}
