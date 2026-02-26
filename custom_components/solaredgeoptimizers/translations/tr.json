@@ -58,6 +58,9 @@
       "optimizer_voltage": {
         "name": "Optimizer gerilimi"
       },
+      "temperature": {
+        "name": "Sıcaklık"
+      },
       "lifetime_energy": {
         "name": "Toplam enerji"
       },
