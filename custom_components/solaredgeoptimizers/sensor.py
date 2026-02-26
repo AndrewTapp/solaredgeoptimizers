@@ -33,6 +33,7 @@ from .const import (
     SENSOR_TYPE_CURRENT,
     SENSOR_TYPE_POWER,
     SENSOR_TYPE_VOLTAGE,
+    SENSOR_TYPE_TEMPERATURE,
     SENSOR_TYPE_ENERGY,
     SENSOR_TYPE_LASTMEASUREMENT,
     SENSOR_TYPE_CHILD_COUNT,
@@ -47,6 +48,7 @@ from homeassistant.const import (
     UnitOfElectricPotential,
     UnitOfElectricCurrent,
     UnitOfEnergy,
+    UnitOfTemperature,
 )
 
 # Changed from absolute import to relative import to use local solaredgeoptimizers.py instead of site-packages version
@@ -194,12 +196,21 @@ def _remove_sensor_entities_for_entry(hass: HomeAssistant, entry: ConfigEntry) -
 
 
 def _build_optimizer_tasks(site):
-    """Build list of (optimizer, inverter, string, inv_idx, str_idx, opt_idx) for all optimizers."""
+    """Build list of (optimizer, inverter, string, inv_idx, str_idx, opt_idx) for all optimizers.
+
+    Deduplicates by (inv_idx, str_idx, opt_idx) so that if the API returns the same logical
+    position twice (e.g. old and new serial after a hardware swap), we create only one sensor set.
+    """
+    seen = set()
     tasks = []
     for inv_idx, inverter in enumerate(site.inverters, start=1):
         _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
         for str_idx, string in enumerate(inverter.strings, start=1):
             for opt_idx, optimizer in enumerate(string.optimizers, start=1):
+                key = (inv_idx, str_idx, opt_idx)
+                if key in seen:
+                    continue
+                seen.add(key)
                 tasks.append((optimizer, inverter, string, inv_idx, str_idx, opt_idx))
     return tasks
 
@@ -299,7 +310,7 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
             string_aggregated.serialnumber = f"String_{string.stringId}"
             string_aggregated.panel_description = string.displayName
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Creating aggregated sensors for string: %s", string.displayName)
+                _LOGGER.debug("SolarEdge Optimizers sensor: Creating aggregated sensors for string: %s", string.displayName)
             for sensortype in SENSOR_TYPE_AGGREGATED_STRING:
                 sensors.append(
                     SolarEdgeAggregatedSensor(
@@ -316,7 +327,7 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
         inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
         inverter_aggregated.panel_description = inverter.displayName
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Creating aggregated sensors for inverter: %s", inverter.displayName)
+            _LOGGER.debug("SolarEdge Optimizers sensor: Creating aggregated sensors for inverter: %s", inverter.displayName)
         for sensortype in SENSOR_TYPE_AGGREGATED_INVERTER:
             sensors.append(
                 SolarEdgeAggregatedSensor(
@@ -332,7 +343,7 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
     site_aggregated.serialnumber = f"Site_{site_struct.siteId}"
     site_aggregated.panel_description = f"Site {site_struct.siteId}"
     if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug("Creating aggregated sensors for site: %s", site_id)
+        _LOGGER.debug("SolarEdge Optimizers sensor: Creating aggregated sensors for site: %s", site_id)
     for sensortype in SENSOR_TYPE_AGGREGATED_SITE:
         sensors.append(
             SolarEdgeAggregatedSensor(
@@ -622,21 +633,34 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
     def _set_aggregated_device_info(
         self, entry: ConfigEntry, panel: SolarEdgeAggregatedData, string, inverter
     ) -> None:
-        """Set device_info based on entity type (string, inverter, or site)."""
+        """Set device_info based on entity type (string, inverter, or site).
+
+        Uses position-based device identifiers so they match the devices created by the
+        coordinator (_register_site_and_inverter_devices) and so hardware swap does not
+        create duplicate or orphaned devices.
+        """
         if panel.entity_type == "string":
+            path = panel.entity_id_path or ()
+            inv_idx = path[-2] if len(path) >= 2 else path[0] if path else 0
+            str_idx = path[-1] if len(path) >= 1 else 0
+            str_device_id = f"{entry.entry_id}_str_{inv_idx}_{str_idx}"
+            inv_device_id = f"{entry.entry_id}_inv_{inv_idx}"
             self._attr_device_info = DeviceInfo(
-                identifiers={(DOMAIN, f"{entry.entry_id}_{string.stringId}")},
+                identifiers={(DOMAIN, str_device_id)},
                 manufacturer="SolarEdge",
                 model=f"STRING {string.displayName}",
                 translation_key="string_device",
                 translation_placeholders={"display_name": str(string.displayName)},
-                via_device=(DOMAIN, inverter.serialNumber),
+                via_device=(DOMAIN, inv_device_id),
             )
         elif panel.entity_type == "inverter":
+            path = panel.entity_id_path or ()
+            inv_idx = path[-1] if len(path) >= 1 else 0
+            inv_device_id = f"{entry.entry_id}_inv_{inv_idx}"
             site_id = self.coordinator._site_structure.siteId if self.coordinator._site_structure else None
             via_device = (DOMAIN, f"site_{site_id}") if site_id else None
             self._attr_device_info = DeviceInfo(
-                identifiers={(DOMAIN, inverter.serialNumber)},
+                identifiers={(DOMAIN, inv_device_id)},
                 translation_key="inverter_device",
                 translation_placeholders={"display_name": str(inverter.displayName)},
                 via_device=via_device,
@@ -751,9 +775,10 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if self.coordinator.data is None:
+        data = self.coordinator.data
+        if data is None:
             return
-        item = self.coordinator.data.get(self._panelobject.panel_id)
+        item = data.get(self._panelobject.panel_id)
         if item is None and _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers sensor: No data for panel_id=%s (%s) in coordinator",
@@ -789,6 +814,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_CURRENT: "current",
         SENSOR_TYPE_OPT_VOLTAGE: "optimizer_voltage",
         SENSOR_TYPE_POWER: "power",
+        SENSOR_TYPE_TEMPERATURE: "temperature",
     }
     # Translation keys for entity names (i18n)
     _TRANSLATION_KEYS = {
@@ -796,6 +822,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_CURRENT: "current",
         SENSOR_TYPE_OPT_VOLTAGE: "optimizer_voltage",
         SENSOR_TYPE_POWER: "power",
+        SENSOR_TYPE_TEMPERATURE: "temperature",
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_LASTMEASUREMENT: "last_measurement",
     }
@@ -855,10 +882,19 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             self.internal_integration_suggested_object_id = f"{self._base_name}{slug}_{path_str}"
 
     def _set_optimizer_device_info(self, entry: ConfigEntry, panel: SolarEdgeOptimizerData, string) -> None:
-        """Set device_info with via_device so optimizer is grouped under string device."""
-        via_device = (DOMAIN, f"{entry.entry_id}_{string.stringId}") if string else None
+        """Set device_info with via_device so optimizer is grouped under string device.
+
+        Uses position-based identifiers so when an optimizer is replaced (hardware swap),
+        the same device and sensors continue to show the new unit's data without duplicates.
+        """
+        # entity_id_path is (inv_idx, str_idx, opt_idx) or (site_id, inv_idx, str_idx, opt_idx)
+        path = self._entity_id_path
+        inv_idx, str_idx, opt_idx = path[-3], path[-2], path[-1] if len(path) >= 3 else (0, 0, 0)
+        opt_device_id = f"{entry.entry_id}_opt_{inv_idx}_{str_idx}_{opt_idx}"
+        str_device_id = f"{entry.entry_id}_str_{inv_idx}_{str_idx}" if string else None
+        via_device = (DOMAIN, str_device_id) if str_device_id else None
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, panel.serialnumber)},
+            identifiers={(DOMAIN, opt_device_id)},
             manufacturer=panel.manufacturer,
             model=panel.model,
             hw_version=panel.serialnumber,
@@ -888,6 +924,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             self._attr_device_class = SensorDeviceClass.POWER
             self._attr_state_class = SensorStateClass.MEASUREMENT
             self._attr_suggested_display_precision = 2
+        elif self._sensor_type is SENSOR_TYPE_TEMPERATURE:
+            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+            self._attr_device_class = SensorDeviceClass.TEMPERATURE
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+            self._attr_suggested_display_precision = 1
         elif self._sensor_type is SENSOR_TYPE_ENERGY:
             self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
             self._attr_device_class = SensorDeviceClass.ENERGY
@@ -943,6 +984,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                     )
         elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             self._attr_native_value = item.lastmeasurement
+        elif self._sensor_type is SENSOR_TYPE_TEMPERATURE:
+            actual_value = getattr(item, "temperature", None)
+            if actual_value is None or actual_value == "":
+                self._attr_native_value = None
+            else:
+                try:
+                    self._attr_native_value = round(float(actual_value), 1)
+                except (TypeError, ValueError):
+                    self._attr_native_value = None
         else:
             attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
             if attr_name:
@@ -967,7 +1017,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                     self._attr_native_value = actual_value
 
     def _zero_optimizer_when_no_data(self) -> None:
-        """Zero native value when coordinator has no data (except energy and lastmeasurement)."""
+        """Zero native value when coordinator has no data (except energy, lastmeasurement, temperature)."""
+        if self._sensor_type in (SENSOR_TYPE_ENERGY, SENSOR_TYPE_LASTMEASUREMENT, SENSOR_TYPE_TEMPERATURE):
+            if self._sensor_type is SENSOR_TYPE_TEMPERATURE:
+                self._attr_native_value = None
+            return
         if (self._sensor_type is not SENSOR_TYPE_ENERGY) and (self._sensor_type is not SENSOR_TYPE_LASTMEASUREMENT):
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
@@ -987,6 +1041,8 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                     num = round(num, 3)
                 elif self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE, SENSOR_TYPE_OPT_VOLTAGE):
                     num = round(num, 2)
+                elif self._sensor_type is SENSOR_TYPE_TEMPERATURE:
+                    num = round(num, 1)
                 self._attr_native_value = num
             except ValueError:
                 if _LOGGER.isEnabledFor(logging.WARNING):
@@ -995,13 +1051,19 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if self.coordinator.data is not None:
-            panel_id = self._panelobject.panel_id
+        data = self.coordinator.data
+        if data is not None:
+            # Look up by logical position first so hardware swap (new serial at same position) keeps same sensor
+            path = self._entity_id_path
+            lookup_key = (path[-3], path[-2], path[-1]) if len(path) >= 3 else None
+            item = data.get(lookup_key) if lookup_key else None
+            if item is None:
+                item = data.get(self._panelobject.panel_id)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "Update the sensor %s - %s with the info from the coordinator", panel_id, self._sensor_type,
+                    "Update the sensor %s - %s with the info from the coordinator",
+                    self._panelobject.panel_id, self._sensor_type,
                 )
-            item = self.coordinator.data.get(panel_id)
             if item is not None:
                 timetocheck, ts = self._timetocheck_and_ts(item)
                 self._update_optimizer_value_from_item(item, timetocheck, ts)
