@@ -1,4 +1,4 @@
-"""SolarEdge API client for Home Assistant integration."""
+"""Legacy SolarEdge Monitoring Portal API client: authentication, site layout (inverters/strings/optimizers), live optimizer data with locale-aware measurement keys, and lifetime energy."""
 import time
 import threading
 import re
@@ -1041,7 +1041,7 @@ class SolarEdgeOptimizerData:
             self._json_obj = json_object
             self.serialnumber = json_object["serialNumber"]
             self.panel_id = panelid
-            self.panel_description = json_object["description"]
+            self.panel_description = json_object.get("description", "")
             rawdate = json_object.get("lastMeasurementDate", "")
             self.lastmeasurement = _parse_last_measurement_date(rawdate, panelid, self._timezone)
             self.model = json_object.get("model", "")
