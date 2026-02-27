@@ -19,7 +19,8 @@
           "username": "ユーザー名（メール）",
           "password": "パスワード",
           "entity_id_prefix": "エンティティ ID プレフィックス（任意）",
-          "include_site_id_in_entity_id": "エンティティ ID にサイト ID を含める"
+          "include_site_id_in_entity_id": "エンティティ ID にサイト ID を含める",
+          "use_solaredge_one": "SolarEdge One を使用する"
         }
       },
       "reauth_confirm": {
@@ -39,7 +40,8 @@
         "description": "現在のプレフィックス: {current_entity_id_prefix}。プレフィックスなしにするには欄を空にしてください。保存すると統合が再読み込みされます。entity ID と unique_id が変わるため、既存エンティティの履歴や統計が失われる場合があります。事前のバックアップまたはデータのエクスポートを検討してください。",
         "data": {
           "entity_id_prefix": "エンティティ ID プレフィックス（任意）",
-          "include_site_id_in_entity_id": "エンティティ ID にサイト ID を含める"
+          "include_site_id_in_entity_id": "エンティティ ID にサイト ID を含める",
+          "use_solaredge_one": "SolarEdge One を使用する"
         }
       }
     }
