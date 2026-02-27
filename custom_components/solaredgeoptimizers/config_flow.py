@@ -1,4 +1,4 @@
-"""Configuration flow for SolarEdge Optimizers Home Assistant integration."""
+"""Config flow for adding and editing the integration: site ID, credentials, entity ID prefix and options, and choice of SolarEdge One vs legacy API."""
 from __future__ import annotations
 
 import logging
