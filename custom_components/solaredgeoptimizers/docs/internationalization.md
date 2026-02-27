@@ -10,7 +10,7 @@ Each `translations/<code>.json` file has four top-level sections. All four must 
 |-----------|---------|
 | **config** | Add-integration form (labels, errors, abort messages, re-auth step), config entry title, integration title. |
 | **options** | Reconfigure (Configure) dialog: title, description, Entity ID prefix, Include Site ID in Entity ID, and Use SolarEdge One labels. |
-| **entity** | Sensor entity names (Power, Voltage, Obtained from, etc.) under `entity.sensor.<key>.name`. |
+| **entity** | Sensor entity names (Power, Voltage, Obtained from, etc.) under `entity.sensor.<key>.name`; attribute labels (e.g. Panel type) under `entity.sensor.state_attributes.<key>.name`. |
 | **device** | Device names (Site, Inverter, String, Optimizer) with placeholders `{site_id}` or `{display_name}` under `device.<key>.name`. |
 
 The integration sets `translation_domain` to the integration domain so the frontend loads these strings. Config entry titles are resolved at runtime via `async_get_translations` in the user's language.
@@ -32,7 +32,8 @@ The integration sets `translation_domain` to the integration domain so the front
 
 ### Entities and devices
 
-- **Sensor entity names**: Power, Voltage, Current, Optimizer voltage, Temperature, Lifetime energy, Last measurement, Last polled, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Obtained from — from `entity.sensor.<translation_key>.name` (e.g. `entity.sensor.power.name`, `entity.sensor.obtained_from.name`).
+- **Sensor entity names**: Power, Voltage, Current, Optimizer voltage, Temperature, Lifetime energy, Last measurement, Last polled, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Obtained from — from `entity.sensor.<translation_key>.name` (e.g. `entity.sensor.power.name`, `entity.sensor.obtained_from.name`). Temperature values are stored in °C (the portal may send °C or °F; the integration normalizes to °C); Home Assistant converts to the user’s preferred unit for display.
+- **Sensor attribute labels**: The **Panel type** attribute (shown on optimizer sensors when the API provides a panel type/description) is translated from `entity.sensor.state_attributes.panel_type.name` in each translation file.
 - **Device names**: Site, Inverter, String, Optimizer device names use `device.site_device`, `device.inverter_device`, `device.string_device`, `device.optimizer_device` with placeholders `{site_id}` or `{display_name}`. Display names follow the hierarchy Site [site], Inverter [site].[i], String [site].[i].[s], Optimizer [site].[i].[s].[o] so multiple sites stay distinct; the labels (e.g. "Site", "Wechselrichter") are translated.
 
 ### API requests
