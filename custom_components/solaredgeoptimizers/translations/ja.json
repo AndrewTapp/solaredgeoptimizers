@@ -89,6 +89,11 @@
       },
       "obtained_from": {
         "name": "取得元"
+      },
+      "state_attributes": {
+        "panel_type": {
+          "name": "パネルタイプ"
+        }
       }
     }
   },
