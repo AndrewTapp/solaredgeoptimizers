@@ -7,7 +7,8 @@
           "username": "[%key:common::config_flow::data::username%]",
           "password": "[%key:common::config_flow::data::password%]",
           "entity_id_prefix": "Entity ID prefix (optional)",
-          "include_site_id_in_entity_id": "Include Site ID in Entity ID"
+          "include_site_id_in_entity_id": "Include Site ID in Entity ID",
+          "use_solaredge_one": "Use SolarEdge One"
         }
       },
       "reauth_confirm": {
@@ -33,7 +34,8 @@
         "description": "Current prefix: {current_entity_id_prefix}. Leave Entity ID prefix empty for no prefix. Saving will reload the integration: entity IDs and unique_ids may change, so history and statistics for existing entities can be lost. Consider backing up or exporting data first.",
         "data": {
           "entity_id_prefix": "Entity ID prefix (optional)",
-          "include_site_id_in_entity_id": "Include Site ID in Entity ID"
+          "include_site_id_in_entity_id": "Include Site ID in Entity ID",
+          "use_solaredge_one": "Use SolarEdge One"
         }
       }
     }
