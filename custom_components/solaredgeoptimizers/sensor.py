@@ -277,13 +277,10 @@ def _build_individual_optimizer_sensors(
                 "SolarEdge Optimizers sensor: Adding optimizer panel_id=%s serial=%s model=%s",
                 optimizer.optimizerId, getattr(info, "serialnumber", ""), getattr(info, "model", ""),
             )
-        path_from_display = _parse_optimizer_display_name_path(
-            getattr(optimizer, "displayName", None), include_site_id, site_id
-        )
+        # Always use position-based path for unique_id so optimizers with duplicate display
+        # names (e.g. multiple "1.0.5") get distinct entity IDs and avoid "ID already exists".
         entity_id_path = (
-            path_from_display
-            if path_from_display is not None
-            else ((site_id, inv_idx, str_idx, opt_idx) if include_site_id else (inv_idx, str_idx, opt_idx))
+            (site_id, inv_idx, str_idx, opt_idx) if include_site_id else (inv_idx, str_idx, opt_idx)
         )
         for sensortype in SENSOR_TYPE_INDIVIDUAL:
             sensors_to_add.append(
@@ -366,6 +363,9 @@ async def async_setup_entry(
     if site is None:
         _LOGGER.error("SolarEdge Optimizers sensor: No site structure on coordinator; setup cannot continue")
         return
+
+    # Ensure site/inverter/string devices exist before adding optimizer entities (avoids via_device errors)
+    coordinator.ensure_devices_registered()
 
     try:
         _remove_sensor_entities_for_entry(hass, entry)
@@ -577,6 +577,13 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_POWER: "power",
     }
+    # (unit, device_class, state_class, suggested_display_precision) per sensor type
+    _AGGREGATED_UNITS_MAP = {
+        SENSOR_TYPE_VOLTAGE: (UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, 2),
+        SENSOR_TYPE_CURRENT: (UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None),
+        SENSOR_TYPE_POWER: (UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
+        SENSOR_TYPE_ENERGY: (UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, 3),
+    }
 
     def __init__(
         self,
@@ -630,6 +637,49 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
             )
         self._log_name = f"{panel.panel_id}_{sensortype}"
 
+    def _device_info_for_string(
+        self, entry: ConfigEntry, panel: SolarEdgeAggregatedData, string
+    ) -> DeviceInfo:
+        """Build DeviceInfo for a string-level aggregated sensor."""
+        path = panel.entity_id_path or ()
+        inv_idx = path[-2] if len(path) >= 2 else path[0] if path else 0
+        str_idx = path[-1] if len(path) >= 1 else 0
+        str_device_id = f"{entry.entry_id}_str_{inv_idx}_{str_idx}"
+        inv_device_id = f"{entry.entry_id}_inv_{inv_idx}"
+        return DeviceInfo(
+            identifiers={(DOMAIN, str_device_id)},
+            manufacturer="SolarEdge",
+            model=f"STRING {string.displayName}",
+            translation_key="string_device",
+            translation_placeholders={"display_name": str(string.displayName)},
+            via_device=(DOMAIN, inv_device_id),
+        )
+
+    def _device_info_for_inverter(
+        self, entry: ConfigEntry, panel: SolarEdgeAggregatedData, inverter
+    ) -> DeviceInfo:
+        """Build DeviceInfo for an inverter-level aggregated sensor."""
+        path = panel.entity_id_path or ()
+        inv_idx = path[-1] if len(path) >= 1 else 0
+        inv_device_id = f"{entry.entry_id}_inv_{inv_idx}"
+        site_id = self.coordinator._site_structure.siteId if self.coordinator._site_structure else None
+        via_device = (DOMAIN, f"site_{site_id}") if site_id else None
+        return DeviceInfo(
+            identifiers={(DOMAIN, inv_device_id)},
+            translation_key="inverter_device",
+            translation_placeholders={"display_name": str(inverter.displayName)},
+            via_device=via_device,
+        )
+
+    def _device_info_for_site(self, entry: ConfigEntry, panel: SolarEdgeAggregatedData) -> DeviceInfo:
+        """Build DeviceInfo for a site-level aggregated sensor."""
+        site_id = panel.panel_id.split("_")[1] if "_" in panel.panel_id else ""
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"site_{site_id}")},
+            translation_key="site_device",
+            translation_placeholders={"site_id": site_id or "—"},
+        )
+
     def _set_aggregated_device_info(
         self, entry: ConfigEntry, panel: SolarEdgeAggregatedData, string, inverter
     ) -> None:
@@ -640,60 +690,22 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         create duplicate or orphaned devices.
         """
         if panel.entity_type == "string":
-            path = panel.entity_id_path or ()
-            inv_idx = path[-2] if len(path) >= 2 else path[0] if path else 0
-            str_idx = path[-1] if len(path) >= 1 else 0
-            str_device_id = f"{entry.entry_id}_str_{inv_idx}_{str_idx}"
-            inv_device_id = f"{entry.entry_id}_inv_{inv_idx}"
-            self._attr_device_info = DeviceInfo(
-                identifiers={(DOMAIN, str_device_id)},
-                manufacturer="SolarEdge",
-                model=f"STRING {string.displayName}",
-                translation_key="string_device",
-                translation_placeholders={"display_name": str(string.displayName)},
-                via_device=(DOMAIN, inv_device_id),
-            )
+            self._attr_device_info = self._device_info_for_string(entry, panel, string)
         elif panel.entity_type == "inverter":
-            path = panel.entity_id_path or ()
-            inv_idx = path[-1] if len(path) >= 1 else 0
-            inv_device_id = f"{entry.entry_id}_inv_{inv_idx}"
-            site_id = self.coordinator._site_structure.siteId if self.coordinator._site_structure else None
-            via_device = (DOMAIN, f"site_{site_id}") if site_id else None
-            self._attr_device_info = DeviceInfo(
-                identifiers={(DOMAIN, inv_device_id)},
-                translation_key="inverter_device",
-                translation_placeholders={"display_name": str(inverter.displayName)},
-                via_device=via_device,
-            )
+            self._attr_device_info = self._device_info_for_inverter(entry, panel, inverter)
         else:
-            site_id = panel.panel_id.split("_")[1] if "_" in panel.panel_id else ""
-            self._attr_device_info = DeviceInfo(
-                identifiers={(DOMAIN, f"site_{site_id}")},
-                translation_key="site_device",
-                translation_placeholders={"site_id": site_id or "—"},
-            )
+            self._attr_device_info = self._device_info_for_site(entry, panel)
 
     def _set_aggregated_units_and_state_class(self) -> None:
         """Set native_unit_of_measurement, device_class, state_class and suggested_display_precision from sensor type."""
-        if self._sensor_type is SENSOR_TYPE_VOLTAGE:
-            self._attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
-            self._attr_device_class = SensorDeviceClass.VOLTAGE
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_suggested_display_precision = 2
-        elif self._sensor_type is SENSOR_TYPE_CURRENT:
-            self._attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-            self._attr_device_class = SensorDeviceClass.CURRENT
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-        elif self._sensor_type is SENSOR_TYPE_POWER:
-            self._attr_native_unit_of_measurement = UnitOfPower.WATT
-            self._attr_device_class = SensorDeviceClass.POWER
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_suggested_display_precision = 2
-        elif self._sensor_type is SENSOR_TYPE_ENERGY:
-            self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-            self._attr_device_class = SensorDeviceClass.ENERGY
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-            self._attr_suggested_display_precision = 3
+        entry = self._AGGREGATED_UNITS_MAP.get(self._sensor_type)
+        if entry:
+            unit, device_class, state_class, precision = entry
+            self._attr_native_unit_of_measurement = unit
+            self._attr_device_class = device_class
+            self._attr_state_class = state_class
+            if precision is not None:
+                self._attr_suggested_display_precision = precision
         elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
             self._attr_state_class = None
@@ -732,6 +744,23 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
             return f"{self._base_name}{slug}_{path_str}"
         return f"{self._base_name}{slug}_{self._panelobject.panel_id}"
 
+    def _normalize_aggregated_energy_value(self, raw_value, prev_value) -> float:
+        """Round energy to 3 dp and enforce monotonic (never decrease)."""
+        if raw_value is not None:
+            value = round(float(raw_value), 3) if not isinstance(raw_value, float) else round(raw_value, 3)
+        else:
+            value = 0.0
+        if prev_value is not None:
+            prev = float(prev_value) if not isinstance(prev_value, float) else prev_value
+            value = max(value, prev)
+        return value
+
+    def _normalize_aggregated_live_value(self, raw_value, decimals: int = 2) -> float:
+        """Round power/voltage to given decimals; 0.0 if None."""
+        if raw_value is not None:
+            return round(float(raw_value), decimals) if not isinstance(raw_value, float) else round(raw_value, decimals)
+        return 0.0
+
     def _compute_aggregated_native_value(self, item) -> None:
         """Update _attr_native_value from aggregated item (child_count, energy monotonic, or mapped attribute)."""
         attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
@@ -741,19 +770,9 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         if self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
             new_value = int(new_value) if new_value is not None else 0
         elif self._sensor_type is SENSOR_TYPE_ENERGY:
-            if new_value is not None:
-                new_value = round(float(new_value), 3) if not isinstance(new_value, float) else round(new_value, 3)
-            else:
-                new_value = 0.0
-            if self._attr_native_value is not None:
-                prev = float(self._attr_native_value) if not isinstance(self._attr_native_value, float) else self._attr_native_value
-                new_value = max(new_value, prev)
+            new_value = self._normalize_aggregated_energy_value(new_value, self._attr_native_value)
         elif self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE):
-            # String/inverter/site: power and voltage (average) to 2 dp
-            if new_value is not None:
-                new_value = round(float(new_value), 2) if not isinstance(new_value, float) else round(new_value, 2)
-            else:
-                new_value = 0.0
+            new_value = self._normalize_aggregated_live_value(new_value, 2)
         self._attr_native_value = new_value
 
     def _normalize_aggregated_display_value(self) -> None:
@@ -826,6 +845,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_LASTMEASUREMENT: "last_measurement",
     }
+    # (unit, device_class, state_class, suggested_display_precision) per sensor type
+    _OPTIMIZER_UNITS_MAP = {
+        SENSOR_TYPE_VOLTAGE: (UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, 2),
+        SENSOR_TYPE_CURRENT: (UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None),
+        SENSOR_TYPE_OPT_VOLTAGE: (UnitOfElectricPotential.VOLT, SensorDeviceClass.VOLTAGE, SensorStateClass.MEASUREMENT, 2),
+        SENSOR_TYPE_POWER: (UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
+        SENSOR_TYPE_TEMPERATURE: (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, 1),
+        SENSOR_TYPE_ENERGY: (UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, 3),
+    }
 
     def __init__(
         self,
@@ -875,8 +903,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             self._sensor_type, self._sensor_type.lower().replace(" ", "_")
         )
         self._log_name = f"{self._sensor_type} {optimizer.displayName}"
+        # Use position-based display name so devices with duplicate API display names stay distinct
         self._optimizer_display_name = (
-            f"{site_id}.{'.'.join(map(str, entity_id_path[1:]))}" if len(entity_id_path) >= 4 else str(optimizer.displayName)
+            f"{site_id}.{'.'.join(map(str, entity_id_path[1:]))}" if len(entity_id_path) >= 4
+            else ".".join(map(str, entity_id_path)) if entity_id_path
+            else str(optimizer.displayName)
         )
         if slug and path_str:
             self.internal_integration_suggested_object_id = f"{self._base_name}{slug}_{path_str}"
@@ -905,35 +936,14 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
 
     def _set_optimizer_units_and_state_class(self) -> None:
         """Set native_unit_of_measurement, device_class, state_class and suggested_display_precision from sensor type."""
-        if self._sensor_type is SENSOR_TYPE_VOLTAGE:
-            self._attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
-            self._attr_device_class = SensorDeviceClass.VOLTAGE
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_suggested_display_precision = 2
-        elif self._sensor_type is SENSOR_TYPE_CURRENT:
-            self._attr_native_unit_of_measurement = UnitOfElectricCurrent.AMPERE
-            self._attr_device_class = SensorDeviceClass.CURRENT
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-        elif self._sensor_type is SENSOR_TYPE_OPT_VOLTAGE:
-            self._attr_native_unit_of_measurement = UnitOfElectricPotential.VOLT
-            self._attr_device_class = SensorDeviceClass.VOLTAGE
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_suggested_display_precision = 2
-        elif self._sensor_type is SENSOR_TYPE_POWER:
-            self._attr_native_unit_of_measurement = UnitOfPower.WATT
-            self._attr_device_class = SensorDeviceClass.POWER
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_suggested_display_precision = 2
-        elif self._sensor_type is SENSOR_TYPE_TEMPERATURE:
-            self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-            self._attr_device_class = SensorDeviceClass.TEMPERATURE
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_suggested_display_precision = 1
-        elif self._sensor_type is SENSOR_TYPE_ENERGY:
-            self._attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-            self._attr_device_class = SensorDeviceClass.ENERGY
-            self._attr_state_class = SensorStateClass.TOTAL_INCREASING
-            self._attr_suggested_display_precision = 3
+        entry = self._OPTIMIZER_UNITS_MAP.get(self._sensor_type)
+        if entry:
+            unit, device_class, state_class, precision = entry
+            self._attr_native_unit_of_measurement = unit
+            self._attr_device_class = device_class
+            self._attr_state_class = state_class
+            if precision is not None:
+                self._attr_suggested_display_precision = precision
         elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
             self._attr_state_class = None
@@ -962,59 +972,87 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             item.lastmeasurement = ts
         return timetocheck, ts
 
+    def _normalize_lifetime_energy(self, lifetime_energy):
+        """Return lifetime_energy as float rounded to 3 decimals, or 0.0 if None."""
+        if lifetime_energy is None:
+            return 0.0
+        if isinstance(lifetime_energy, float):
+            return round(lifetime_energy, 3)
+        return round(float(lifetime_energy), 3)
+
+    def _set_energy_value_from_item(self, item) -> None:
+        """Set _attr_native_value from item.lifetime_energy (monotonic: never decrease)."""
+        new_value = self._normalize_lifetime_energy(item.lifetime_energy)
+        if self._attr_native_value is None:
+            self._attr_native_value = new_value
+            return
+        prev = float(self._attr_native_value) if not isinstance(self._attr_native_value, float) else self._attr_native_value
+        if new_value >= prev:
+            self._attr_native_value = new_value
+        elif _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Lifetime energy decreased for %s (new: %s, previous: %s), keeping previous value",
+                self._log_name, new_value, self._attr_native_value,
+            )
+
+    def _set_temperature_value_from_item(self, item) -> None:
+        """Set _attr_native_value from item.temperature."""
+        actual_value = getattr(item, "temperature", None)
+        if actual_value is None or actual_value == "":
+            self._attr_native_value = None
+            return
+        try:
+            self._attr_native_value = round(float(actual_value), 1)
+        except (TypeError, ValueError):
+            self._attr_native_value = None
+
+    def _log_measurement_too_old(self, attr_name: str, ts: datetime, timetocheck, actual_value) -> None:
+        """Log when measurement is too old and value is non-zero."""
+        if actual_value != 0 and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Sensor %s (%s) set to 0: measurement too old (last: %s, threshold: %s)",
+                self._log_name, attr_name, ts, timetocheck,
+            )
+
+    def _log_zero_value_recent(self, attr_name: str, ts: datetime) -> None:
+        """Log when value is zero but measurement is recent (possible missing API data)."""
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Sensor %s (%s) has zero value but measurement is recent (last: %s). "
+                "This may indicate missing data in API response.",
+                self._log_name, attr_name, ts,
+            )
+
+    def _round_live_value(self, actual_value) -> float | int:
+        """Round live value for power/voltage/opt_voltage; return as-is for current."""
+        if self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE, SENSOR_TYPE_OPT_VOLTAGE):
+            return round(float(actual_value), 2) if actual_value is not None else 0.0
+        return actual_value
+
+    def _set_live_value_from_item(self, item, measurement_too_old: bool, ts: datetime, timetocheck) -> None:
+        """Set _attr_native_value from mapped attr (power/voltage/current/opt_voltage) with age check."""
+        attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
+        if not attr_name:
+            return
+        actual_value = getattr(item, attr_name, 0)
+        if measurement_too_old:
+            self._log_measurement_too_old(attr_name, ts, timetocheck, actual_value)
+            self._attr_native_value = 0
+            return
+        if actual_value == 0:
+            self._log_zero_value_recent(attr_name, ts)
+        self._attr_native_value = self._round_live_value(actual_value)
+
     def _update_optimizer_value_from_item(self, item, timetocheck, ts: datetime) -> None:
         """Set _attr_native_value from item (energy monotonic, lastmeasurement, or mapped value with age check)."""
-        measurement_too_old = ts <= timetocheck
         if self._sensor_type is SENSOR_TYPE_ENERGY:
-            lifetime_energy = item.lifetime_energy
-            new_value = (
-                round(float(lifetime_energy), 3) if not isinstance(lifetime_energy, float) else round(lifetime_energy, 3)
-                if lifetime_energy is not None else 0.0
-            )
-            if self._attr_native_value is None:
-                self._attr_native_value = new_value
-            else:
-                prev = float(self._attr_native_value) if not isinstance(self._attr_native_value, float) else self._attr_native_value
-                if new_value >= prev:
-                    self._attr_native_value = new_value
-                elif _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "Lifetime energy decreased for %s (new: %s, previous: %s), keeping previous value",
-                        self._log_name, new_value, self._attr_native_value,
-                    )
+            self._set_energy_value_from_item(item)
         elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             self._attr_native_value = item.lastmeasurement
         elif self._sensor_type is SENSOR_TYPE_TEMPERATURE:
-            actual_value = getattr(item, "temperature", None)
-            if actual_value is None or actual_value == "":
-                self._attr_native_value = None
-            else:
-                try:
-                    self._attr_native_value = round(float(actual_value), 1)
-                except (TypeError, ValueError):
-                    self._attr_native_value = None
+            self._set_temperature_value_from_item(item)
         else:
-            attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
-            if attr_name:
-                actual_value = getattr(item, attr_name, 0)
-                if measurement_too_old:
-                    if actual_value != 0 and _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "Sensor %s (%s) set to 0: measurement too old (last: %s, threshold: %s)",
-                            self._log_name, attr_name, ts, timetocheck,
-                        )
-                    self._attr_native_value = 0
-                else:
-                    if actual_value == 0 and _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "Sensor %s (%s) has zero value but measurement is recent (last: %s). "
-                            "This may indicate missing data in API response.",
-                            self._log_name, attr_name, ts,
-                        )
-                    # Optimizer level: voltage, power, optimizer voltage to 2 dp
-                    if self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE, SENSOR_TYPE_OPT_VOLTAGE):
-                        actual_value = round(float(actual_value), 2) if actual_value is not None else 0.0
-                    self._attr_native_value = actual_value
+            self._set_live_value_from_item(item, ts <= timetocheck, ts, timetocheck)
 
     def _zero_optimizer_when_no_data(self) -> None:
         """Zero native value when coordinator has no data (except energy, lastmeasurement, temperature)."""
