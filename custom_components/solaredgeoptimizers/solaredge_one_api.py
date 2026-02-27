@@ -1,8 +1,7 @@
 """
-SolarEdge One API client for Home Assistant integration.
+SolarEdge One portal API client: OAuth authentication and services/layout endpoints for site structure, optimizer live data, temperatures, and lifetime energy.
 
-This client is used by the dual API (api_dual.py) when Use SolarEdge One is enabled.
-Uses the SolarEdge One portal endpoints (monitoring.solaredge.com/services/...):
+Used by api_dual when Use SolarEdge One is enabled. Endpoints (monitoring.solaredge.com/services/...):
 
 - **Site structure**: GET .../layout/logical/generic/v2/site/{siteId}?include-optimizers=true
 - **Optimizer info + live data**: POST .../layout/information/optimizers (body: list of serials).
@@ -12,7 +11,7 @@ Uses the SolarEdge One portal endpoints (monitoring.solaredge.com/services/...):
 - **Inverter information**: GET .../layout/information/inverters?inverter-serials=...
   Returns fullModel (e.g. SE5000H-RW000BNN4). 403 Forbidden is non-fatal; devices still work with position-based identity.
 - **Optimizer temperatures**: GET .../layout/energy/site/{siteId}/by-inverter?start-date=...&end-date=...&inverter-serials=...&include-max-temperature=true.
-  Returns per-optimizer temperature (°C). Cached 15 min; merged into optimizer data.
+  Returns per-optimizer temperature (may be °C or °F per temperatureUnit). Cached 15 min; merged into optimizer data (normalized to °C).
 - **Lifetime energy**: GET .../layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...&start-date=...&end-date=...
   One request per optimizer; when cache is cold, requests run in parallel (thread pool); cached 1 h.
 
@@ -570,6 +569,7 @@ class solaredge_one:
             }
             data = self._get(path, params=params, timeout=30)
             result = {}
+            fahrenheit_count = 0
             for inv_block in data.get("inverters") or []:
                 for opt in inv_block.get("optimizers") or []:
                     serial = (opt.get("serial") or "").strip()
@@ -578,15 +578,29 @@ class solaredge_one:
                         t = temp_obj.get("temperature")
                         if t is not None:
                             try:
-                                result[serial] = round(float(t), 1)
+                                temp_val = float(t)
+                                unit = (temp_obj.get("temperatureUnit") or "CELSIUS").strip().upper()
+                                # Portal may send FAHRENHEIT or F (e.g. US). Convert to Celsius for storage.
+                                # F -> C: (x - 32) * 5/9  (e.g. 138°F -> 58.9°C). Do NOT use C->F formula.
+                                if unit in ("FAHRENHEIT", "F"):
+                                    raw_f = temp_val
+                                    temp_val = (temp_val - 32.0) * (5.0 / 9.0)
+                                    fahrenheit_count += 1
+                                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                                        _LOGGER.debug(
+                                            "SolarEdge One: Temperature unit %s for optimizer %s: %.1f°F -> %.1f°C",
+                                            unit, serial, raw_f, temp_val,
+                                        )
+                                result[serial] = round(temp_val, 1)
                             except (TypeError, ValueError):
                                 pass
             self._temperature_cache = result
             self._temperature_cache_time = now
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: Refreshed optimizer temperature cache (%d optimizers)",
+                    "SolarEdge One: Refreshed optimizer temperature cache (%d optimizers%s)",
                     len(result),
+                    f", {fahrenheit_count} in Fahrenheit (converted to °C)" if fahrenheit_count else "",
                 )
             return result
         except Exception as e:  # pylint: disable=broad-except
@@ -620,15 +634,18 @@ class solaredge_one:
         """Build SolarEdgeOptimizerData from API live/basic dicts for one optimizer. Returns None on error."""
         last_measurement = live.get("lastMeasurement") or ""
         model = basic.get("model") or ""
+        # Prefer API description (panel type e.g. 'SunPower SPR-MAX3-400') when present; else build from modules
+        api_desc = (basic.get("description") or live.get("description") or "").strip()
+        desc = api_desc if api_desc else self._description_from_basic(basic, item_id)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge One: Building optimizer data for %s model=%r last_measurement=%s has_live=%s",
+                "SolarEdge One: Building optimizer data for %s model=%r panel_type=%r last_measurement=%s has_live=%s",
                 item_id,
                 model or "(none)",
+                desc or "(none)",
                 last_measurement or "(none)",
                 bool(live),
             )
-        desc = self._description_from_basic(basic, item_id)
         measurements = self._measurements_from_live(live)
         json_object = {
             "serialNumber": item_id,
