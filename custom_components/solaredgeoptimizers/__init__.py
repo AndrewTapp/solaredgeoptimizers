@@ -1,4 +1,4 @@
-"""SolarEdge Optimizers integration for Home Assistant."""
+"""Entry point for the SolarEdge Optimizers integration: config entry setup, API and coordinator initialization, platform registration, and migration of use_solaredge_one option."""
 import logging
 from typing import Any
 
