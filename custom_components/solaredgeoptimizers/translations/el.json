@@ -19,7 +19,8 @@
           "username": "Όνομα χρήστη (email)",
           "password": "Κωδικός πρόσβασης",
           "entity_id_prefix": "Πρόθεμα ID οντοτήτων (προαιρετικό)",
-          "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων"
+          "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων",
+          "use_solaredge_one": "Χρήση SolarEdge One"
         }
       },
       "reauth_confirm": {
@@ -39,7 +40,8 @@
         "description": "Τρέχον πρόθεμα: {current_entity_id_prefix}. Αφήστε το πεδίο κενό για απουσία προθέματος. Η αποθήκευση θα ξαναφορτώσει την ενσωμάτωση: τα entity ID και τα unique_ids μπορεί να αλλάξουν, οπότε το ιστορικό και τα στατιστικά υπαρχουσών οντοτήτων μπορεί να χαθούν. Εξετάστε το backup ή την εξαγωγή δεδομένων πρώτα.",
         "data": {
           "entity_id_prefix": "Πρόθεμα ID οντοτήτων (προαιρετικό)",
-          "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων"
+          "include_site_id_in_entity_id": "Συμπερίληψη ID τοποθεσίας στο ID οντοτήτων",
+          "use_solaredge_one": "Χρήση SolarEdge One"
         }
       }
     }
