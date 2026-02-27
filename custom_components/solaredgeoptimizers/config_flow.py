@@ -14,7 +14,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.translation import async_get_translations
 
-from .const import CONF_SITE_ID, DOMAIN
+from .const import CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, DOMAIN
 from . import remove_entities_and_devices_for_entry
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,12 +26,13 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required("password"): str,
         vol.Optional("entity_id_prefix", default=""): str,
         vol.Optional("include_site_id_in_entity_id", default=False): bool,
+        vol.Optional(CONF_USE_SOLAREDGE_ONE, default=True): bool,
     }
 )
 
 
 def _options_schema(entry: ConfigEntry) -> vol.Schema:
-    """Build options schema: entity_id_prefix, then include_site_id. Defaults from options then data."""
+    """Build options schema: entity_id_prefix, include_site_id, use_solaredge_one. Defaults from options then data."""
     data = entry.data
     options = entry.options
     return vol.Schema(
@@ -40,6 +41,10 @@ def _options_schema(entry: ConfigEntry) -> vol.Schema:
             vol.Optional(
                 "include_site_id_in_entity_id",
                 default=options.get("include_site_id_in_entity_id", data.get("include_site_id_in_entity_id", False)),
+            ): bool,
+            vol.Optional(
+                CONF_USE_SOLAREDGE_ONE,
+                default=options.get(CONF_USE_SOLAREDGE_ONE, data.get(CONF_USE_SOLAREDGE_ONE, True)),
             ): bool,
         }
     )
@@ -270,13 +275,15 @@ class SolarEdgeOptimizersOptionsFlowHandler(config_entries.OptionsFlow):
             options_data = {
                 "entity_id_prefix": (user_input.get("entity_id_prefix") or "").strip(),
                 "include_site_id_in_entity_id": bool(user_input.get("include_site_id_in_entity_id", False)),
+                CONF_USE_SOLAREDGE_ONE: bool(user_input.get(CONF_USE_SOLAREDGE_ONE, True)),
             }
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge Optimizers options flow: Saving options for entry %s (entity_id_prefix=%r, include_site_id_in_entity_id=%s)",
+                    "SolarEdge Optimizers options flow: Saving options for entry %s (entity_id_prefix=%r, include_site_id_in_entity_id=%s, use_solaredge_one=%s)",
                     self._entry.entry_id,
                     options_data["entity_id_prefix"],
                     options_data["include_site_id_in_entity_id"],
+                    options_data[CONF_USE_SOLAREDGE_ONE],
                 )
             # Update options; options override data when reading in sensor/coordinator
             result = self.async_create_entry(title="", data=options_data)
@@ -292,10 +299,11 @@ class SolarEdgeOptimizersOptionsFlowHandler(config_entries.OptionsFlow):
         current_prefix = entry.options.get("entity_id_prefix", entry.data.get("entity_id_prefix", "")) or "(none)"
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers options flow: Showing options form for entry %s (current prefix=%r, include_site_id=%s)",
+                "SolarEdge Optimizers options flow: Showing options form for entry %s (current prefix=%r, include_site_id=%s, use_solaredge_one=%s)",
                 self._entry.entry_id,
                 current_prefix,
                 entry.options.get("include_site_id_in_entity_id", entry.data.get("include_site_id_in_entity_id")),
+                entry.options.get(CONF_USE_SOLAREDGE_ONE, entry.data.get(CONF_USE_SOLAREDGE_ONE, True)),
             )
         return self.async_show_form(
             step_id="init",
