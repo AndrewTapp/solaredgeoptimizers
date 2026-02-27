@@ -19,7 +19,8 @@
           "username": "Kullanıcı adı (e-posta)",
           "password": "Parola",
           "entity_id_prefix": "Varlık ID öneki (isteğe bağlı)",
-          "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et"
+          "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et",
+          "use_solaredge_one": "SolarEdge One kullan"
         }
       },
       "reauth_confirm": {
@@ -39,7 +40,8 @@
         "description": "Mevcut önek: {current_entity_id_prefix}. Önek kullanmak istemiyorsanız alanı boş bırakın. Kaydetme entegrasyonu yeniden yükleyecektir: entity ID'ler ve unique_ids değişebilir, bu nedenle mevcut varlıkların geçmişi ve istatistikleri kaybolabilir. Önce veri yedeklemesi veya dışa aktarımı yapmayı düşünün.",
         "data": {
           "entity_id_prefix": "Varlık ID öneki (isteğe bağlı)",
-          "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et"
+          "include_site_id_in_entity_id": "Varlık ID'sinde site ID'sini dahil et",
+          "use_solaredge_one": "SolarEdge One kullan"
         }
       }
     }
