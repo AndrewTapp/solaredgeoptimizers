@@ -19,7 +19,8 @@
           "username": "Имя пользователя (email)",
           "password": "Пароль",
           "entity_id_prefix": "Префикс ID сущности (необязательно)",
-          "include_site_id_in_entity_id": "Включить ID сайта в ID сущности"
+          "include_site_id_in_entity_id": "Включить ID сайта в ID сущности",
+          "use_solaredge_one": "Использовать SolarEdge One"
         }
       },
       "reauth_confirm": {
@@ -39,7 +40,8 @@
         "description": "Текущий префикс: {current_entity_id_prefix}. Оставьте поле пустым для отсутствия префикса. При сохранении интеграция перезагрузится: entity ID и unique_ids могут измениться, поэтому история и статистика существующих сущностей могут быть потеряны. Рекомендуется предварительно создать резервную копию или экспортировать данные.",
         "data": {
           "entity_id_prefix": "Префикс ID сущности (необязательно)",
-          "include_site_id_in_entity_id": "Включить ID сайта в ID сущности"
+          "include_site_id_in_entity_id": "Включить ID сайта в ID сущности",
+          "use_solaredge_one": "Использовать SolarEdge One"
         }
       }
     }
