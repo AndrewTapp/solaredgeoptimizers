@@ -15,31 +15,30 @@ from .const import (
     DOMAIN,
     LOGGER,
     CONF_SITE_ID,
+    CONF_USE_SOLAREDGE_ONE,
 )
 from .coordinator import MyCoordinator
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
-async def _migrate_remove_use_solaredge_one(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Remove deprecated use_solaredge_one from data and options (now always dual API)."""
+async def _migrate_use_solaredge_one(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Ensure use_solaredge_one exists in data or options (default True). Reinstated for legacy-only option."""
     data = dict(entry.data)
     options = dict(entry.options)
     changed = False
-    if "use_solaredge_one" in data:
-        del data["use_solaredge_one"]
-        changed = True
-    if "use_solaredge_one" in options:
-        del options["use_solaredge_one"]
+    default_one = True
+    if CONF_USE_SOLAREDGE_ONE not in data and CONF_USE_SOLAREDGE_ONE not in options:
+        options[CONF_USE_SOLAREDGE_ONE] = default_one
         changed = True
     if changed:
         hass.config_entries.async_update_entry(entry, data=data, options=options)
-        LOGGER.info("SolarEdge Optimizers: Migrated config entry %s (removed use_solaredge_one)", entry.entry_id)
+        LOGGER.info("SolarEdge Optimizers: Migrated config entry %s (set %s=%s)", entry.entry_id, CONF_USE_SOLAREDGE_ONE, default_one)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SolarEdge Optimizers Data from a config entry."""
-    await _migrate_remove_use_solaredge_one(hass, entry)
+    await _migrate_use_solaredge_one(hass, entry)
 
     # Add detailed debugging for initial setup issues
     LOGGER.info("SolarEdge Optimizers: Starting setup for config entry: %s", entry.entry_id)
@@ -55,14 +54,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.config.time_zone
     )
 
+    use_solaredge_one = entry.options.get(CONF_USE_SOLAREDGE_ONE, entry.data.get(CONF_USE_SOLAREDGE_ONE, True))
     if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug("SolarEdge Optimizers: Creating dual API (One preferred, legacy fallback) for site %s", entry.data.get("siteid", "?"))
+        LOGGER.debug(
+            "SolarEdge Optimizers: Creating dual API (use_solaredge_one=%s) for site %s",
+            use_solaredge_one,
+            entry.data.get("siteid", "?"),
+        )
     api = SolarEdgeDualAPI(
         entry.data["siteid"],
         entry.data["username"],
         entry.data["password"],
         ha_timezone,
         language=hass.config.language,
+        use_solaredge_one=use_solaredge_one,
     )
 
     if LOGGER.isEnabledFor(logging.DEBUG):
