@@ -1,8 +1,4 @@
-"""
-Dual SolarEdge API wrapper: prefer SolarEdge One API, fall back to legacy when One
-returns no valid measurements (e.g. "Missing or invalid measurements for optimizer").
-Exposes which source was used via _obtained_from for the "Obtained from" sensor.
-"""
+"""Dual API wrapper: uses SolarEdge One API when enabled, falls back to the legacy Monitoring API when One returns no valid optimizer data; tracks the active source for the 'Obtained from' sensor."""
 from __future__ import annotations
 
 import logging
