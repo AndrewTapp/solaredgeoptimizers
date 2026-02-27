@@ -378,80 +378,98 @@ class solaredgeoptimizers:
             _LOGGER.error("SolarEdge Optimizers: Login check unexpected error: %s", e)
             raise
 
-    def requestLogicalLayout(self):
-        # Add detailed debugging for initial setup issues
-        _LOGGER.info("SolarEdge Optimizers: Requesting logical layout for site %s", self.siteid)
+    def _fetch_logical_layout(self, url: str, kwargs: dict) -> str:
+        """Perform GET for logical layout; return response text. Caller handles exceptions."""
+        with requests.get(url, **kwargs) as r:
+            _LOGGER.info(
+                "SolarEdge Optimizers: Logical layout request completed - Status: %s, Content length: %s",
+                r.status_code,
+                len(r.text),
+            )
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Endpoint (logical layout): %s", url)
+                _LOGGER.debug("SolarEdge Optimizers: Logical layout response headers: %s", dict(r.headers))
+                _LOGGER.debug(
+                    "Response from requestLogicalLayout (status %s): %s",
+                    r.status_code,
+                    r.text[:2000] if len(r.text) > 2000 else r.text,
+                )
+            return r.text
 
-        # Use f-string instead of .format() for better performance
+    def _log_layout_request_error(self, e: Exception) -> None:
+        """Log logical layout request error by exception type."""
+        if isinstance(e, requests.exceptions.Timeout):
+            _LOGGER.error("SolarEdge Optimizers: Logical layout request timed out after 60s: %s", e)
+        elif isinstance(e, requests.exceptions.ConnectionError):
+            _LOGGER.error("SolarEdge Optimizers: Logical layout connection error: %s", e)
+        elif isinstance(e, requests.exceptions.RequestException):
+            _LOGGER.error("SolarEdge Optimizers: Logical layout request error: %s", e)
+        else:
+            _LOGGER.error("SolarEdge Optimizers: Logical layout unexpected error: %s", e)
+
+    def requestLogicalLayout(self):
+        """Request logical layout JSON for the site. Returns raw response text."""
+        _LOGGER.info("SolarEdge Optimizers: Requesting logical layout for site %s", self.siteid)
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Logical layout URL: %s", url)
-
-        kwargs = {}
-        kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
-        # Add timeout to prevent hanging
-        kwargs["timeout"] = 60  # 60 second timeout for layout request
-        if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Making logical layout request with 60s timeout")
-
+        kwargs = {
+            "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
+            "timeout": 60,
+        }
         try:
-            # Use context manager to ensure response is properly closed
-            with requests.get(url, **kwargs) as r:
-                _LOGGER.info("SolarEdge Optimizers: Logical layout request completed - Status: %s, Content length: %s", r.status_code, len(r.text))
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("Endpoint (logical layout): %s", url)
-                    _LOGGER.debug("SolarEdge Optimizers: Logical layout response headers: %s", dict(r.headers))
-                    _LOGGER.debug("Response from requestLogicalLayout (status %s): %s", r.status_code, r.text[:2000] if len(r.text) > 2000 else r.text)
-                return r.text
-        except requests.exceptions.Timeout as e:
-            _LOGGER.error("SolarEdge Optimizers: Logical layout request timed out after 60s: %s", e)
-            raise
-        except requests.exceptions.ConnectionError as e:
-            _LOGGER.error("SolarEdge Optimizers: Logical layout connection error: %s", e)
-            raise
-        except requests.exceptions.RequestException as e:
-            _LOGGER.error("SolarEdge Optimizers: Logical layout request error: %s", e)
-            raise
+            return self._fetch_logical_layout(url, kwargs)
         except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.error("SolarEdge Optimizers: Logical layout unexpected error: %s", e)
+            self._log_layout_request_error(e)
             raise
+
+    def _parse_and_cache_layout(self, raw_layout: str, now: datetime):
+        """Parse layout JSON, update cache, return SolarEdgeSite. Raises on parse error."""
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Received raw layout data, parsing JSON")
+        json_obj = json.loads(raw_layout)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("Parsed logical layout JSON: %s", json_obj)
+            _LOGGER.debug("SolarEdge Optimizers: Creating SolarEdgeSite object")
+        self._panels_cache = SolarEdgeSite(json_obj)
+        self._panels_cache_time = now
+        _LOGGER.info(
+            "SolarEdge Optimizers: Refreshed panels cache with %s optimizers",
+            self._panels_cache.returnNumberOfOptimizers(),
+        )
+        return self._panels_cache
 
     def requestListOfAllPanels(self):
-        # Add detailed debugging for initial setup issues
+        """Return site layout (SolarEdgeSite). Uses cache when valid."""
         _LOGGER.info("SolarEdge Optimizers: Requesting list of all panels")
-
-        # Cache result to avoid repeated API calls (layout rarely changes)
         now = datetime.now()
-        if (self._panels_cache is None or
-            self._panels_cache_time is None or
-            (now - self._panels_cache_time) > self._panels_cache_ttl):
+        if (
+            self._panels_cache is None
+            or self._panels_cache_time is None
+            or (now - self._panels_cache_time) > self._panels_cache_ttl
+        ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge Optimizers: Cache miss, fetching fresh layout data")
             try:
                 raw_layout = self.requestLogicalLayout()
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers: Received raw layout data, parsing JSON")
-                json_obj = json.loads(raw_layout)
-                # Log parsed logical layout JSON for debugging
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("Parsed logical layout JSON: %s", json_obj)
-                    _LOGGER.debug("SolarEdge Optimizers: Creating SolarEdgeSite object")
-                self._panels_cache = SolarEdgeSite(json_obj)
-                self._panels_cache_time = now
-                _LOGGER.info("SolarEdge Optimizers: Refreshed panels cache with %s optimizers",
-                           self._panels_cache.returnNumberOfOptimizers())
+                return self._parse_and_cache_layout(raw_layout, now)
             except json.JSONDecodeError as e:
                 _LOGGER.error("SolarEdge Optimizers: Failed to parse layout JSON: %s", e)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers: Raw layout data: %s", raw_layout[:1000] if len(raw_layout) > 1000 else raw_layout)
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers: Raw layout data: %s",
+                        raw_layout[:1000] if len(raw_layout) > 1000 else raw_layout,
+                    )
                 raise
             except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.error("SolarEdge Optimizers: Unexpected error in requestListOfAllPanels: %s", e)
                 raise
-        else:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Optimizers: Using cached panels data (age: %s)",
-                             now - self._panels_cache_time)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Using cached panels data (age: %s)",
+                now - self._panels_cache_time,
+            )
         return self._panels_cache
 
     def requestSystemData(self, itemId):
@@ -477,27 +495,35 @@ class solaredgeoptimizers:
                 _LOGGER.debug("Decoded JSON object for optimizer %s: %s", itemId, json_object)
             return _parse_system_data_json(json_object, itemId, self._timezone)
 
+    def _parse_lifetime_energy_response(self, response: str) -> dict:
+        """Parse getLifeTimeEnergy response string to dict. Returns {} on error or ERROR001."""
+        if response.startswith("ERROR001"):
+            _LOGGER.error("Failed to get lifetime energy data: %s", response)
+            return {}
+        try:
+            data = json.loads(response)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Parsed lifetime energy data (by optimizer/string ID): %s", data)
+            return data
+        except json.JSONDecodeError as e:
+            _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
+            return {}
+
     def _get_cached_lifetime_energy(self):
         """Return lifetime energy dict, from cache or by fetching and parsing getLifeTimeEnergy()."""
         now = datetime.now()
-        if (self._lifetime_energy_cache is None or
-                self._lifetime_energy_cache_time is None or
-                (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl):
-            lifetime_energy_response = self.getLifeTimeEnergy()
+        if (
+            self._lifetime_energy_cache is None
+            or self._lifetime_energy_cache_time is None
+            or (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl
+        ):
+            response = self.getLifeTimeEnergy()
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                response_preview = lifetime_energy_response[:2000] if len(lifetime_energy_response) > 2000 else lifetime_energy_response
-                _LOGGER.debug("Response from lifetime energy endpoint: %s", response_preview)
-            if lifetime_energy_response.startswith("ERROR001"):
-                _LOGGER.error("Failed to get lifetime energy data: %s", lifetime_energy_response)
-                lifetimeenergy = {}
-            else:
-                try:
-                    lifetimeenergy = json.loads(lifetime_energy_response)
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug("Parsed lifetime energy data (by optimizer/string ID): %s", lifetimeenergy)
-                except json.JSONDecodeError as e:
-                    _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
-                    lifetimeenergy = {}
+                _LOGGER.debug(
+                    "Response from lifetime energy endpoint: %s",
+                    response[:2000] if len(response) > 2000 else response,
+                )
+            lifetimeenergy = self._parse_lifetime_energy_response(response)
             self._lifetime_energy_cache = lifetimeenergy
             self._lifetime_energy_cache_time = now
             if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -666,62 +692,58 @@ class solaredgeoptimizers:
         
         return self._thread_local.session
 
-    def _doRequest(self, method, request_url, data=None):
-        # Reuse thread-local session to reduce login overhead
-        session = self._get_session()
+    def _request_headers(self, cookie: str, csrf_token: str) -> dict:
+        """Build headers dict for legacy API request (cookie, CSRF, referer, etc.)."""
+        return {
+            "authority": "monitoring.solaredge.com",
+            "accept": "*/*",
+            "accept-language": self._accept_language_header(),
+            "content-type": "application/json",
+            "cookie": cookie,
+            "origin": "https://monitoring.solaredge.com",
+            "referer": f"https://monitoring.solaredge.com/solaredge-web/p/site/{self.siteid}/",
+            "sec-ch-ua": '"Google Chrome";v="105", "Not)A;Brand";v="8", "Chromium";v="105"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
+            "x-csrf-token": csrf_token,
+            "x-kl-ajax-request": "Ajax_Request",
+            "x-requested-with": "XMLHttpRequest",
+        }
 
-        # Fix the cookie to get a string.
+    def _doRequest(self, method, request_url, data=None):
+        """Execute request with thread-local session; return response text or ERROR001 string."""
+        session = self._get_session()
         therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
-        # The csrf-token is needed as a seperate header.
         thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
-        # Added check for None CSRF token to prevent errors when token is missing
         if thecrsftoken is None:
             _LOGGER.warning("CSRF token not found in cookies")
             thecrsftoken = ""
 
-        # Build up the request.
-        # Use context manager to ensure response is properly closed
         with session.request(
             method=method,
             url=request_url,
-            headers={
-                "authority": "monitoring.solaredge.com",
-                "accept": "*/*",
-                "accept-language": self._accept_language_header(),
-                "content-type": "application/json",
-                "cookie": therightcookie,
-                "origin": "https://monitoring.solaredge.com",
-                # Use f-string instead of .format() for better performance
-                "referer": f"https://monitoring.solaredge.com/solaredge-web/p/site/{self.siteid}/",
-                "sec-ch-ua": '"Google Chrome";v="105", "Not)A;Brand";v="8", "Chromium";v="105"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-                "sec-fetch-dest": "empty",
-                "sec-fetch-mode": "cors",
-                "sec-fetch-site": "same-origin",
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
-                "x-csrf-token": thecrsftoken,
-                "x-kl-ajax-request": "Ajax_Request",
-                "x-requested-with": "XMLHttpRequest",
-            },
-            data=data
+            headers=self._request_headers(therightcookie, thecrsftoken),
+            data=data,
         ) as response:
-            # Log endpoint and raw response data for debugging
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 response_preview = response.text[:2000] if len(response.text) > 2000 else response.text
-                _LOGGER.debug("Endpoint: %s %s | Status: %s | Response (preview): %s",
-                             method, request_url, response.status_code, response_preview)
-            
-            # Store response text before context manager closes
+                _LOGGER.debug(
+                    "Endpoint: %s %s | Status: %s | Response (preview): %s",
+                    method,
+                    request_url,
+                    response.status_code,
+                    response_preview,
+                )
             response_text = response.text
             status_code = response.status_code
-        
-        # Return result after response is closed
+
         if status_code == 200:
             return response_text
-        else:
-            # Use f-string instead of .format() for better performance
-            return f"ERROR001 - HTTP CODE: {status_code}"
+        return f"ERROR001 - HTTP CODE: {status_code}"
 
     def getLifeTimeEnergy(self):
         # Use f-string instead of .format() for better performance
