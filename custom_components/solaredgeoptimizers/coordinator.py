@@ -1,4 +1,4 @@
-"""Data coordinator for SolarEdge Optimizers Home Assistant integration."""
+"""Data update coordinator: fetches site layout and optimizer data from the API, manages adaptive polling and One/legacy fallback, and supplies cached panel data to sensor entities."""
 from __future__ import annotations
 
 import asyncio
