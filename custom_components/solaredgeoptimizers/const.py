@@ -15,6 +15,8 @@ LOGGER = logging.getLogger(__package__)
 
 # Coordinator tick interval. Actual portal load is controlled by adaptive polling in the coordinator.
 UPDATE_DELAY = timedelta(minutes=2)
+# Max seconds for one coordinator refresh (initial and full refresh). Slow API or many optimizers may need >15 min.
+COORDINATOR_REFRESH_TIMEOUT_SEC = 1800  # 30 min
 
 CHECK_TIME_DELTA = timedelta(hours=2)  # Legacy API: treat live values as stale after 2 hours
 CHECK_TIME_DELTA_SOLAREDGE_ONE = timedelta(hours=1)  # SolarEdge One: 1 hour stale threshold
