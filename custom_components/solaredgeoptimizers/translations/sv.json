@@ -19,7 +19,8 @@
           "username": "Användarnamn (e-post)",
           "password": "Lösenord",
           "entity_id_prefix": "Enhets-ID-prefix (valfritt)",
-          "include_site_id_in_entity_id": "Inkludera plats-ID i entitets-ID"
+          "include_site_id_in_entity_id": "Inkludera plats-ID i entitets-ID",
+          "use_solaredge_one": "Använd SolarEdge One"
         }
       },
       "reauth_confirm": {
@@ -39,7 +40,8 @@
         "description": "Aktuellt prefix: {current_entity_id_prefix}. Lämna fältet tomt för inget prefix. Sparande laddar om integrationen: entitets-ID:n och unique_ids kan ändras, så historik och statistik för befintliga entiteter kan gå förlorade. Överväg att säkerhetskopiera eller exportera data först.",
         "data": {
           "entity_id_prefix": "Entitets-ID-prefix (valfritt)",
-          "include_site_id_in_entity_id": "Inkludera plats-ID i entitets-ID"
+          "include_site_id_in_entity_id": "Inkludera plats-ID i entitets-ID",
+          "use_solaredge_one": "Använd SolarEdge One"
         }
       }
     }
