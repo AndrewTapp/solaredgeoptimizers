@@ -19,7 +19,8 @@
           "username": "Usuario (correo electrónico)",
           "password": "Contraseña",
           "entity_id_prefix": "Prefijo de ID de entidad (opcional)",
-          "include_site_id_in_entity_id": "Incluir ID de sitio en ID de entidad"
+          "include_site_id_in_entity_id": "Incluir ID de sitio en ID de entidad",
+          "use_solaredge_one": "Usar SolarEdge One"
         }
       },
       "reauth_confirm": {
@@ -39,7 +40,8 @@
         "description": "Prefijo actual: {current_entity_id_prefix}. Deje el campo vacío para no usar prefijo. Al guardar se recargará la integración: los entity ID y unique_ids pueden cambiar, por lo que el historial y las estadísticas de las entidades existentes pueden perderse. Considere hacer una copia de seguridad o exportar los datos primero.",
         "data": {
           "entity_id_prefix": "Prefijo de ID de entidad (opcional)",
-          "include_site_id_in_entity_id": "Incluir ID de sitio en ID de entidad"
+          "include_site_id_in_entity_id": "Incluir ID de sitio en ID de entidad",
+          "use_solaredge_one": "Usar SolarEdge One"
         }
       }
     }
