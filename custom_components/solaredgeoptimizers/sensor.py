@@ -1,4 +1,4 @@
-"""Sensor entities for SolarEdge Optimizers Home Assistant integration."""
+"""Sensor entity definitions and registration: individual optimizer sensors plus aggregated string, inverter, and site-level sensors, populated from coordinator data."""
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -274,8 +274,11 @@ def _build_individual_optimizer_sensors(
             continue
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers sensor: Adding optimizer panel_id=%s serial=%s model=%s",
-                optimizer.optimizerId, getattr(info, "serialnumber", ""), getattr(info, "model", ""),
+                "SolarEdge Optimizers sensor: Adding optimizer panel_id=%s serial=%s model=%s panel_type=%s",
+                optimizer.optimizerId,
+                getattr(info, "serialnumber", ""),
+                getattr(info, "model", ""),
+                getattr(info, "panel_description", "") or "(none)",
             )
         # Always use position-based path for unique_id so optimizers with duplicate display
         # names (e.g. multiple "1.0.5") get distinct entity IDs and avoid "ID already exists".
@@ -917,6 +920,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
 
         Uses position-based identifiers so when an optimizer is replaced (hardware swap),
         the same device and sensors continue to show the new unit's data without duplicates.
+        Model shows optimizer model; when panel type (description) is available it is appended.
         """
         # entity_id_path is (inv_idx, str_idx, opt_idx) or (site_id, inv_idx, str_idx, opt_idx)
         path = self._entity_id_path
@@ -924,10 +928,13 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         opt_device_id = f"{entry.entry_id}_opt_{inv_idx}_{str_idx}_{opt_idx}"
         str_device_id = f"{entry.entry_id}_str_{inv_idx}_{str_idx}" if string else None
         via_device = (DOMAIN, str_device_id) if str_device_id else None
+        # Include panel type (e.g. SunPower SPR-MAX3-400) in model when available
+        desc = (getattr(panel, "panel_description", None) or "").strip()
+        model = f"{panel.model} - {desc}" if desc else panel.model
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, opt_device_id)},
             manufacturer=panel.manufacturer,
-            model=panel.model,
+            model=model,
             hw_version=panel.serialnumber,
             via_device=via_device,
             translation_key="optimizer_device",
@@ -960,6 +967,26 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             return None
         path_str = "_".join(map(str, self._entity_id_path))
         return f"{self._base_name}{slug}_{path_str}"
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose panel type (description from API) as attribute; entity IDs remain unchanged.
+        Uses current coordinator data so the value is up to date after refresh."""
+        attrs = {}
+        data = self.coordinator.data if self.coordinator else None
+        if isinstance(data, dict):
+            path = self._entity_id_path
+            lookup_key = (path[-3], path[-2], path[-1]) if len(path) >= 3 else None
+            item = data.get(lookup_key) if lookup_key else None
+            if item is None:
+                item = data.get(self._panelobject.panel_id)
+            if item is not None:
+                desc = getattr(item, "panel_description", None)
+                if desc:
+                    attrs["panel_type"] = desc
+        if not attrs and getattr(self, "_panel", None):
+            attrs["panel_type"] = self._panel
+        return attrs
 
     def _timetocheck_and_ts(self, item):
         """Return (timetocheck, ts) with ts timezone-aware. May mutate item.lastmeasurement."""
@@ -1103,6 +1130,12 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                     self._panelobject.panel_id, self._sensor_type,
                 )
             if item is not None:
+                self._panel = getattr(item, "panel_description", "") or ""
+                # Update device info so device card shows panel type when it becomes available
+                desc = (getattr(item, "panel_description", None) or "").strip()
+                if desc and getattr(self, "_attr_device_info", None):
+                    new_model = f"{getattr(item, 'model', '')} - {desc}".strip(" -") or desc
+                    self._attr_device_info = {**self._attr_device_info, "model": new_model}
                 timetocheck, ts = self._timetocheck_and_ts(item)
                 self._update_optimizer_value_from_item(item, timetocheck, ts)
         else:
