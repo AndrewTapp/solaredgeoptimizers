@@ -1,4 +1,4 @@
-"""Constants and configuration for SolarEdge Optimizers Home Assistant integration."""
+"""Integration constants: domain, config keys, update intervals, and sensor type definitions for individual optimizers and aggregated (string, inverter, site) entities."""
 from datetime import timedelta
 import logging
 
