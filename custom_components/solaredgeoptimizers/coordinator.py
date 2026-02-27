@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -23,6 +24,7 @@ from .const import (
     CHECK_TIME_DELTA,
     CHECK_TIME_DELTA_SOLAREDGE_ONE,
     CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
+    COORDINATOR_REFRESH_TIMEOUT_SEC,
     REVERT_TO_ONE_RETRY_INTERVAL,
     RELIABLE_THRESHOLD_KWH,
     LIGHT_CHECK_MIN_INTERVAL,
@@ -54,6 +56,34 @@ def _get_first_optimizer_id(site):
             if getattr(s, "optimizers", None) and s.optimizers:
                 return s.optimizers[0].optimizerId
     return None
+
+
+# Rollup state types to avoid passing many parameters (CodeFactor: too many arguments)
+SiteRollupState = namedtuple(
+    "SiteRollupState",
+    [
+        "current",
+        "power",
+        "voltage_sum",
+        "voltage_count",
+        "last_measurement",
+        "active_optimizers",
+        "active_strings",
+        "active_inverters",
+        "lifetime_energy",
+    ],
+)
+InverterRollupResult = namedtuple(
+    "InverterRollupResult",
+    [
+        "aggregated",
+        "power",
+        "active_strings",
+        "voltage_count",
+        "last_measurement",
+        "active_optimizers",
+    ],
+)
 
 
 class MyCoordinator(DataUpdateCoordinator):
@@ -322,6 +352,52 @@ class MyCoordinator(DataUpdateCoordinator):
         site_aggregated.panel_description = f"Site {site_id}"
         return site_aggregated
 
+    def _register_inverter_and_string_devices(
+        self, device_registry, site_id: str, inverter, inv_idx: int
+    ) -> None:
+        """Create device registry entries for one inverter and its strings."""
+        _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
+        inverter_name = f"Inverter {site_id}.{inv_idx}"
+        inv_model = self._inverter_models.get(inverter.serialNumber) if self._inverter_models else None
+        model = (inv_model or f"{inverter.type} {inverter.displayName}").strip() or inverter.serialNumber
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Creating inverter device serial=%s model=%r (from_api=%s)",
+                inverter.serialNumber, model, inv_model is not None,
+            )
+        inv_device_id = f"{self.config_entry.entry_id}_inv_{inv_idx}"
+        device_registry.async_get_or_create(
+            config_entry_id=self.config_entry.entry_id,
+            identifiers={(DOMAIN, inv_device_id)},
+            manufacturer="SolarEdge",
+            model=model,
+            name=inverter_name,
+            hw_version=inverter.serialNumber,
+            via_device=(DOMAIN, f"site_{self._site_structure.siteId}"),
+        )
+        for str_idx, string in enumerate(inverter.strings, start=1):
+            string_name = f"String {site_id}.{inv_idx}.{str_idx}"
+            str_device_id = f"{self.config_entry.entry_id}_str_{inv_idx}_{str_idx}"
+            device_registry.async_get_or_create(
+                config_entry_id=self.config_entry.entry_id,
+                identifiers={(DOMAIN, str_device_id)},
+                manufacturer="SolarEdge",
+                model=f"STRING {string.displayName}",
+                name=string_name,
+                via_device=(DOMAIN, inv_device_id),
+            )
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Created device for string: %s", string_name)
+
+    def ensure_devices_registered(self) -> None:
+        """Ensure site, inverter, and string devices exist in the device registry.
+
+        Call from the sensor platform before adding entities so via_device references
+        resolve (avoids 'references a non existing via_device' when setup order differs).
+        """
+        if self._site_structure is not None:
+            self._register_site_and_inverter_devices(self._site_structure)
+
     def _register_site_and_inverter_devices(self, site) -> None:
         """Create device registry entries for site, inverters, and strings."""
         device_registry = dr.async_get(self.hass)
@@ -336,40 +412,9 @@ class MyCoordinator(DataUpdateCoordinator):
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("Created device for site: %s", site_id)
         for inv_idx, inverter in enumerate(site.inverters, start=1):
-            _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
-            inverter_name = f"Inverter {site_id}.{inv_idx}"
-            inv_model = self._inverter_models.get(inverter.serialNumber) if self._inverter_models else None
-            model = (inv_model or f"{inverter.type} {inverter.displayName}").strip() or inverter.serialNumber
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers: Creating inverter device serial=%s model=%r (from_api=%s)",
-                    inverter.serialNumber, model, inv_model is not None,
-                )
-            # Position-based identifier so inverter swap does not create a new device
-            inv_device_id = f"{self.config_entry.entry_id}_inv_{inv_idx}"
-            device_registry.async_get_or_create(
-                config_entry_id=self.config_entry.entry_id,
-                identifiers={(DOMAIN, inv_device_id)},
-                manufacturer="SolarEdge",
-                model=model,
-                name=inverter_name,
-                hw_version=inverter.serialNumber,
-                via_device=(DOMAIN, f"site_{site.siteId}"),
+            self._register_inverter_and_string_devices(
+                device_registry, site_id, inverter, inv_idx
             )
-            for str_idx, string in enumerate(inverter.strings, start=1):
-                string_name = f"String {site_id}.{inv_idx}.{str_idx}"
-                # Position-based identifier so string identity is stable
-                str_device_id = f"{self.config_entry.entry_id}_str_{inv_idx}_{str_idx}"
-                device_registry.async_get_or_create(
-                    config_entry_id=self.config_entry.entry_id,
-                    identifiers={(DOMAIN, str_device_id)},
-                    manufacturer="SolarEdge",
-                    model=f"STRING {string.displayName}",
-                    name=string_name,
-                    via_device=(DOMAIN, inv_device_id),
-                )
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("Created device for string: %s", string_name)
 
     async def _async_setup(self) -> None:
         """Set up the coordinator.
@@ -398,6 +443,129 @@ class MyCoordinator(DataUpdateCoordinator):
             raise
         self._register_site_and_inverter_devices(site)
 
+    def _process_inverter_strings(
+        self,
+        inverter,
+        inv_idx,
+        data_dict,
+        timetocheck,
+        lifetime_energy_lookup,
+        current_utc,
+        site_id_str,
+        include_site_id_in_entity_id,
+    ):
+        """Process all strings for one inverter; write string aggregates into data_dict.
+
+        Returns (inverter_current, inverter_power, inverter_voltage_sum, inverter_voltage_count,
+                 inverter_last_measurement, inverter_active_optimizers, inverter_active_strings,
+                 inverter_lifetime_energy).
+        """
+        inverter_current = 0.0
+        inverter_power = 0.0
+        inverter_voltage_sum = 0.0
+        inverter_voltage_count = 0
+        inverter_last_measurement = None
+        inverter_active_optimizers = 0
+        inverter_active_strings = 0
+        inverter_lifetime_energy = 0.0
+
+        for str_idx, string in enumerate(inverter.strings, start=1):
+            (
+                string_current,
+                string_power,
+                string_voltage_sum,
+                string_voltage_count,
+                string_last_measurement,
+                string_active_optimizers,
+            ) = self._aggregate_optimizers_in_string(string, data_dict, timetocheck)
+
+            string_lifetime_energy = 0.0
+            energy_data = lifetime_energy_lookup.get(string.stringId)
+            if energy_data:
+                kWh = _lifetime_energy_to_kwh(energy_data)
+                if kWh is not None:
+                    string_lifetime_energy = round(kWh, 3)
+            inverter_lifetime_energy = round(inverter_lifetime_energy + string_lifetime_energy, 3)
+
+            string_aggregated = self._create_string_aggregated(
+                string,
+                string_current,
+                string_power,
+                string_voltage_sum,
+                string_voltage_count,
+                string_last_measurement,
+                string_active_optimizers,
+                string_lifetime_energy,
+                current_utc,
+                site_id_str,
+                inv_idx,
+                str_idx,
+                include_site_id_in_entity_id,
+            )
+            data_dict[string_aggregated.panel_id] = string_aggregated
+
+            if string_active_optimizers > 0:
+                inverter_current += string_aggregated.current
+                inverter_active_strings += 1
+                inverter_power += string_power
+                if string_voltage_count > 0:
+                    inverter_voltage_sum += string_aggregated.voltage
+                    inverter_voltage_count += 1
+                inverter_active_optimizers += string_active_optimizers
+            if inverter_last_measurement is None or (
+                string_last_measurement and string_last_measurement > inverter_last_measurement
+            ):
+                inverter_last_measurement = string_last_measurement
+
+        return (
+            inverter_current,
+            inverter_power,
+            inverter_voltage_sum,
+            inverter_voltage_count,
+            inverter_last_measurement,
+            inverter_active_optimizers,
+            inverter_active_strings,
+            inverter_lifetime_energy,
+        )
+
+    def _merge_inverter_into_site_rollup(
+        self, site: SiteRollupState, inv_result: InverterRollupResult
+    ) -> SiteRollupState:
+        """Update site rollup state with one inverter's aggregated data. Returns new state."""
+        lifetime_energy = round(site.lifetime_energy + inv_result.aggregated.lifetime_energy, 3)
+        active_optimizers = site.active_optimizers + inv_result.active_optimizers
+        active_strings = site.active_strings + inv_result.active_strings
+        last_measurement = site.last_measurement
+        if last_measurement is None or (
+            inv_result.last_measurement and inv_result.last_measurement > last_measurement
+        ):
+            last_measurement = inv_result.last_measurement
+
+        current = site.current
+        power = site.power
+        voltage_sum = site.voltage_sum
+        voltage_count = site.voltage_count
+        active_inverters = site.active_inverters
+        if inv_result.active_strings > 0:
+            current += inv_result.aggregated.current
+            active_inverters += 1
+            power += inv_result.power
+            if inv_result.voltage_count > 0:
+                voltage_sum += inv_result.aggregated.voltage
+                voltage_count += 1
+
+        return SiteRollupState(
+            current=current,
+            power=power,
+            voltage_sum=voltage_sum,
+            voltage_count=voltage_count,
+            last_measurement=last_measurement,
+            active_optimizers=active_optimizers,
+            active_strings=active_strings,
+            active_inverters=active_inverters,
+            lifetime_energy=lifetime_energy,
+        )
+
     def _calculate_aggregated_data(
         self,
         data_dict,
@@ -417,73 +585,38 @@ class MyCoordinator(DataUpdateCoordinator):
         """
         lifetime_energy_lookup = self._build_lifetime_energy_lookup(lifetime_energy_data)
         site_id_str = str(site_id)
-        site_current = 0.0
-        site_power = 0.0
-        site_voltage_sum = 0.0
-        site_voltage_count = 0
-        site_last_measurement = None
-        site_active_optimizers = 0
-        site_active_strings = 0
-        site_active_inverters = 0
-        site_lifetime_energy = 0.0
+        site = SiteRollupState(
+            current=0.0,
+            power=0.0,
+            voltage_sum=0.0,
+            voltage_count=0,
+            last_measurement=None,
+            active_optimizers=0,
+            active_strings=0,
+            active_inverters=0,
+            lifetime_energy=0.0,
+        )
 
         for inv_idx, inverter in enumerate(self._site_structure.inverters, start=1):
-            inverter_current = 0.0
-            inverter_power = 0.0
-            inverter_voltage_sum = 0.0
-            inverter_voltage_count = 0
-            inverter_last_measurement = None
-            inverter_active_optimizers = 0
-            inverter_active_strings = 0
-            inverter_lifetime_energy = 0.0
-
-            for str_idx, string in enumerate(inverter.strings, start=1):
-                (
-                    string_current,
-                    string_power,
-                    string_voltage_sum,
-                    string_voltage_count,
-                    string_last_measurement,
-                    string_active_optimizers,
-                ) = self._aggregate_optimizers_in_string(string, data_dict, timetocheck)
-
-                string_lifetime_energy = 0.0
-                energy_data = lifetime_energy_lookup.get(string.stringId)
-                if energy_data:
-                    kWh = _lifetime_energy_to_kwh(energy_data)
-                    if kWh is not None:
-                        string_lifetime_energy = round(kWh, 3)
-                inverter_lifetime_energy = round(inverter_lifetime_energy + string_lifetime_energy, 3)
-
-                string_aggregated = self._create_string_aggregated(
-                    string,
-                    string_current,
-                    string_power,
-                    string_voltage_sum,
-                    string_voltage_count,
-                    string_last_measurement,
-                    string_active_optimizers,
-                    string_lifetime_energy,
-                    current_utc,
-                    site_id_str,
-                    inv_idx,
-                    str_idx,
-                    include_site_id_in_entity_id,
-                )
-                data_dict[string_aggregated.panel_id] = string_aggregated
-
-                if string_active_optimizers > 0:
-                    inverter_current += string_aggregated.current
-                    inverter_active_strings += 1
-                    inverter_power += string_power
-                    if string_voltage_count > 0:
-                        inverter_voltage_sum += string_aggregated.voltage
-                        inverter_voltage_count += 1
-                    inverter_active_optimizers += string_active_optimizers
-                if inverter_last_measurement is None or (
-                    string_last_measurement and string_last_measurement > inverter_last_measurement
-                ):
-                    inverter_last_measurement = string_last_measurement
+            (
+                inverter_current,
+                inverter_power,
+                inverter_voltage_sum,
+                inverter_voltage_count,
+                inverter_last_measurement,
+                inverter_active_optimizers,
+                inverter_active_strings,
+                inverter_lifetime_energy,
+            ) = self._process_inverter_strings(
+                inverter,
+                inv_idx,
+                data_dict,
+                timetocheck,
+                lifetime_energy_lookup,
+                current_utc,
+                site_id_str,
+                include_site_id_in_entity_id,
+            )
 
             inverter_aggregated = self._create_inverter_aggregated(
                 inverter,
@@ -501,22 +634,18 @@ class MyCoordinator(DataUpdateCoordinator):
                 include_site_id_in_entity_id,
             )
             data_dict[inverter_aggregated.panel_id] = inverter_aggregated
-            site_lifetime_energy = round(site_lifetime_energy + inverter_aggregated.lifetime_energy, 3)
 
-            if inverter_active_strings > 0:
-                site_current += inverter_aggregated.current
-                site_active_inverters += 1
-                site_power += inverter_power
-                if inverter_voltage_count > 0:
-                    site_voltage_sum += inverter_aggregated.voltage
-                    site_voltage_count += 1
-            site_active_optimizers += inverter_active_optimizers
-            site_active_strings += inverter_active_strings
-            if site_last_measurement is None or (
-                inverter_last_measurement and inverter_last_measurement > site_last_measurement
-            ):
-                site_last_measurement = inverter_last_measurement
+            inv_result = InverterRollupResult(
+                aggregated=inverter_aggregated,
+                power=inverter_power,
+                active_strings=inverter_active_strings,
+                voltage_count=inverter_voltage_count,
+                last_measurement=inverter_last_measurement,
+                active_optimizers=inverter_active_optimizers,
+            )
+            site = self._merge_inverter_into_site_rollup(site, inv_result)
 
+        site_lifetime_energy = site.lifetime_energy
         if (
             portal_site_lifetime_kwh is not None
             and portal_site_lifetime_kwh >= RELIABLE_THRESHOLD_KWH
@@ -526,14 +655,14 @@ class MyCoordinator(DataUpdateCoordinator):
 
         site_aggregated = self._create_site_aggregated(
             site_id,
-            site_current,
-            site_power,
-            site_voltage_sum,
-            site_voltage_count,
-            site_last_measurement,
+            site.current,
+            site.power,
+            site.voltage_sum,
+            site.voltage_count,
+            site.last_measurement,
             site_lifetime_energy,
-            site_active_optimizers,
-            site_active_inverters,
+            site.active_optimizers,
+            site.active_inverters,
             current_utc,
         )
         data_dict[site_aggregated.panel_id] = site_aggregated
@@ -649,6 +778,20 @@ class MyCoordinator(DataUpdateCoordinator):
                 _LOGGER.debug("Lightweight update check failed: %s", e)
             return False
 
+    def _index_optimizers_by_position(self, data_dict: dict) -> None:
+        """Add position keys (inv_idx, str_idx, opt_idx) to data_dict for stable lookup after hardware swap."""
+        if not self._site_structure:
+            return
+        for inv_idx, inverter in enumerate(self._site_structure.inverters, start=1):
+            for str_idx, string in enumerate(inverter.strings, start=1):
+                for opt_idx, optimizer in enumerate(
+                    getattr(string, "optimizers") or (), start=1
+                ):
+                    pos_key = (inv_idx, str_idx, opt_idx)
+                    item = data_dict.get(optimizer.optimizerId)
+                    if item is not None:
+                        data_dict[pos_key] = item
+
     def _build_data_dict(self, data_list, current_data, is_data_dict):
         """Build data_dict from full refresh list or reuse current_data. Updates first_boot and _obtained_from.
 
@@ -661,17 +804,7 @@ class MyCoordinator(DataUpdateCoordinator):
                 if item is None:
                     continue
                 data_dict[item.panel_id] = item
-            # Key optimizer data by logical position (inv_idx, str_idx, opt_idx) for stable lookup after hardware swap
-            if self._site_structure:
-                for inv_idx, inverter in enumerate(self._site_structure.inverters, start=1):
-                    for str_idx, string in enumerate(inverter.strings, start=1):
-                        for opt_idx, optimizer in enumerate(
-                            getattr(string, "optimizers") or (), start=1
-                        ):
-                            pos_key = (inv_idx, str_idx, opt_idx)
-                            item = data_dict.get(optimizer.optimizerId)
-                            if item is not None:
-                                data_dict[pos_key] = item
+            self._index_optimizers_by_position(data_dict)
             self.first_boot = False
             self._obtained_from = getattr(self.my_api, "_obtained_from", OBTAINED_FROM_ONE)
             if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -742,6 +875,77 @@ class MyCoordinator(DataUpdateCoordinator):
             include_site_id_in_entity_id=self._include_site_id_in_entity,
         )
 
+    def _log_update_cycle_debug(
+        self,
+        do_full_refresh: bool,
+        should_light_check: bool,
+        latest_measurement,
+        stale_delta: timedelta,
+        now_utc: datetime,
+    ) -> None:
+        """Log debug info for the current update cycle."""
+        if not _LOGGER.isEnabledFor(logging.DEBUG):
+            return
+        measurement_age = (now_utc - latest_measurement) if isinstance(latest_measurement, datetime) else None
+        desired_interval = (
+            timedelta(minutes=15)
+            if (measurement_age is None or measurement_age > stale_delta)
+            else timedelta(minutes=2)
+        )
+        _LOGGER.debug(
+            "SolarEdge Optimizers coordinator: update cycle do_full_refresh=%s should_light_check=%s measurement_age=%s desired_interval=%s latest_measurement=%s",
+            do_full_refresh,
+            should_light_check,
+            measurement_age,
+            desired_interval,
+            latest_measurement,
+        )
+
+    async def _run_update_cycle(
+        self,
+        now_utc: datetime,
+        do_full_refresh: bool,
+        current_data,
+        is_data_dict: bool,
+        stale_delta: timedelta,
+    ):
+        """Execute one update cycle: fetch if needed, build data_dict, aggregate, return data_dict."""
+        data_list = None
+        if do_full_refresh:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers coordinator: Performing full refresh (requestAllData)")
+            data_list = await self.hass.async_add_executor_job(self.my_api.requestAllData)
+            self._last_full_fetch_utc = now_utc
+
+        current_utc = now_utc
+        self._timetocheck = current_utc - stale_delta
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Timezone debug - Current UTC: %s | Stale delta: %s | Checking time: %s | HA timezone: %s",
+                current_utc,
+                stale_delta,
+                self._timetocheck,
+                self.hass.config.time_zone,
+            )
+
+        data_dict = self._build_data_dict(data_list, current_data, is_data_dict)
+
+        if not do_full_refresh:
+            await self._refresh_temperature_when_no_full_refresh(data_dict)
+
+        if self._site_structure:
+            site_id = self._site_structure.siteId
+            await self._fetch_lifetime_energy_and_aggregate(data_dict, current_utc, site_id)
+
+        self._integration_last_polled = current_utc
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Update complete, data_dict has %d entries, last_polled=%s",
+                len(data_dict) if isinstance(data_dict, dict) else 0,
+                self._integration_last_polled,
+            )
+        return data_dict
+
     async def _async_update_data(self):
         """Fetch data from API endpoint.
 
@@ -749,8 +953,13 @@ class MyCoordinator(DataUpdateCoordinator):
         so entities can quickly look up their data.
         """
         try:
-            # Allow up to 15 min for initial/cold-cache refresh (many optimizers + lifetime energy fetch)
-            async with asyncio.timeout(900):
+            # Ensure site/inverter/string devices are registered before any update.
+            # Required so optimizer entities can reference via_device; some HA versions
+            # may not call _async_setup before the first refresh.
+            if self._site_structure is None:
+                await self._async_setup()
+            # Allow up to COORDINATOR_REFRESH_TIMEOUT_SEC for initial/cold-cache refresh (slow API or many optimizers)
+            async with asyncio.timeout(COORDINATOR_REFRESH_TIMEOUT_SEC):
                 now_utc = datetime.now(timezone.utc)
                 current_data = getattr(self, "data", None)
                 is_data_dict = isinstance(current_data, dict)
@@ -774,62 +983,23 @@ class MyCoordinator(DataUpdateCoordinator):
                     do_full_refresh, now_utc, latest_measurement, stale_delta
                 )
 
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    measurement_age = (now_utc - latest_measurement) if isinstance(latest_measurement, datetime) else None
-                    desired_interval = (
-                        timedelta(minutes=15)
-                        if (measurement_age is None or measurement_age > stale_delta)
-                        else timedelta(minutes=2)
-                    )
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers coordinator: update cycle do_full_refresh=%s should_light_check=%s measurement_age=%s desired_interval=%s latest_measurement=%s",
-                        do_full_refresh,
-                        should_light_check,
-                        measurement_age,
-                        desired_interval,
-                        latest_measurement,
-                    )
+                self._log_update_cycle_debug(
+                    do_full_refresh, should_light_check, latest_measurement, stale_delta, now_utc
+                )
 
-                if should_light_check:
-                    if await self._run_light_check(now_utc, latest_measurement):
-                        do_full_refresh = True
+                if should_light_check and await self._run_light_check(now_utc, latest_measurement):
+                    do_full_refresh = True
 
-                data_list = None
-                if do_full_refresh:
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug("SolarEdge Optimizers coordinator: Performing full refresh (requestAllData)")
-                    data_list = await self.hass.async_add_executor_job(self.my_api.requestAllData)
-                    self._last_full_fetch_utc = now_utc
+                return await self._run_update_cycle(
+                    now_utc, do_full_refresh, current_data, is_data_dict, stale_delta
+                )
 
-                current_utc = now_utc
-                self._timetocheck = current_utc - stale_delta
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "Timezone debug - Current UTC: %s | Stale delta: %s | Checking time: %s | HA timezone: %s",
-                        current_utc,
-                        stale_delta,
-                        self._timetocheck,
-                        self.hass.config.time_zone,
-                    )
-
-                data_dict = self._build_data_dict(data_list, current_data, is_data_dict)
-
-                if not do_full_refresh:
-                    await self._refresh_temperature_when_no_full_refresh(data_dict)
-
-                if self._site_structure:
-                    site_id = self._site_structure.siteId
-                    await self._fetch_lifetime_energy_and_aggregate(data_dict, current_utc, site_id)
-
-                self._integration_last_polled = current_utc
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers: Update complete, data_dict has %d entries, last_polled=%s",
-                        len(data_dict) if isinstance(data_dict, dict) else 0,
-                        self._integration_last_polled,
-                    )
-                return data_dict
-
+        except (asyncio.TimeoutError, TimeoutError) as err:
+            _LOGGER.error(
+                "SolarEdge Optimizers: Refresh timed out after %s s (slow API or many optimizers). Consider checking network or SolarEdge portal.",
+                COORDINATOR_REFRESH_TIMEOUT_SEC,
+            )
+            raise UpdateFailed(err) from err
         except Exception as err:  # pylint: disable=broad-except
             _LOGGER.exception("Error in updating updater: %s", err)
             raise UpdateFailed(err) from err
