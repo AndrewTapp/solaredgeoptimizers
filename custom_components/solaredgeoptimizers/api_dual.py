@@ -20,15 +20,20 @@ OBTAINED_FROM_LEGACY = "Legacy API"
 class SolarEdgeDualAPI:
     """
     Wrapper that tries SolarEdge One API first; if One returns no valid optimizer
-    measurements, falls back to the legacy SolarEdge API. Tracks which source
-    was used in _obtained_from for the site-level "Obtained from" sensor.
+    measurements, falls back to the legacy SolarEdge API. When use_solaredge_one
+    is False, always uses the legacy API only. Tracks which source was used in
+    _obtained_from for the site-level "Obtained from" sensor.
     """
 
-    def __init__(self, siteid: str, username: str, password: str, timezone=None, language=None):
+    def __init__(self, siteid: str, username: str, password: str, timezone=None, language=None, use_solaredge_one: bool = True):
+        self._use_solaredge_one = bool(use_solaredge_one)
         self._one = solaredge_one(siteid, username, password, timezone, language)
         self._legacy = solaredgeoptimizers(siteid, username, password, timezone, language)
-        self._last_used_api: str | None = None  # "one" or "legacy"
-        self._obtained_from: str = OBTAINED_FROM_ONE  # For sensor; default until first fetch
+        self._last_used_api: str | None = "legacy" if not self._use_solaredge_one else None  # "one" or "legacy"
+        self._obtained_from: str = OBTAINED_FROM_LEGACY if not self._use_solaredge_one else OBTAINED_FROM_ONE
+        # When legacy-only, hide batch API so coordinator uses single-optimizer light check and 2h stale threshold
+        if not self._use_solaredge_one:
+            self.requestSystemDataBatch = None  # type: ignore[assignment]
 
     def check_login(self) -> int:
         """Succeed if either One or legacy login works (so fallback is available)."""
@@ -52,7 +57,9 @@ class SolarEdgeDualAPI:
         return code_one if code_one != 200 else code_legacy
 
     def requestListOfAllPanels(self) -> Any:
-        """Prefer One for layout; fall back to legacy on failure."""
+        """Prefer One for layout (unless use_solaredge_one is False); fall back to legacy on failure."""
+        if not self._use_solaredge_one:
+            return self._legacy.requestListOfAllPanels()
         try:
             return self._one.requestListOfAllPanels()
         except Exception as e:  # pylint: disable=broad-except
@@ -72,9 +79,17 @@ class SolarEdgeDualAPI:
 
     def requestAllData(self) -> list[Any]:
         """
-        Try One first; if One returns data but no optimizer has valid measurements,
-        use legacy and set _obtained_from to Legacy API. Otherwise use One.
+        When use_solaredge_one is False, always use legacy. Otherwise try One first;
+        if One returns no valid measurements or fails, use legacy and set _obtained_from to Legacy API.
         """
+        if not self._use_solaredge_one:
+            data_list = self._legacy.requestAllData()
+            self._last_used_api = "legacy"
+            self._obtained_from = OBTAINED_FROM_LEGACY
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Dual API: Using Legacy API only (use_solaredge_one=False)")
+            return data_list or []
+
         self._obtained_from = OBTAINED_FROM_ONE
         data_list = None
         try:
@@ -110,22 +125,24 @@ class SolarEdgeDualAPI:
 
     def get_lifetime_energy_cached(self) -> dict[str, Any]:
         """Return lifetime energy from the API that was last used for requestAllData."""
-        if self._last_used_api == "legacy":
+        if not self._use_solaredge_one or self._last_used_api == "legacy":
             return self._legacy.get_lifetime_energy_cached()
         return self._one.get_lifetime_energy_cached()
 
     def requestSystemData(self, item_id: str) -> Any:
         """Delegate to the API we last used for full data (for lightweight check in legacy mode)."""
-        if self._last_used_api == "legacy":
+        if not self._use_solaredge_one or self._last_used_api == "legacy":
             return self._legacy.requestSystemData(item_id)
         return self._one.requestSystemData(item_id)
 
     def requestSystemDataBatch(self, item_ids: list) -> list[Any]:
-        """Use One for batch (only One supports it); used to detect when One has new data."""
+        """Use One for batch (only One supports it); used to detect when One has new data. Set to None when use_solaredge_one is False."""
         return self._one.requestSystemDataBatch(item_ids)
 
     def get_inverter_models(self, serials: list) -> dict[str, str]:
-        """Only One provides inverter models."""
+        """Only One provides inverter models; when use_solaredge_one is False return empty."""
+        if not self._use_solaredge_one:
+            return {}
         return self._one.get_inverter_models(serials)
 
     def close(self) -> None:
@@ -133,8 +150,10 @@ class SolarEdgeDualAPI:
         try:
             self._one.close()
         except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.debug("SolarEdge Dual API: Error closing One API: %s", e)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Dual API: Error closing One API: %s", e)
         try:
             self._legacy.close()
         except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.debug("SolarEdge Dual API: Error closing legacy API: %s", e)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Dual API: Error closing legacy API: %s", e)
