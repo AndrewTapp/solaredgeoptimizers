@@ -1,4 +1,4 @@
-"""Protocol for SolarEdge API clients (legacy and SolarEdge One)."""
+"""Typing Protocol for SolarEdge API clients: interface implemented by both the legacy Monitoring API and the SolarEdge One API, used by the coordinator."""
 from __future__ import annotations
 
 from typing import Any, Protocol
