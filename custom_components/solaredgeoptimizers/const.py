@@ -1,4 +1,6 @@
 """Integration constants: domain, config keys, update intervals, and sensor type definitions for individual optimizers and aggregated (string, inverter, site) entities."""
+from __future__ import annotations
+
 from datetime import timedelta
 import logging
 
@@ -71,3 +73,45 @@ SENSOR_TYPE_AGGREGATED_SITE = SENSOR_TYPE_AGGREGATED_COMMON + [
 ]
 
 SENSOR_TYPE = SENSOR_TYPE_INDIVIDUAL  # For backwards compatibility
+
+
+def parse_string_display_name_path(display_name: str) -> tuple[int, int] | None:
+    """Parse string displayName (e.g. '1.0', '1.1', 'String 1.0') into (inv, str) for device/entity IDs.
+    Returns None if not in expected format so callers can fall back to position-based indices."""
+    if not display_name or not isinstance(display_name, str):
+        return None
+    raw = display_name.strip()
+    if raw.upper().startswith("STRING "):
+        raw = raw[7:].strip()
+    parts = raw.split(".")
+    if len(parts) != 2:
+        return None
+    try:
+        nums = [int(p.strip()) for p in parts if p.strip().isdigit()]
+    except (ValueError, TypeError):
+        return None
+    if len(nums) != 2:
+        return None
+    return (nums[0], nums[1])
+
+
+def parse_optimizer_display_name_to_indices(display_name: str) -> tuple[int, int, int] | None:
+    """Parse optimizer displayName (e.g. '1.0.1', 'Optimizer 1.0.1') into (inv, str, opt) for device/entity IDs.
+    Returns None if not in expected format so callers can fall back to position-based indices."""
+    if not display_name or not isinstance(display_name, str):
+        return None
+    raw = display_name.strip()
+    if raw.upper().startswith("OPTIMIZER "):
+        raw = raw[10:].strip()
+    parts = raw.split(".")
+    if len(parts) not in (3, 4):
+        return None
+    try:
+        nums = [int(p.strip()) for p in parts if p.strip().isdigit()]
+    except (ValueError, TypeError):
+        return None
+    if len(nums) != len(parts):
+        return None
+    if len(nums) == 3:
+        return (nums[0], nums[1], nums[2])
+    return (nums[1], nums[2], nums[3])  # site.inv.str.opt -> inv, str, opt
