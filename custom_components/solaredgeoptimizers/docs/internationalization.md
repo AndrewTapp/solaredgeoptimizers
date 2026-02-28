@@ -34,7 +34,7 @@ The integration sets `translation_domain` to the integration domain so the front
 
 - **Sensor entity names**: Power, Voltage, Current, Optimizer voltage, Temperature, Lifetime energy, Last measurement, Last polled, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Obtained from — from `entity.sensor.<translation_key>.name` (e.g. `entity.sensor.power.name`, `entity.sensor.obtained_from.name`). Temperature values are stored in °C (the portal may send °C or °F; the integration normalizes to °C); Home Assistant converts to the user’s preferred unit for display.
 - **Sensor attribute labels**: The **Panel type** attribute (shown on optimizer sensors when the API provides a panel type/description) is translated from `entity.sensor.state_attributes.panel_type.name` in each translation file.
-- **Device names**: Site, Inverter, String, Optimizer device names use `device.site_device`, `device.inverter_device`, `device.string_device`, `device.optimizer_device` with placeholders `{site_id}` or `{display_name}`. Display names follow the hierarchy Site [site], Inverter [site].[i], String [site].[i].[s], Optimizer [site].[i].[s].[o] so multiple sites stay distinct; the labels (e.g. "Site", "Wechselrichter") are translated.
+- **Device names**: Site, Inverter, String, Optimizer device names use `device.site_device`, `device.inverter_device`, `device.string_device`, `device.optimizer_device` with placeholders `{site_id}` or `{display_name}`. At string and optimizer level, `{display_name}` is the **API display name** (e.g. "1.0", "1.0.1"), so device names and entity IDs stay in sync (e.g. "String 1.0", `sensor.lifetime_energy_1_0`). The hierarchy is Site [site], Inverter [site].[i], String [site].[i].[s], Optimizer [site].[i].[s].[o]; the labels (e.g. "Site", "Wechselrichter") are translated.
 
 ### API requests
 
@@ -44,7 +44,7 @@ The integration sets `translation_domain` to the integration domain so the front
 
 - **Log messages**: All log text is in English for consistency and debugging.
 - **Manufacturer/model**: "SolarEdge", "SITE", "STRING" and similar technical identifiers are left in English.
-- **Optimizer/string/inverter display name suffixes**: The numeric part (e.g. "1.1.1") comes from the SolarEdge API and is not translated.
+- **Optimizer/string/inverter display name suffixes**: The numeric part (e.g. "1.0.1", "1.0") comes from the SolarEdge API and is not translated; it is used for device names and entity IDs at string and optimizer level when it parses.
 
 ## Supported languages
 
