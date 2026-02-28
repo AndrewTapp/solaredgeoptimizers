@@ -38,6 +38,8 @@ from .const import (
     SENSOR_TYPE_LASTMEASUREMENT,
     SENSOR_TYPE_CHILD_COUNT,
     CHECK_TIME_DELTA,
+    parse_string_display_name_path,
+    parse_optimizer_display_name_to_indices,
 )
 
 # Changed import to use coordinator module
@@ -198,8 +200,8 @@ def _remove_sensor_entities_for_entry(hass: HomeAssistant, entry: ConfigEntry) -
 def _build_optimizer_tasks(site):
     """Build list of (optimizer, inverter, string, inv_idx, str_idx, opt_idx) for all optimizers.
 
-    Deduplicates by (inv_idx, str_idx, opt_idx) so that if the API returns the same logical
-    position twice (e.g. old and new serial after a hardware swap), we create only one sensor set.
+    Uses display-name-based (inv, str, opt) when optimizer.displayName parses (e.g. '1.0.1'),
+    else position-based from enumerate. Deduplicates by (inv_idx, str_idx, opt_idx).
     """
     seen = set()
     tasks = []
@@ -207,11 +209,16 @@ def _build_optimizer_tasks(site):
         _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
         for str_idx, string in enumerate(inverter.strings, start=1):
             for opt_idx, optimizer in enumerate(string.optimizers, start=1):
-                key = (inv_idx, str_idx, opt_idx)
+                parsed = parse_optimizer_display_name_to_indices(getattr(optimizer, "displayName", "") or "")
+                if parsed is not None:
+                    inv_num, str_num, opt_num = parsed
+                else:
+                    inv_num, str_num, opt_num = inv_idx, str_idx, opt_idx
+                key = (inv_num, str_num, opt_num)
                 if key in seen:
                     continue
                 seen.add(key)
-                tasks.append((optimizer, inverter, string, inv_idx, str_idx, opt_idx))
+                tasks.append((optimizer, inverter, string, inv_num, str_num, opt_num))
     return tasks
 
 
@@ -302,10 +309,16 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
         return sensors
     for inv_idx, inverter in enumerate(site_struct.inverters, start=1):
         for str_idx, string in enumerate(inverter.strings, start=1):
+            parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
+            if parsed is not None:
+                inv_num, str_num = parsed
+                string_entity_path = (site_id, inv_num, str_num) if include_site_id else (inv_num, str_num)
+            else:
+                string_entity_path = (site_id, inv_idx, str_idx) if include_site_id else (inv_idx, str_idx)
             string_aggregated = SolarEdgeAggregatedData(
                 entity_id=f"string_{string.stringId}",
                 entity_type="string",
-                entity_id_path=(site_id, inv_idx, str_idx) if include_site_id else (inv_idx, str_idx),
+                entity_id_path=string_entity_path,
             )
             string_aggregated.serialnumber = f"String_{string.stringId}"
             string_aggregated.panel_description = string.displayName
@@ -643,7 +656,11 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
     def _device_info_for_string(
         self, entry: ConfigEntry, panel: SolarEdgeAggregatedData, string
     ) -> DeviceInfo:
-        """Build DeviceInfo for a string-level aggregated sensor."""
+        """Build DeviceInfo for a string-level aggregated sensor.
+
+        Device identifier uses entity_id_path (display-name-based e.g. 1_0, or position-based)
+        so entity IDs and device match. Device name shows API displayName (e.g. "String 1.0").
+        """
         path = panel.entity_id_path or ()
         inv_idx = path[-2] if len(path) >= 2 else path[0] if path else 0
         str_idx = path[-1] if len(path) >= 1 else 0
