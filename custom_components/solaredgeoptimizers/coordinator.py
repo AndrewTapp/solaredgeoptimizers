@@ -28,6 +28,7 @@ from .const import (
     REVERT_TO_ONE_RETRY_INTERVAL,
     RELIABLE_THRESHOLD_KWH,
     LIGHT_CHECK_MIN_INTERVAL,
+    parse_string_display_name_path,
 )
 from .api_dual import OBTAINED_FROM_LEGACY, OBTAINED_FROM_ONE
 from .solaredgeoptimizers import (
@@ -251,13 +252,9 @@ class MyCoordinator(DataUpdateCoordinator):
         string_active_optimizers,
         string_lifetime_energy,
         current_utc,
-        site_id_str,
-        inv_idx,
-        str_idx,
-        include_site_id_in_entity_id,
+        string_entity_path,
     ):
-        """Build SolarEdgeAggregatedData for a string."""
-        string_entity_path = (site_id_str, inv_idx, str_idx) if include_site_id_in_entity_id else (inv_idx, str_idx)
+        """Build SolarEdgeAggregatedData for a string. string_entity_path is display-name-based (e.g. (1, 0)) or position-based (inv_idx, str_idx)."""
         string_aggregated = SolarEdgeAggregatedData(
             entity_id=f"string_{string.stringId}",
             entity_type="string",
@@ -376,8 +373,14 @@ class MyCoordinator(DataUpdateCoordinator):
             via_device=(DOMAIN, f"site_{self._site_structure.siteId}"),
         )
         for str_idx, string in enumerate(inverter.strings, start=1):
-            string_name = f"String {site_id}.{inv_idx}.{str_idx}"
-            str_device_id = f"{self.config_entry.entry_id}_str_{inv_idx}_{str_idx}"
+            parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
+            if parsed is not None:
+                inv_num, str_num = parsed
+                string_name = f"String {site_id}.{inv_num}.{str_num}"
+                str_device_id = f"{self.config_entry.entry_id}_str_{inv_num}_{str_num}"
+            else:
+                string_name = f"String {site_id}.{inv_idx}.{str_idx}"
+                str_device_id = f"{self.config_entry.entry_id}_str_{inv_idx}_{str_idx}"
             device_registry.async_get_or_create(
                 config_entry_id=self.config_entry.entry_id,
                 identifiers={(DOMAIN, str_device_id)},
@@ -487,6 +490,12 @@ class MyCoordinator(DataUpdateCoordinator):
                     string_lifetime_energy = round(kWh, 3)
             inverter_lifetime_energy = round(inverter_lifetime_energy + string_lifetime_energy, 3)
 
+            parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
+            if parsed is not None:
+                inv_num, str_num = parsed
+                string_entity_path = (site_id_str, inv_num, str_num) if include_site_id_in_entity_id else (inv_num, str_num)
+            else:
+                string_entity_path = (site_id_str, inv_idx, str_idx) if include_site_id_in_entity_id else (inv_idx, str_idx)
             string_aggregated = self._create_string_aggregated(
                 string,
                 string_current,
@@ -497,10 +506,7 @@ class MyCoordinator(DataUpdateCoordinator):
                 string_active_optimizers,
                 string_lifetime_energy,
                 current_utc,
-                site_id_str,
-                inv_idx,
-                str_idx,
-                include_site_id_in_entity_id,
+                string_entity_path,
             )
             data_dict[string_aggregated.panel_id] = string_aggregated
 
