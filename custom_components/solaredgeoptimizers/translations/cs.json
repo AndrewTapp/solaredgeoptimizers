@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Získáno z"
       },
+      "status": {
+        "name": "Stav"
+      },
+      "azimuth": {
+        "name": "Azimut"
+      },
+      "tilt": {
+        "name": "Sklon"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Typ panelu"
