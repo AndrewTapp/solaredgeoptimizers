@@ -18,12 +18,14 @@ Used by api_dual when Use SolarEdge One is enabled. Endpoints (monitoring.solare
 Authentication: SolarEdge One uses OAuth/OIDC via login.solaredge.com; we use PKCE, then exchange
 the authorization code at /oauth2/token for an access_token and use Bearer token for all /services/ API calls.
 """
+import math
 import base64
 import hashlib
 import json
 import logging
 import os
 import secrets
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
@@ -237,13 +239,20 @@ def _v2_find_children_by_type(parent: dict, node_type: str) -> list:
     return out
 
 
-def _v2_build_optimizer_logical_node(opt_node: dict) -> dict:
+def _v2_build_optimizer_logical_node(opt_node: dict, resolved_name: str = None) -> dict:
     """Build one optimizer logical node (data only, no children) for SolarEdgeSite."""
     opt_props = opt_node.get("properties") or {}
     opt_serial = opt_node.get("serial") or opt_props.get("identifier") or opt_node.get("uuid", "")
-    opt_name = opt_node.get("name") or opt_serial
+    opt_name = resolved_name if resolved_name else (opt_node.get("name") or opt_serial)
     opt_display = opt_node.get("displayOrder") or opt_name
     opt_order = opt_node.get("order") or 0
+    status_raw = opt_props.get("status") or ""
+    status = status_raw.capitalize() if status_raw else ""
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge One: Building optimizer node serial=%s name=%s status=%s",
+            opt_serial, opt_name, status or "(none)",
+        )
     return {
         "data": {
             "id": opt_serial,
@@ -253,31 +262,117 @@ def _v2_build_optimizer_logical_node(opt_node: dict) -> dict:
             "relativeOrder": opt_order,
             "type": "OPTIMIZER",
             "operationsKey": opt_node.get("uuid") or "",
+            "status": status,
         }
     }
 
 
+def _make_duplicate_sort_key(get_status, get_serial, get_position):
+    """Create a sort key function for duplicate name resolution."""
+    def sort_key(idx_item):
+        idx, item = idx_item
+        status = (get_status(item) or "").upper()
+        is_active = 1 if status == "ACTIVE" else 0
+        serial = get_serial(item) if get_serial else ""
+        position = get_position(item) if get_position else idx
+        return (-is_active, serial if serial else "", position)
+    return sort_key
+
+
+def _resolve_duplicate_names_with_suffix(items: list, get_name, get_status, get_serial, get_position) -> dict:
+    """Resolve duplicate names by adding suffixes (a, b, c...) based on status and serial/position.
+    
+    Returns dict mapping item index -> resolved name.
+    Active items come first (sorted by serial/position), then other statuses (sorted by serial/position).
+    First active item keeps original name, subsequent get 'a', 'b', etc. suffixes.
+    """
+    name_groups = defaultdict(list)
+    for idx, item in enumerate(items):
+        name = get_name(item)
+        name_groups[name].append(idx)
+    
+    resolved = {}
+    sort_key = _make_duplicate_sort_key(get_status, get_serial, get_position)
+    for name, indices in name_groups.items():
+        if len(indices) == 1:
+            resolved[indices[0]] = name
+            continue
+        
+        group_items = [(idx, items[idx]) for idx in indices]
+        sorted_items = sorted(group_items, key=sort_key)
+        
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge One: Resolving %d duplicate names for '%s': %s",
+                len(sorted_items),
+                name,
+                [(get_status(items[idx]) or "unknown", get_serial(items[idx]) if get_serial else idx) for idx, _ in sorted_items],
+            )
+        
+        suffix_idx = 0
+        for i, (idx, item) in enumerate(sorted_items):
+            if i == 0:
+                resolved[idx] = name
+            else:
+                suffix = chr(ord('a') + suffix_idx)
+                suffix_idx += 1
+                if "." in name:
+                    parts = name.rsplit(".", 1)
+                    resolved[idx] = f"{parts[0]}.{parts[1]}{suffix}"
+                else:
+                    resolved[idx] = f"{name}{suffix}"
+        
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge One: Resolved names for '%s': %s",
+                name,
+                {idx: resolved[idx] for idx, _ in sorted_items},
+            )
+    
+    return resolved
+
+
 def _v2_build_string_logical_children(str_node: dict) -> list:
     """Build list of optimizer logical nodes from a v2 STRING node's OPTIMIZER folders."""
-    opt_children = []
+    raw_optimizers = []
     for opt_folder in (str_node.get("children") or []):
         if (opt_folder.get("type") or "").upper() != "FOLDER" or (opt_folder.get("name") or "").upper() != "OPTIMIZER":
             continue
         for opt_node in (opt_folder.get("children") or []):
             if (opt_node.get("type") or "").upper() != "OPTIMIZER":
                 continue
-            opt_children.append(_v2_build_optimizer_logical_node(opt_node))
+            raw_optimizers.append(opt_node)
+    
+    resolved_names = _resolve_duplicate_names_with_suffix(
+        raw_optimizers,
+        get_name=lambda o: o.get("name") or o.get("serial") or "",
+        get_status=lambda o: (o.get("properties") or {}).get("status") or "",
+        get_serial=lambda o: o.get("serial") or "",
+        get_position=None,
+    )
+    
+    opt_children = []
+    for idx, opt_node in enumerate(raw_optimizers):
+        resolved_name = resolved_names.get(idx)
+        opt_children.append(_v2_build_optimizer_logical_node(opt_node, resolved_name))
     return opt_children
 
 
-def _v2_build_string_logical_node(str_node: dict) -> dict:
+def _v2_build_string_logical_node(str_node: dict, resolved_name: str = None) -> dict:
     """Build one string logical node (data + optimizer children) for SolarEdgeSite."""
     str_props = str_node.get("properties") or {}
     str_identifier = str_props.get("identifier") or str_node.get("uuid") or str_node.get("name", "")
     str_serial = str_node.get("serial") or str_identifier
-    str_name = str_node.get("name") or str_identifier
+    str_name = resolved_name if resolved_name else (str_node.get("name") or str_identifier)
     str_display = str_node.get("displayOrder") or str_name
     str_order = str_node.get("order") or 0
+    status_raw = str_props.get("status") or ""
+    status = status_raw.capitalize() if status_raw else ""
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge One: Building string node id=%s name=%s status=%s",
+            str_identifier, str_name, status or "(none)",
+        )
     opt_children = _v2_build_string_logical_children(str_node)
     return {
         "data": {
@@ -288,6 +383,7 @@ def _v2_build_string_logical_node(str_node: dict) -> dict:
             "relativeOrder": str_order,
             "type": "STRING",
             "operationsKey": str_node.get("uuid") or "",
+            "status": status,
         },
         "children": opt_children,
     }
@@ -295,25 +391,47 @@ def _v2_build_string_logical_node(str_node: dict) -> dict:
 
 def _v2_build_inverter_logical_children(inv_node: dict) -> list:
     """Build list of string logical nodes from a v2 INVERTER node's STRING folders."""
-    string_children = []
+    raw_strings = []
     for str_folder in (inv_node.get("children") or []):
         if (str_folder.get("type") or "").upper() != "FOLDER" or (str_folder.get("name") or "").upper() != "STRING":
             continue
         for str_node in (str_folder.get("children") or []):
             if (str_node.get("type") or "").upper() != "STRING":
                 continue
-            string_children.append(_v2_build_string_logical_node(str_node))
+            raw_strings.append(str_node)
+    
+    resolved_names = _resolve_duplicate_names_with_suffix(
+        raw_strings,
+        get_name=lambda s: s.get("name") or "",
+        get_status=lambda s: (s.get("properties") or {}).get("status") or "",
+        get_serial=None,
+        get_position=lambda s: s.get("order") or 0,
+    )
+    
+    string_children = []
+    for idx, str_node in enumerate(raw_strings):
+        resolved_name = resolved_names.get(idx)
+        string_children.append(_v2_build_string_logical_node(str_node, resolved_name))
     return string_children
 
 
-def _v2_build_inverter_logical_node(inv_node: dict) -> dict:
+def _v2_build_inverter_logical_node(inv_node: dict, resolved_name: str = None) -> dict:
     """Build one inverter logical node (data + string children) for SolarEdgeSite."""
     inv_props = inv_node.get("properties") or {}
     inv_identifier = inv_props.get("identifier") or inv_node.get("serial") or inv_node.get("uuid", "")
     inv_serial = inv_node.get("serial") or inv_identifier
-    inv_name = inv_node.get("name") or f"Inverter {inv_identifier}"
+    inv_name = resolved_name if resolved_name else (inv_node.get("name") or f"Inverter {inv_identifier}")
     inv_display = inv_node.get("displayOrder") or inv_name
     inv_order = inv_node.get("order") or 0
+    status_raw = inv_props.get("status") or ""
+    status = status_raw.capitalize() if status_raw else ""
+    manufacturer = inv_props.get("manufacturer") or "SolarEdge"
+    model = inv_props.get("model") or inv_props.get("partNumber") or ""
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge One: Building inverter node serial=%s name=%s status=%s manufacturer=%s model=%s",
+            inv_serial, inv_name, status or "(none)", manufacturer, model or "(none)",
+        )
     string_children = _v2_build_inverter_logical_children(inv_node)
     return {
         "data": {
@@ -324,6 +442,9 @@ def _v2_build_inverter_logical_node(inv_node: dict) -> dict:
             "relativeOrder": inv_order,
             "type": "INVERTER",
             "operationsKey": inv_node.get("uuid") or "",
+            "status": status,
+            "manufacturer": manufacturer,
+            "model": model,
         },
         "children": string_children,
     }
@@ -331,14 +452,27 @@ def _v2_build_inverter_logical_node(inv_node: dict) -> dict:
 
 def _v2_build_logical_children(structure: dict) -> list:
     """Build list of inverter logical nodes from v2 site structure (FOLDER->INVERTER hierarchy)."""
-    logical_children = []
+    raw_inverters = []
     for inv_folder in _v2_find_children_by_type(structure, "FOLDER"):
         if (inv_folder.get("name") or "").upper() != "INVERTER":
             continue
         for inv_node in (inv_folder.get("children") or []):
             if (inv_node.get("type") or "").upper() != "INVERTER":
                 continue
-            logical_children.append(_v2_build_inverter_logical_node(inv_node))
+            raw_inverters.append(inv_node)
+    
+    resolved_names = _resolve_duplicate_names_with_suffix(
+        raw_inverters,
+        get_name=lambda i: i.get("name") or "",
+        get_status=lambda i: (i.get("properties") or {}).get("status") or "",
+        get_serial=lambda i: i.get("serial") or "",
+        get_position=None,
+    )
+    
+    logical_children = []
+    for idx, inv_node in enumerate(raw_inverters):
+        resolved_name = resolved_names.get(idx)
+        logical_children.append(_v2_build_inverter_logical_node(inv_node, resolved_name))
     return logical_children
 
 
@@ -630,6 +764,28 @@ class solaredge_one:
             measurements["Optimizer Voltage [V]"] = round(float(live["optimizerVoltage_V"]), 2)
         return measurements
 
+    def _extract_azimuth_tilt_from_basic(self, basic: dict) -> tuple:
+        """Extract azimuth and tilt from basic info modules, converting from radians to degrees."""
+        modules = basic.get("modules") or []
+        if not modules or not isinstance(modules[0], dict):
+            return None, None
+        mod = modules[0]
+        azimuth_rad = mod.get("azimuth")
+        tilt_rad = mod.get("tilt")
+        azimuth_deg = None
+        tilt_deg = None
+        if azimuth_rad is not None:
+            try:
+                azimuth_deg = round(math.degrees(float(azimuth_rad)), 2)
+            except (TypeError, ValueError):
+                pass
+        if tilt_rad is not None:
+            try:
+                tilt_deg = round(math.degrees(float(tilt_rad)), 2)
+            except (TypeError, ValueError):
+                pass
+        return azimuth_deg, tilt_deg
+
     def _build_optimizer_data_from_response(self, item_id: str, live: dict, basic: dict):
         """Build SolarEdgeOptimizerData from API live/basic dicts for one optimizer. Returns None on error."""
         last_measurement = live.get("lastMeasurement") or ""
@@ -662,9 +818,18 @@ class solaredge_one:
                 json_object,
             )
         try:
-            return SolarEdgeOptimizerData(
+            opt_data = SolarEdgeOptimizerData(
                 item_id, json_object, self._timezone, has_valid_measurements=bool(measurements)
             )
+            azimuth, tilt = self._extract_azimuth_tilt_from_basic(basic)
+            opt_data.azimuth = azimuth
+            opt_data.tilt = tilt
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge One: Optimizer %s azimuth=%s° tilt=%s°",
+                    item_id, azimuth, tilt,
+                )
+            return opt_data
         except Exception as e:  # pylint: disable=broad-except
             _LOGGER.error("SolarEdge One: Error building optimizer data for %s: %s", item_id, e)
             return None
