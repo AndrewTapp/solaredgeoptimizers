@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Λήφθηκε από"
       },
+      "status": {
+        "name": "Κατάσταση"
+      },
+      "azimuth": {
+        "name": "Αζιμούθιο"
+      },
+      "tilt": {
+        "name": "Κλίση"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Τύπος πάνελ"
