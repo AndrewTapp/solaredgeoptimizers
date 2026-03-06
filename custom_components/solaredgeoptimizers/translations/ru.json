@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Получено из"
       },
+      "status": {
+        "name": "Статус"
+      },
+      "azimuth": {
+        "name": "Азимут"
+      },
+      "tilt": {
+        "name": "Наклон"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Тип панели"
