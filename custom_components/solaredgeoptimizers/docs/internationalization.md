@@ -10,7 +10,7 @@ Each `translations/<code>.json` file has four top-level sections. All four must 
 |-----------|---------|
 | **config** | Add-integration form (labels, errors, abort messages, re-auth step), config entry title, integration title. |
 | **options** | Reconfigure (Configure) dialog: title, description, Entity ID prefix, Include Site ID in Entity ID, and Use SolarEdge One labels. |
-| **entity** | Sensor entity names (Power, Voltage, Obtained from, etc.) under `entity.sensor.<key>.name`; attribute labels (e.g. Panel type) under `entity.sensor.state_attributes.<key>.name`. |
+| **entity** | Sensor entity names (Power, Voltage, Obtained from, Status, Azimuth, Tilt, etc.) under `entity.sensor.<key>.name`; attribute labels (e.g. Panel type) under `entity.sensor.state_attributes.<key>.name`. |
 | **device** | Device names (Site, Inverter, String, Optimizer) with placeholders `{site_id}` or `{display_name}` under `device.<key>.name`. |
 
 The integration sets `translation_domain` to the integration domain so the frontend loads these strings. Config entry titles are resolved at runtime via `async_get_translations` in the user's language.
@@ -28,11 +28,11 @@ The integration sets `translation_domain` to the integration domain so the front
 
 ### Options flow (Reconfigure / Configure dialog)
 
-- **Form labels and description**: The Configure dialog (options flow) uses the **options** section: `options.step.init.title`, `options.step.init.description`, `options.step.init.data.entity_id_prefix`, `options.step.init.data.include_site_id_in_entity_id`, `options.step.init.data.use_solaredge_one`. The description shows the current prefix (`{current_entity_id_prefix}`); leave the Entity ID prefix field empty to remove the prefix. The integration sets `translation_domain` so the frontend loads these strings from the integration’s translation files.
+- **Form labels and description**: The Configure dialog (options flow) uses the **options** section: `options.step.init.title`, `options.step.init.description`, `options.step.init.data.entity_id_prefix`, `options.step.init.data.include_site_id_in_entity_id`, `options.step.init.data.use_solaredge_one`. The description shows the current prefix (`{current_entity_id_prefix}`); leave the Entity ID prefix field empty to remove the prefix. The integration sets `translation_domain` so the frontend loads these strings from the integration's translation files.
 
 ### Entities and devices
 
-- **Sensor entity names**: Power, Voltage, Current, Optimizer voltage, Temperature, Lifetime energy, Last measurement, Last polled, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Obtained from — from `entity.sensor.<translation_key>.name` (e.g. `entity.sensor.power.name`, `entity.sensor.obtained_from.name`). Temperature values are stored in °C (the portal may send °C or °F; the integration normalizes to °C); Home Assistant converts to the user’s preferred unit for display.
+- **Sensor entity names**: Power, Voltage, Current, Optimizer voltage, Temperature, Lifetime energy, Last measurement, Last polled, Current (average), Voltage (average), Optimizer count, String count, Inverter count, Obtained from, Status, Azimuth, Tilt — from `entity.sensor.<translation_key>.name` (e.g. `entity.sensor.power.name`, `entity.sensor.obtained_from.name`, `entity.sensor.status.name`). Temperature values are stored in °C (the portal may send °C or °F; the integration normalizes to °C); Home Assistant converts to the user's preferred unit for display. Azimuth and Tilt values are converted from radians to degrees.
 - **Sensor attribute labels**: The **Panel type** attribute (shown on optimizer sensors when the API provides a panel type/description) is translated from `entity.sensor.state_attributes.panel_type.name` in each translation file.
 - **Device names**: Site, Inverter, String, Optimizer device names use `device.site_device`, `device.inverter_device`, `device.string_device`, `device.optimizer_device` with placeholders `{site_id}` or `{display_name}`. At string and optimizer level, `{display_name}` is the **API display name** (e.g. "1.0", "1.0.1"), so device names and entity IDs stay in sync (e.g. "String 1.0", `sensor.lifetime_energy_1_0`). The hierarchy is Site [site], Inverter [site].[i], String [site].[i].[s], Optimizer [site].[i].[s].[o]; the labels (e.g. "Site", "Wechselrichter") are translated.
 
@@ -57,7 +57,7 @@ For the full table with language names (e.g. Čeština, Deutsch), see the [Trans
 1. Copy `translations/en.json` to `translations/<code>.json` (e.g. `cs.json` for Czech).
 2. Translate all string values. Keep the same JSON structure and keys.
 3. Ensure every key present in `en.json` exists in the new file in all four sections: **config**, **options**, **entity**, and **device**. The **options** section is required for the Reconfigure (Configure) dialog to show translated labels and description.
-4. Run the project’s checks (e.g. Hassfest) to validate translation files.
+4. Run the project's checks (e.g. Hassfest) to validate translation files.
 
 ## Validation
 
