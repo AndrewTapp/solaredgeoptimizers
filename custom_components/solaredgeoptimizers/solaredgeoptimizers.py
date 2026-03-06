@@ -908,23 +908,31 @@ class SolarEdgeInverter:
 
     def __init__(self, json_obj, index, index2=0, powermeterpresent=False):
         if powermeterpresent:
-            self.inverterId = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]["id"]
-            self.serialNumber = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]["serialNumber"]
-            self.name = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]["name"]
-            self.displayName = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]["displayName"]
-            self.relativeOrder = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]["relativeOrder"]
-            self.type = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]["type"]
-            self.operationsKey = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]["operationsKey"]
+            data = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]
+            self.inverterId = data["id"]
+            self.serialNumber = data["serialNumber"]
+            self.name = data["name"]
+            self.displayName = data["displayName"]
+            self.relativeOrder = data["relativeOrder"]
+            self.type = data["type"]
+            self.operationsKey = data["operationsKey"]
+            self.status = data.get("status", "")
+            self.manufacturer = data.get("manufacturer", "SolarEdge")
+            self.model = data.get("model", "")
 
             self.strings = self.__GetStringInformation(json_obj["logicalTree"]["children"][index]["children"][index2]["children"], index2)
         else:
-            self.inverterId = json_obj["logicalTree"]["children"][index]["data"]["id"]
-            self.serialNumber = json_obj["logicalTree"]["children"][index]["data"]["serialNumber"]
-            self.name = json_obj["logicalTree"]["children"][index]["data"]["name"]
-            self.displayName = json_obj["logicalTree"]["children"][index]["data"]["displayName"]
-            self.relativeOrder = json_obj["logicalTree"]["children"][index]["data"]["relativeOrder"]
-            self.type = json_obj["logicalTree"]["children"][index]["data"]["type"]
-            self.operationsKey = json_obj["logicalTree"]["children"][index]["data"]["operationsKey"]
+            data = json_obj["logicalTree"]["children"][index]["data"]
+            self.inverterId = data["id"]
+            self.serialNumber = data["serialNumber"]
+            self.name = data["name"]
+            self.displayName = data["displayName"]
+            self.relativeOrder = data["relativeOrder"]
+            self.type = data["type"]
+            self.operationsKey = data["operationsKey"]
+            self.status = data.get("status", "")
+            self.manufacturer = data.get("manufacturer", "SolarEdge")
+            self.model = data.get("model", "")
 
             self.strings = self.__GetStringInformation(json_obj["logicalTree"]["children"][index]["children"], index)
 
@@ -944,13 +952,15 @@ class SolarEdgeInverter:
 
 class SolarEdgeString:
     def __init__(self, json_obj):
-        self.stringId = json_obj["data"]["id"]
-        self.serialNumber = json_obj["data"]["serialNumber"]
-        self.name = json_obj["data"]["name"]
-        self.displayName = json_obj["data"]["displayName"]
-        self.relativeOrder = json_obj["data"]["relativeOrder"]
-        self.type = json_obj["data"]["type"]
-        self.operationsKey = json_obj["data"]["operationsKey"]
+        data = json_obj["data"]
+        self.stringId = data["id"]
+        self.serialNumber = data["serialNumber"]
+        self.name = data["name"]
+        self.displayName = data["displayName"]
+        self.relativeOrder = data["relativeOrder"]
+        self.type = data["type"]
+        self.operationsKey = data["operationsKey"]
+        self.status = data.get("status", "")
         self.optimizers = self.__GetOptimizers(json_obj)
 
     def __GetOptimizers(self, json_obj):
@@ -964,13 +974,15 @@ class SolarEdgeString:
 
 class SolarlEdgeOptimizer:
     def __init__(self, json_obj):
-        self.optimizerId = json_obj["data"]["id"]
-        self.serialNumber = json_obj["data"]["serialNumber"]
-        self.name = json_obj["data"]["name"]
-        self.displayName = json_obj["data"]["displayName"]
-        self.relativeOrder = json_obj["data"]["relativeOrder"]
-        self.type = json_obj["data"]["type"]
-        self.operationsKey = json_obj["data"]["operationsKey"]
+        data = json_obj["data"]
+        self.optimizerId = data["id"]
+        self.serialNumber = data["serialNumber"]
+        self.name = data["name"]
+        self.displayName = data["displayName"]
+        self.relativeOrder = data["relativeOrder"]
+        self.type = data["type"]
+        self.operationsKey = data["operationsKey"]
+        self.status = data.get("status", "")
 
 
 class SolarEdgeAggregatedData:
@@ -979,7 +991,7 @@ class SolarEdgeAggregatedData:
     __slots__ = (
         'panel_id', 'entity_type', 'entity_id_path', 'serialnumber', 'panel_description',
         'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage', 'power',
-        'voltage', 'lifetime_energy', 'child_count', 'active_optimizer_count'
+        'voltage', 'lifetime_energy', 'child_count', 'active_optimizer_count', 'status'
     )
 
     def __init__(self, entity_id, entity_type, lifetime_energy=None, entity_id_path=None):
@@ -1004,6 +1016,7 @@ class SolarEdgeAggregatedData:
         # Additional aggregated info
         self.child_count = 0  # Number of optimizers in string, or strings in inverter
         self.active_optimizer_count = 0  # Number of optimizers with recent data
+        self.status = ""  # Status from API (Active, Inactive, etc.)
 
 
 class SolarEdgeOptimizerData:
@@ -1013,7 +1026,7 @@ class SolarEdgeOptimizerData:
     __slots__ = (
         '_timezone', '_json_obj', '_has_valid_measurements', 'serialnumber', 'panel_id', 'panel_description',
         'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage',
-        'power', 'voltage', 'temperature', 'lifetime_energy'
+        'power', 'voltage', 'temperature', 'lifetime_energy', 'azimuth', 'tilt', 'status'
     )
 
     def __init__(self, panelid, json_object, timezone=None, has_valid_measurements=None):
@@ -1036,6 +1049,9 @@ class SolarEdgeOptimizerData:
         self.voltage = ""
         self.temperature = ""
         self.lifetime_energy = ""
+        self.azimuth = None
+        self.tilt = None
+        self.status = ""
 
         if panelid is not None:
             self._json_obj = json_object
