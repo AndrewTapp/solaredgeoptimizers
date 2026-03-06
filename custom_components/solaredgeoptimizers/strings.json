@@ -1,5 +1,7 @@
 {
   "config": {
+    "title": "SolarEdge Optimizers Data",
+    "title_entry": "SolarEdge Site %(siteid)s",
     "step": {
       "user": {
         "data": {
@@ -13,19 +15,23 @@
       },
       "reauth_confirm": {
         "title": "Re-authenticate SolarEdge Optimizers",
-        "description": "Credentials for {title} are no longer valid. Enter your SolarEdge username and password."
+        "description": "Credentials for {title} are no longer valid. Enter your SolarEdge username and password.",
+        "data": {
+          "username": "[%key:common::config_flow::data::username%]",
+          "password": "[%key:common::config_flow::data::password%]"
+        }
       }
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
+      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+      "reauth_entry_missing": "Re-authentication could not find the config entry."
     }
-  },
-  "error": {
-    "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-    "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
-    "unknown": "[%key:common::config_flow::error::unknown%]"
-  },
-  "abort": {
-    "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
-    "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
-    "reauth_entry_missing": "Re-authentication could not find the config entry."
   },
   "options": {
     "step": {
@@ -38,6 +44,80 @@
           "use_solaredge_one": "Use SolarEdge One"
         }
       }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": {
+        "name": "Power"
+      },
+      "voltage": {
+        "name": "Voltage"
+      },
+      "current": {
+        "name": "Current"
+      },
+      "optimizer_voltage": {
+        "name": "Optimizer voltage"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "lifetime_energy": {
+        "name": "Lifetime energy"
+      },
+      "last_measurement": {
+        "name": "Last measurement"
+      },
+      "last_polled": {
+        "name": "Last polled"
+      },
+      "current_average": {
+        "name": "Current (average)"
+      },
+      "voltage_average": {
+        "name": "Voltage (average)"
+      },
+      "optimizer_count": {
+        "name": "Optimizer count"
+      },
+      "string_count": {
+        "name": "String count"
+      },
+      "inverter_count": {
+        "name": "Inverter count"
+      },
+      "obtained_from": {
+        "name": "Obtained from"
+      },
+      "status": {
+        "name": "Status"
+      },
+      "azimuth": {
+        "name": "Azimuth"
+      },
+      "tilt": {
+        "name": "Tilt"
+      },
+      "state_attributes": {
+        "panel_type": {
+          "name": "Panel type"
+        }
+      }
+    }
+  },
+  "device": {
+    "site_device": {
+      "name": "Site {site_id}"
+    },
+    "inverter_device": {
+      "name": "Inverter {display_name}"
+    },
+    "string_device": {
+      "name": "String {display_name}"
+    },
+    "optimizer_device": {
+      "name": "Optimizer {display_name}"
     }
   }
 }
