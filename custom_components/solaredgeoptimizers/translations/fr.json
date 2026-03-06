@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Obtenu depuis"
       },
+      "status": {
+        "name": "Statut"
+      },
+      "azimuth": {
+        "name": "Azimut"
+      },
+      "tilt": {
+        "name": "Inclinaison"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Type de panneau"
