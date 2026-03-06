@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Verkregen van"
       },
+      "status": {
+        "name": "Status"
+      },
+      "azimuth": {
+        "name": "Azimut"
+      },
+      "tilt": {
+        "name": "Hellingshoek"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneeltype"
