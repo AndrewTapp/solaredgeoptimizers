@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Haettu"
       },
+      "status": {
+        "name": "Tila"
+      },
+      "azimuth": {
+        "name": "Atsimuutti"
+      },
+      "tilt": {
+        "name": "Kallistus"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneelityyppi"
