@@ -54,6 +54,9 @@ Your solar system is organised in a simple hierarchy. Device and entity names in
 - **Temperature** – Optimizer temperature from the SolarEdge One API (layout/energy by-inverter with `include-max-temperature`). The portal may report in °C or °F (`temperatureUnit`); the integration normalizes to °C for storage and Home Assistant displays in your preferred unit. Only available when using the One API; shown as “unknown” when missing or when using the legacy API. When the integration is not doing a full refresh (e.g. reusing data after a light check), it still refreshes temperatures about every 15 minutes via a cached API call, so temperature stays up to date even when power/voltage are not updating.
 - **Lifetime energy** – Total energy produced (kWh); this only goes up over time. The integration uses the API’s raw energy value (unscaledEnergy, in Wh) so it updates correctly regardless of how the portal displays units (Wh/kWh/MWh). When optimizer-level lifetime data is reliable, site lifetime is the sum of optimizers; when it is not (e.g. mixed or missing data), the site uses the portal’s total directly.
 - **Last measurement** – When the portal last had a reading for this optimizer.
+- **Status** – The optimizer's status from the API (e.g. "Active", "Inactive"). Shown in proper case.
+- **Azimuth** – The panel's compass direction in degrees (0–360°), converted from radians. Only available when the API provides module orientation data.
+- **Tilt** – The panel's angle from horizontal in degrees, converted from radians. Only available when the API provides module orientation data.
 
 ### Per string, inverter, and site
 
@@ -64,6 +67,7 @@ For each string, inverter, and the site you get combined (aggregated) sensors:
 - **Lifetime energy** (total for that level)
 - **Last measurement**
 - **Optimizer count** (strings) / **String count** (inverters) / **Inverter count** (site) – Always reported as integers (e.g. 3, not 3.0).
+- **Status** (strings and inverters) – The status from the API (e.g. "Active", "Inactive"). Shown in proper case.
 - **Last polled** (site device only) – When the integration last successfully fetched data from the SolarEdge portal. Handy for checking that updates are running.
 - **Obtained from** (site device only) – Which API provided the current data: **"One API"** or **"Legacy API"**. Entity ID: `sensor.[prefix]obtained_from_[site]` (or `sensor.[prefix]obtained_from` when site ID is not included in entity IDs).
 
@@ -83,6 +87,16 @@ So in normal use you see updates every few minutes when the portal has new data;
 - If the **last measurement** is older than the stale threshold, **Voltage**, **Current**, **Optimizer voltage**, and **Power** are shown as **0** for that optimizer (and any aggregates that depend on it). This avoids showing stale “live” values. The threshold is **1 hour** when data is from **One API** and **2 hours** when from **Legacy API**. Check the **Obtained from** sensor to see which API is in use.
 - **Temperature** (when available from SolarEdge One) is not zeroed when stale; it shows the last known value or “unknown” if missing.
 - **Lifetime energy** and **Last measurement** always show the last known values, so you can still see historical production even when a panel is temporarily offline.
+
+## Handling duplicate names
+
+When the SolarEdge API returns multiple inverters, strings, or optimizers with the same name (e.g. two "Inverter 1" entries after a hardware replacement), the integration resolves duplicates automatically:
+
+- **Inverters**: Active inverters come first (sorted by serial number), then other statuses. The first active inverter keeps the original name (e.g. "Inverter 1"); subsequent duplicates get alphabetical suffixes ("Inverter 1a", "Inverter 1b", etc.).
+- **Strings**: Active strings come first (sorted by their position in the API response), then other statuses. The first active string keeps the original name; duplicates get suffixes.
+- **Optimizers**: Active optimizers come first (sorted by serial number), then other statuses. The first active optimizer keeps the original name; duplicates get suffixes.
+
+This ensures each device and sensor has a unique name and entity ID, even when the API returns duplicate names.
 
 ## Replacing optimizers or inverters (hardware swap)
 
