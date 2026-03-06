@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Alınan"
       },
+      "status": {
+        "name": "Durum"
+      },
+      "azimuth": {
+        "name": "Azimut"
+      },
+      "tilt": {
+        "name": "Eğim"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Panel tipi"
