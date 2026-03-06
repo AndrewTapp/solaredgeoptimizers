@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Hentet fra"
       },
+      "status": {
+        "name": "Status"
+      },
+      "azimuth": {
+        "name": "Asimut"
+      },
+      "tilt": {
+        "name": "Helning"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneltype"
