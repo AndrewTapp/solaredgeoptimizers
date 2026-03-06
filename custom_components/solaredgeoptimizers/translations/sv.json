@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "Hämtad från"
       },
+      "status": {
+        "name": "Status"
+      },
+      "azimuth": {
+        "name": "Azimut"
+      },
+      "tilt": {
+        "name": "Lutning"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneltyp"
