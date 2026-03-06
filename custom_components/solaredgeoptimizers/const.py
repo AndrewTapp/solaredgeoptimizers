@@ -1,6 +1,7 @@
 """Integration constants: domain, config keys, update intervals, and sensor type definitions for individual optimizers and aggregated (string, inverter, site) entities."""
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import timedelta
 import logging
 
@@ -8,7 +9,8 @@ DOMAIN = "solaredgeoptimizers"
 CONF_SITE_ID = "siteid"
 CONF_USE_SOLAREDGE_ONE = "use_solaredge_one"  # If True, use SolarEdge One portal API (services/layout/...)
 CONF_ENTITY_PREFIX = "entity_id_prefix"  # Optional prefix for entity_id (e.g. "se_" -> sensor.se_power_2065855)
-CONF_INCLUDE_SITE_ID_IN_ENTITY_ID = "include_site_id_in_entity_id"  # If True, entity IDs include site ID (e.g. power_2065855_1_1_1); default False
+# If True, entity IDs include site ID (e.g. power_2065855_1_1_1); default False
+CONF_INCLUDE_SITE_ID_IN_ENTITY_ID = "include_site_id_in_entity_id"
 DATA_API_CLIENT = "api_client"
 
 PANEL_DATA = "panel_data"
@@ -39,6 +41,9 @@ SENSOR_TYPE_LASTPOLLED = "Last_Polled"
 SENSOR_TYPE_CHILD_COUNT = "Child_count"
 SENSOR_TYPE_ACTIVE_CHILD_COUNT = "Active_child_count"
 SENSOR_TYPE_TEMPERATURE = "Temperature"
+SENSOR_TYPE_STATUS = "Status"
+SENSOR_TYPE_AZIMUTH = "Azimuth"
+SENSOR_TYPE_TILT = "Tilt"
 
 # Sensors for individual optimizers
 SENSOR_TYPE_INDIVIDUAL = [
@@ -49,6 +54,9 @@ SENSOR_TYPE_INDIVIDUAL = [
     SENSOR_TYPE_TEMPERATURE,
     SENSOR_TYPE_ENERGY,
     SENSOR_TYPE_LASTMEASUREMENT,
+    SENSOR_TYPE_STATUS,
+    SENSOR_TYPE_AZIMUTH,
+    SENSOR_TYPE_TILT,
 ]
 
 # Sensors for aggregated entities (strings and inverters)
@@ -62,10 +70,12 @@ SENSOR_TYPE_AGGREGATED_COMMON = [
 
 SENSOR_TYPE_AGGREGATED_STRING = SENSOR_TYPE_AGGREGATED_COMMON + [
     SENSOR_TYPE_CHILD_COUNT,  # For strings: optimizer count
+    SENSOR_TYPE_STATUS,
 ]
 
 SENSOR_TYPE_AGGREGATED_INVERTER = SENSOR_TYPE_AGGREGATED_COMMON + [
     SENSOR_TYPE_CHILD_COUNT,  # For inverters: string count
+    SENSOR_TYPE_STATUS,
 ]
 
 SENSOR_TYPE_AGGREGATED_SITE = SENSOR_TYPE_AGGREGATED_COMMON + [
@@ -115,3 +125,74 @@ def parse_optimizer_display_name_to_indices(display_name: str) -> tuple[int, int
     if len(nums) == 3:
         return (nums[0], nums[1], nums[2])
     return (nums[1], nums[2], nums[3])  # site.inv.str.opt -> inv, str, opt
+
+
+def make_duplicate_sort_key(item, get_status, get_serial):
+    """Create sort key for duplicate resolution: active first, then alphabetically by serial number.
+    
+    Used by resolve_duplicate_indices to sort items with the same position key.
+    Active devices (status="ACTIVE") sort before inactive ones.
+    """
+    status = (get_status(item) or "").upper()
+    is_active = 0 if status == "ACTIVE" else 1  # 0 sorts before 1
+    serial = get_serial(item) or ""
+    return (is_active, serial)
+
+
+def resolve_duplicate_indices(items, get_key, get_status, get_serial, logger=None):
+    """Resolve duplicate position keys by adding letter suffixes.
+    
+    Args:
+        items: List of items to check for duplicates
+        get_key: Function to extract the position key from an item
+        get_status: Function to extract status from an item (for sorting)
+        get_serial: Function to extract serial number from an item (for sorting)
+        logger: Optional logger for debug output
+    
+    Returns:
+        dict mapping item index -> suffix (empty string for first, 'a', 'b', etc. for duplicates)
+    
+    Active devices come first (sorted by serial), then alphabetically by serial.
+    First item keeps original key, subsequent get 'a', 'b', etc. suffixes.
+    """
+    key_groups = defaultdict(list)
+    for idx, item in enumerate(items):
+        key = get_key(item)
+        key_groups[key].append(idx)
+    
+    resolved = {}
+    for key, indices in key_groups.items():
+        if len(indices) == 1:
+            resolved[indices[0]] = ""
+            continue
+        
+        group_items = [(idx, items[idx]) for idx in indices]
+        sorted_items = sorted(
+            group_items,
+            key=lambda x: make_duplicate_sort_key(x[1], get_status, get_serial)
+        )
+        
+        if logger and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "SolarEdge Optimizers: Resolving %d duplicate keys for '%s': %s",
+                len(sorted_items),
+                key,
+                [(get_status(items[idx]) or "unknown", get_serial(items[idx]) or "unknown") for idx, _ in sorted_items],
+            )
+        
+        suffix_idx = 0
+        for i, (idx, _item) in enumerate(sorted_items):
+            if i == 0:
+                resolved[idx] = ""
+            else:
+                resolved[idx] = chr(ord('a') + suffix_idx)
+                suffix_idx += 1
+        
+        if logger and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "SolarEdge Optimizers: Resolved suffixes for '%s': %s",
+                key,
+                {idx: resolved[idx] or "(none)" for idx, _ in sorted_items},
+            )
+    
+    return resolved
