@@ -37,9 +37,13 @@ from .const import (
     SENSOR_TYPE_ENERGY,
     SENSOR_TYPE_LASTMEASUREMENT,
     SENSOR_TYPE_CHILD_COUNT,
+    SENSOR_TYPE_STATUS,
+    SENSOR_TYPE_AZIMUTH,
+    SENSOR_TYPE_TILT,
     CHECK_TIME_DELTA,
     parse_string_display_name_path,
     parse_optimizer_display_name_to_indices,
+    resolve_duplicate_indices,
 )
 
 # Changed import to use coordinator module
@@ -198,13 +202,14 @@ def _remove_sensor_entities_for_entry(hass: HomeAssistant, entry: ConfigEntry) -
 
 
 def _build_optimizer_tasks(site):
-    """Build list of (optimizer, inverter, string, inv_idx, str_idx, opt_idx) for all optimizers.
+    """Build list of (optimizer, inverter, string, inv_idx, str_idx, opt_idx, suffix) for all optimizers.
 
     Uses display-name-based (inv, str, opt) when optimizer.displayName parses (e.g. '1.0.1'),
-    else position-based from enumerate. Deduplicates by (inv_idx, str_idx, opt_idx).
+    else position-based from enumerate. No deduplication - all optimizers are shown.
+    When duplicates exist (same position key), active devices come first (sorted by serial),
+    and subsequent duplicates get letter suffixes (a, b, c...).
     """
-    seen = set()
-    tasks = []
+    tasks_with_keys = []
     for inv_idx, inverter in enumerate(site.inverters, start=1):
         _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
         for str_idx, string in enumerate(inverter.strings, start=1):
@@ -214,11 +219,45 @@ def _build_optimizer_tasks(site):
                     inv_num, str_num, opt_num = parsed
                 else:
                     inv_num, str_num, opt_num = inv_idx, str_idx, opt_idx
-                key = (inv_num, str_num, opt_num)
-                if key in seen:
-                    continue
-                seen.add(key)
-                tasks.append((optimizer, inverter, string, inv_num, str_num, opt_num))
+                position_key = (inv_num, str_num, opt_num)
+                tasks_with_keys.append((optimizer, inverter, string, inv_num, str_num, opt_num, position_key))
+    
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge Optimizers sensor: Built %d optimizer tasks from site structure",
+            len(tasks_with_keys),
+        )
+    
+    # Resolve duplicates with letter suffixes using shared function
+    suffix_map = resolve_duplicate_indices(
+        tasks_with_keys,
+        get_key=lambda item: item[6],  # position_key is at index 6
+        get_status=lambda item: getattr(item[0], "status", "") or "",
+        get_serial=lambda item: getattr(item[0], "serialNumber", "") or "",
+        logger=_LOGGER,
+    )
+    
+    # Count duplicates for logging
+    duplicates_count = sum(1 for suffix in suffix_map.values() if suffix)
+    if duplicates_count > 0:
+        _LOGGER.info(
+            "SolarEdge Optimizers sensor: Found %d duplicate optimizer positions, assigned suffixes (a, b, c...)",
+            duplicates_count,
+        )
+    
+    # Build final tasks list with suffixes
+    tasks = []
+    for idx, item in enumerate(tasks_with_keys):
+        optimizer, inverter, string, inv_num, str_num, opt_num, _key = item
+        suffix = suffix_map.get(idx, "")
+        tasks.append((optimizer, inverter, string, inv_num, str_num, opt_num, suffix))
+    
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge Optimizers sensor: Returning %d optimizer tasks (including %d with duplicate suffixes)",
+            len(tasks), duplicates_count,
+        )
+    
     return tasks
 
 
@@ -250,7 +289,7 @@ async def _fetch_missing_optimizer_data(hass, coordinator, optimizer_tasks, coor
 
 def _get_optimizer_info_for_task(task_idx, optimizer_tasks, coordinator_data, results_by_task_idx):
     """Resolve optimizer info from coordinator cache or fetch results. Returns (info, skip) where skip=True to skip this task."""
-    optimizer, _inverter, _string, inv_idx, str_idx, _opt_idx = optimizer_tasks[task_idx]
+    optimizer, _inverter, _string, inv_idx, str_idx, _opt_idx, _suffix = optimizer_tasks[task_idx]
     if coordinator_data and coordinator_data.get(optimizer.optimizerId) is not None:
         return coordinator_data.get(optimizer.optimizerId), False
     if task_idx not in results_by_task_idx:
@@ -273,7 +312,7 @@ def _build_individual_optimizer_sensors(
 ):
     """Build list of SolarEdgeOptimizersSensor entities for all optimizers that have info."""
     sensors_to_add = []
-    for task_idx, (optimizer, inverter, string, inv_idx, str_idx, opt_idx) in enumerate(optimizer_tasks):
+    for task_idx, (optimizer, inverter, string, inv_idx, str_idx, opt_idx, suffix) in enumerate(optimizer_tasks):
         info, skip = _get_optimizer_info_for_task(
             task_idx, optimizer_tasks, coordinator_data, results_by_task_idx
         )
@@ -281,16 +320,20 @@ def _build_individual_optimizer_sensors(
             continue
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers sensor: Adding optimizer panel_id=%s serial=%s model=%s panel_type=%s",
+                "SolarEdge Optimizers sensor: Adding optimizer panel_id=%s serial=%s model=%s panel_type=%s status=%s azimuth=%s° tilt=%s° suffix=%s",
                 optimizer.optimizerId,
                 getattr(info, "serialnumber", ""),
                 getattr(info, "model", ""),
                 getattr(info, "panel_description", "") or "(none)",
+                getattr(info, "status", "") or "(none)",
+                getattr(info, "azimuth", None),
+                getattr(info, "tilt", None),
+                suffix or "(none)",
             )
-        # Always use position-based path for unique_id so optimizers with duplicate display
-        # names (e.g. multiple "1.0.5") get distinct entity IDs and avoid "ID already exists".
+        # Use position-based path with suffix for unique_id so all optimizers (including duplicates)
+        # get distinct entity IDs. Suffix is empty for first item, 'a', 'b', etc. for duplicates.
         entity_id_path = (
-            (site_id, inv_idx, str_idx, opt_idx) if include_site_id else (inv_idx, str_idx, opt_idx)
+            (site_id, inv_idx, str_idx, f"{opt_idx}{suffix}") if include_site_id else (inv_idx, str_idx, f"{opt_idx}{suffix}")
         )
         for sensortype in SENSOR_TYPE_INDIVIDUAL:
             sensors_to_add.append(
@@ -303,18 +346,63 @@ def _build_individual_optimizer_sensors(
 
 
 def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, include_site_id, site_id):
-    """Build list of SolarEdgeAggregatedSensor entities for strings, inverters, and site."""
+    """Build list of SolarEdgeAggregatedSensor entities for strings, inverters, and site.
+    
+    No deduplication - all inverters and strings are shown. When duplicates exist
+    (same position), active devices come first (sorted by serial), and subsequent
+    duplicates get letter suffixes (a, b, c...).
+    """
     sensors = []
     if not site_struct:
         return sensors
+    
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        total_strings = sum(len(inv.strings) for inv in site_struct.inverters)
+        _LOGGER.debug(
+            "SolarEdge Optimizers sensor: Building aggregated sensors for %d inverters, %d strings",
+            len(site_struct.inverters), total_strings,
+        )
+    
+    # Resolve duplicate inverters
+    inv_suffix_map = resolve_duplicate_indices(
+        site_struct.inverters,
+        get_key=lambda inv: getattr(inv, "displayName", "") or str(getattr(inv, "inverterId", "")),
+        get_status=lambda inv: getattr(inv, "status", "") or "",
+        get_serial=lambda inv: getattr(inv, "serialNumber", "") or "",
+        logger=_LOGGER,
+    )
+    
+    # Log duplicate inverter count
+    inv_duplicates = sum(1 for suffix in inv_suffix_map.values() if suffix)
+    if inv_duplicates > 0:
+        _LOGGER.info(
+            "SolarEdge Optimizers sensor: Found %d duplicate inverter positions, assigned suffixes",
+            inv_duplicates,
+        )
+    
     for inv_idx, inverter in enumerate(site_struct.inverters, start=1):
+        inv_suffix = inv_suffix_map.get(inv_idx - 1, "")
+        inv_idx_str = f"{inv_idx}{inv_suffix}"
+        
+        # Resolve duplicate strings within this inverter
+        str_suffix_map = resolve_duplicate_indices(
+            inverter.strings,
+            get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, 0),
+            get_status=lambda s: getattr(s, "status", "") or "",
+            get_serial=lambda s: getattr(s, "serialNumber", "") or str(getattr(s, "stringId", "")),
+            logger=_LOGGER,
+        )
+        
         for str_idx, string in enumerate(inverter.strings, start=1):
+            str_suffix = str_suffix_map.get(str_idx - 1, "")
             parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
             if parsed is not None:
                 inv_num, str_num = parsed
-                string_entity_path = (site_id, inv_num, str_num) if include_site_id else (inv_num, str_num)
+                str_num_str = f"{str_num}{str_suffix}"
+                string_entity_path = (site_id, inv_num, str_num_str) if include_site_id else (inv_num, str_num_str)
             else:
-                string_entity_path = (site_id, inv_idx, str_idx) if include_site_id else (inv_idx, str_idx)
+                str_idx_str = f"{str_idx}{str_suffix}"
+                string_entity_path = (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
             string_aggregated = SolarEdgeAggregatedData(
                 entity_id=f"string_{string.stringId}",
                 entity_type="string",
@@ -322,8 +410,12 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
             )
             string_aggregated.serialnumber = f"String_{string.stringId}"
             string_aggregated.panel_description = string.displayName
+            string_aggregated.status = getattr(string, "status", "") or ""
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Optimizers sensor: Creating aggregated sensors for string: %s", string.displayName)
+                _LOGGER.debug(
+                    "SolarEdge Optimizers sensor: Creating aggregated sensors for string: %s status=%s suffix=%s",
+                    string.displayName, string_aggregated.status or "(none)", str_suffix or "(none)",
+                )
             for sensortype in SENSOR_TYPE_AGGREGATED_STRING:
                 sensors.append(
                     SolarEdgeAggregatedSensor(
@@ -331,16 +423,26 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
                         base_name=base_name,
                     )
                 )
+    
     for inv_idx, inverter in enumerate(site_struct.inverters, start=1):
+        inv_suffix = inv_suffix_map.get(inv_idx - 1, "")
+        inv_idx_str = f"{inv_idx}{inv_suffix}"
         inverter_aggregated = SolarEdgeAggregatedData(
             entity_id=f"inverter_{inverter.inverterId}",
             entity_type="inverter",
-            entity_id_path=(site_id, inv_idx) if include_site_id else (inv_idx,),
+            entity_id_path=(site_id, inv_idx_str) if include_site_id else (inv_idx_str,),
         )
         inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
         inverter_aggregated.panel_description = inverter.displayName
+        inverter_aggregated.status = getattr(inverter, "status", "") or ""
+        inverter_aggregated.manufacturer = getattr(inverter, "manufacturer", "") or "SolarEdge"
+        inverter_aggregated.model = getattr(inverter, "model", "") or ""
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers sensor: Creating aggregated sensors for inverter: %s", inverter.displayName)
+            _LOGGER.debug(
+                "SolarEdge Optimizers sensor: Creating aggregated sensors for inverter: %s status=%s manufacturer=%s model=%s suffix=%s",
+                inverter.displayName, inverter_aggregated.status or "(none)",
+                inverter_aggregated.manufacturer, inverter_aggregated.model or "(none)", inv_suffix or "(none)",
+            )
         for sensortype in SENSOR_TYPE_AGGREGATED_INVERTER:
             sensors.append(
                 SolarEdgeAggregatedSensor(
@@ -583,6 +685,7 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_LASTMEASUREMENT: "lastmeasurement",
         SENSOR_TYPE_CHILD_COUNT: "child_count",
+        SENSOR_TYPE_STATUS: "status",
     }
     # Translation keys for entity names (i18n)
     _TRANSLATION_KEYS = {
@@ -592,6 +695,7 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_VOLTAGE: "voltage_average",
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_POWER: "power",
+        SENSOR_TYPE_STATUS: "status",
     }
     # (unit, device_class, state_class, suggested_display_precision) per sensor type
     _AGGREGATED_UNITS_MAP = {
@@ -731,6 +835,8 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
             self._attr_state_class = None
         elif self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
             self._attr_state_class = None
+        elif self._sensor_type is SENSOR_TYPE_STATUS:
+            self._attr_state_class = None
 
     def _slug_for_sensortype(self) -> str:
         """Return entity_id slug for this sensor type (e.g. power, child_count, inverter_count)."""
@@ -740,6 +846,8 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
             if self._panelobject.entity_type == "inverter":
                 return "child_count"
             return "inverter_count"
+        if self._sensor_type is SENSOR_TYPE_STATUS:
+            return "status"
         return self._TRANSLATION_KEYS.get(
             self._sensor_type,
             self._sensor_type.lower().replace(" ", "_"),
@@ -782,17 +890,24 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         return 0.0
 
     def _compute_aggregated_native_value(self, item) -> None:
-        """Update _attr_native_value from aggregated item (child_count, energy monotonic, or mapped attribute)."""
+        """Update _attr_native_value from aggregated item (child_count, energy monotonic, status, or mapped attribute)."""
         attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
         if not attr_name:
             return
-        new_value = getattr(item, attr_name, 0)
+        new_value = getattr(item, attr_name, 0 if self._sensor_type is not SENSOR_TYPE_STATUS else "")
         if self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
             new_value = int(new_value) if new_value is not None else 0
         elif self._sensor_type is SENSOR_TYPE_ENERGY:
             new_value = self._normalize_aggregated_energy_value(new_value, self._attr_native_value)
         elif self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE):
             new_value = self._normalize_aggregated_live_value(new_value, 2)
+        elif self._sensor_type is SENSOR_TYPE_STATUS:
+            new_value = str(new_value) if new_value else ""
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers sensor: %s aggregated status updated to '%s'",
+                    self._log_name, new_value or "(empty)",
+                )
         self._attr_native_value = new_value
 
     def _normalize_aggregated_display_value(self) -> None:
@@ -854,6 +969,9 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_OPT_VOLTAGE: "optimizer_voltage",
         SENSOR_TYPE_POWER: "power",
         SENSOR_TYPE_TEMPERATURE: "temperature",
+        SENSOR_TYPE_STATUS: "status",
+        SENSOR_TYPE_AZIMUTH: "azimuth",
+        SENSOR_TYPE_TILT: "tilt",
     }
     # Translation keys for entity names (i18n)
     _TRANSLATION_KEYS = {
@@ -864,6 +982,9 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_TEMPERATURE: "temperature",
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_LASTMEASUREMENT: "last_measurement",
+        SENSOR_TYPE_STATUS: "status",
+        SENSOR_TYPE_AZIMUTH: "azimuth",
+        SENSOR_TYPE_TILT: "tilt",
     }
     # (unit, device_class, state_class, suggested_display_precision) per sensor type
     _OPTIMIZER_UNITS_MAP = {
@@ -873,6 +994,8 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_POWER: (UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
         SENSOR_TYPE_TEMPERATURE: (UnitOfTemperature.CELSIUS, SensorDeviceClass.TEMPERATURE, SensorStateClass.MEASUREMENT, 1),
         SENSOR_TYPE_ENERGY: (UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, 3),
+        SENSOR_TYPE_AZIMUTH: ("°", None, None, 2),
+        SENSOR_TYPE_TILT: ("°", None, None, 2),
     }
 
     def __init__(
@@ -970,6 +1093,8 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                 self._attr_suggested_display_precision = precision
         elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
+            self._attr_state_class = None
+        elif self._sensor_type is SENSOR_TYPE_STATUS:
             self._attr_state_class = None
 
     @property
@@ -1087,14 +1212,52 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             self._log_zero_value_recent(attr_name, ts)
         self._attr_native_value = self._round_live_value(actual_value)
 
+    def _set_status_value_from_item(self, item) -> None:
+        """Set _attr_native_value from item.status."""
+        actual_value = getattr(item, "status", None)
+        self._attr_native_value = str(actual_value) if actual_value else ""
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers sensor: %s status updated to '%s'",
+                self._log_name, self._attr_native_value or "(empty)",
+            )
+
+    def _set_azimuth_value_from_item(self, item) -> None:
+        """Set _attr_native_value from item.azimuth."""
+        actual_value = getattr(item, "azimuth", None)
+        if actual_value is None:
+            self._attr_native_value = None
+            return
+        try:
+            self._attr_native_value = round(float(actual_value), 2)
+        except (TypeError, ValueError):
+            self._attr_native_value = None
+
+    def _set_tilt_value_from_item(self, item) -> None:
+        """Set _attr_native_value from item.tilt."""
+        actual_value = getattr(item, "tilt", None)
+        if actual_value is None:
+            self._attr_native_value = None
+            return
+        try:
+            self._attr_native_value = round(float(actual_value), 2)
+        except (TypeError, ValueError):
+            self._attr_native_value = None
+
     def _update_optimizer_value_from_item(self, item, timetocheck, ts: datetime) -> None:
-        """Set _attr_native_value from item (energy monotonic, lastmeasurement, or mapped value with age check)."""
+        """Set _attr_native_value from item (energy monotonic, lastmeasurement, status, azimuth, tilt, or mapped value with age check)."""
         if self._sensor_type is SENSOR_TYPE_ENERGY:
             self._set_energy_value_from_item(item)
         elif self._sensor_type is SENSOR_TYPE_LASTMEASUREMENT:
             self._attr_native_value = item.lastmeasurement
         elif self._sensor_type is SENSOR_TYPE_TEMPERATURE:
             self._set_temperature_value_from_item(item)
+        elif self._sensor_type is SENSOR_TYPE_STATUS:
+            self._set_status_value_from_item(item)
+        elif self._sensor_type is SENSOR_TYPE_AZIMUTH:
+            self._set_azimuth_value_from_item(item)
+        elif self._sensor_type is SENSOR_TYPE_TILT:
+            self._set_tilt_value_from_item(item)
         else:
             self._set_live_value_from_item(item, ts <= timetocheck, ts, timetocheck)
 
