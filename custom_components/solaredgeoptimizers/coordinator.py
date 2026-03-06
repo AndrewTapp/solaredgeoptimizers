@@ -29,6 +29,7 @@ from .const import (
     RELIABLE_THRESHOLD_KWH,
     LIGHT_CHECK_MIN_INTERVAL,
     parse_string_display_name_path,
+    resolve_duplicate_indices,
 )
 from .api_dual import OBTAINED_FROM_LEGACY, OBTAINED_FROM_ONE
 from .solaredgeoptimizers import (
@@ -83,6 +84,18 @@ InverterRollupResult = namedtuple(
         "voltage_count",
         "last_measurement",
         "active_optimizers",
+    ],
+)
+# Context for aggregation to reduce parameter count
+AggregationContext = namedtuple(
+    "AggregationContext",
+    [
+        "data_dict",
+        "timetocheck",
+        "lifetime_energy_lookup",
+        "current_utc",
+        "site_id_str",
+        "include_site_id_in_entity_id",
     ],
 )
 
@@ -216,6 +229,12 @@ class MyCoordinator(DataUpdateCoordinator):
         for optimizer in string.optimizers:
             optimizer_data = data_dict.get(optimizer.optimizerId)
             if optimizer_data:
+                optimizer_data.status = getattr(optimizer, "status", "") or ""
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers: Set optimizer %s status=%s",
+                        optimizer.optimizerId, optimizer_data.status or "(none)",
+                    )
                 last_measurement = optimizer_data.lastmeasurement
                 is_datetime = isinstance(last_measurement, datetime)
                 if is_datetime and (string_last_measurement is None or last_measurement > string_last_measurement):
@@ -273,6 +292,13 @@ class MyCoordinator(DataUpdateCoordinator):
         string_aggregated.active_optimizer_count = string_active_optimizers
         string_aggregated.serialnumber = f"String_{string.stringId}"
         string_aggregated.panel_description = string.displayName
+        string_aggregated.status = getattr(string, "status", "") or ""
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Created string aggregated %s status=%s child_count=%d active=%d",
+                string_aggregated.panel_id, string_aggregated.status or "(none)",
+                string_aggregated.child_count, string_aggregated.active_optimizer_count,
+            )
         return string_aggregated
 
     def _create_inverter_aggregated(
@@ -311,6 +337,13 @@ class MyCoordinator(DataUpdateCoordinator):
         inverter_aggregated.active_optimizer_count = inverter_active_optimizers
         inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
         inverter_aggregated.panel_description = inverter.displayName
+        inverter_aggregated.status = getattr(inverter, "status", "") or ""
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Created inverter aggregated %s status=%s child_count=%d active_optimizers=%d",
+                inverter_aggregated.panel_id, inverter_aggregated.status or "(none)",
+                inverter_aggregated.child_count, inverter_aggregated.active_optimizer_count,
+            )
         return inverter_aggregated
 
     def _create_site_aggregated(
@@ -350,19 +383,23 @@ class MyCoordinator(DataUpdateCoordinator):
         return site_aggregated
 
     def _register_inverter_and_string_devices(
-        self, device_registry, site_id: str, inverter, inv_idx: int
+        self, device_registry, site_id: str, inverter, inv_idx: int, inv_suffix: str = ""
     ) -> None:
-        """Create device registry entries for one inverter and its strings."""
-        _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx)
-        inverter_name = f"Inverter {site_id}.{inv_idx}"
+        """Create device registry entries for one inverter and its strings.
+        
+        inv_suffix is empty for first inverter at position, 'a', 'b', etc. for duplicates.
+        """
+        inv_idx_str = f"{inv_idx}{inv_suffix}"
+        _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx_str)
+        inverter_name = f"Inverter {site_id}.{inv_idx_str}"
         inv_model = self._inverter_models.get(inverter.serialNumber) if self._inverter_models else None
         model = (inv_model or f"{inverter.type} {inverter.displayName}").strip() or inverter.serialNumber
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers: Creating inverter device serial=%s model=%r (from_api=%s)",
-                inverter.serialNumber, model, inv_model is not None,
+                "SolarEdge Optimizers: Creating inverter device serial=%s model=%r (from_api=%s) suffix=%s",
+                inverter.serialNumber, model, inv_model is not None, inv_suffix or "(none)",
             )
-        inv_device_id = f"{self.config_entry.entry_id}_inv_{inv_idx}"
+        inv_device_id = f"{self.config_entry.entry_id}_inv_{inv_idx_str}"
         device_registry.async_get_or_create(
             config_entry_id=self.config_entry.entry_id,
             identifiers={(DOMAIN, inv_device_id)},
@@ -372,15 +409,36 @@ class MyCoordinator(DataUpdateCoordinator):
             hw_version=inverter.serialNumber,
             via_device=(DOMAIN, f"site_{self._site_structure.siteId}"),
         )
+        
+        # Resolve duplicate strings within this inverter
+        string_suffix_map = resolve_duplicate_indices(
+            inverter.strings,
+            get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, len([x for x in inverter.strings if x == s])),
+            get_status=lambda s: getattr(s, "status", "") or "",
+            get_serial=lambda s: getattr(s, "serialNumber", "") or str(getattr(s, "stringId", "")),
+            logger=_LOGGER,
+        )
+        
+        # Log duplicate string count for this inverter
+        str_duplicates = sum(1 for suffix in string_suffix_map.values() if suffix)
+        if str_duplicates > 0 and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Found %d duplicate string positions in inverter %s, assigned suffixes",
+                str_duplicates, inv_idx_str,
+            )
+        
         for str_idx, string in enumerate(inverter.strings, start=1):
+            str_suffix = string_suffix_map.get(str_idx - 1, "")  # 0-indexed in suffix_map
             parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
             if parsed is not None:
                 inv_num, str_num = parsed
-                string_name = f"String {site_id}.{inv_num}.{str_num}"
-                str_device_id = f"{self.config_entry.entry_id}_str_{inv_num}_{str_num}"
+                str_num_str = f"{str_num}{str_suffix}"
+                string_name = f"String {site_id}.{inv_num}.{str_num_str}"
+                str_device_id = f"{self.config_entry.entry_id}_str_{inv_num}_{str_num_str}"
             else:
-                string_name = f"String {site_id}.{inv_idx}.{str_idx}"
-                str_device_id = f"{self.config_entry.entry_id}_str_{inv_idx}_{str_idx}"
+                str_idx_str = f"{str_idx}{str_suffix}"
+                string_name = f"String {site_id}.{inv_idx_str}.{str_idx_str}"
+                str_device_id = f"{self.config_entry.entry_id}_str_{inv_idx_str}_{str_idx_str}"
             device_registry.async_get_or_create(
                 config_entry_id=self.config_entry.entry_id,
                 identifiers={(DOMAIN, str_device_id)},
@@ -390,7 +448,7 @@ class MyCoordinator(DataUpdateCoordinator):
                 via_device=(DOMAIN, inv_device_id),
             )
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Created device for string: %s", string_name)
+                _LOGGER.debug("Created device for string: %s (suffix=%s)", string_name, str_suffix or "(none)")
 
     def ensure_devices_registered(self) -> None:
         """Ensure site, inverter, and string devices exist in the device registry.
@@ -402,9 +460,22 @@ class MyCoordinator(DataUpdateCoordinator):
             self._register_site_and_inverter_devices(self._site_structure)
 
     def _register_site_and_inverter_devices(self, site) -> None:
-        """Create device registry entries for site, inverters, and strings."""
+        """Create device registry entries for site, inverters, and strings.
+        
+        No deduplication - all inverters and strings are shown. When duplicates exist
+        (same position), active devices come first (sorted by serial), and subsequent
+        duplicates get letter suffixes (a, b, c...).
+        """
         device_registry = dr.async_get(self.hass)
         site_id = str(site.siteId)
+        
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            total_strings = sum(len(inv.strings) for inv in site.inverters)
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Registering devices for site %s: %d inverters, %d strings",
+                site_id, len(site.inverters), total_strings,
+            )
+        
         device_registry.async_get_or_create(
             config_entry_id=self.config_entry.entry_id,
             identifiers={(DOMAIN, f"site_{site.siteId}")},
@@ -413,10 +484,29 @@ class MyCoordinator(DataUpdateCoordinator):
             name=f"Site {site_id}",
         )
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Created device for site: %s", site_id)
+            _LOGGER.debug("SolarEdge Optimizers: Created device for site: %s", site_id)
+        
+        # Resolve duplicate inverters across the site
+        inv_suffix_map = resolve_duplicate_indices(
+            site.inverters,
+            get_key=lambda inv: getattr(inv, "displayName", "") or str(getattr(inv, "inverterId", "")),
+            get_status=lambda inv: getattr(inv, "status", "") or "",
+            get_serial=lambda inv: getattr(inv, "serialNumber", "") or "",
+            logger=_LOGGER,
+        )
+        
+        # Log duplicate inverter count
+        inv_duplicates = sum(1 for suffix in inv_suffix_map.values() if suffix)
+        if inv_duplicates > 0:
+            _LOGGER.info(
+                "SolarEdge Optimizers: Found %d duplicate inverter positions for device registration, assigned suffixes",
+                inv_duplicates,
+            )
+        
         for inv_idx, inverter in enumerate(site.inverters, start=1):
+            inv_suffix = inv_suffix_map.get(inv_idx - 1, "")  # 0-indexed in suffix_map
             self._register_inverter_and_string_devices(
-                device_registry, site_id, inverter, inv_idx
+                device_registry, site_id, inverter, inv_idx, inv_suffix
             )
 
     async def _async_setup(self) -> None:
@@ -446,22 +536,15 @@ class MyCoordinator(DataUpdateCoordinator):
             raise
         self._register_site_and_inverter_devices(site)
 
-    def _process_inverter_strings(
-        self,
-        inverter,
-        inv_idx,
-        data_dict,
-        timetocheck,
-        lifetime_energy_lookup,
-        current_utc,
-        site_id_str,
-        include_site_id_in_entity_id,
-    ):
-        """Process all strings for one inverter; write string aggregates into data_dict.
+    def _process_inverter_strings(self, inverter, inv_idx, inv_suffix, ctx):
+        """Process all strings for one inverter; write string aggregates into ctx.data_dict.
 
         Returns (inverter_current, inverter_power, inverter_voltage_sum, inverter_voltage_count,
                  inverter_last_measurement, inverter_active_optimizers, inverter_active_strings,
                  inverter_lifetime_energy).
+        
+        inv_suffix is empty for first inverter at position, 'a', 'b', etc. for duplicates.
+        ctx is an AggregationContext namedtuple with shared aggregation parameters.
         """
         inverter_current = 0.0
         inverter_power = 0.0
@@ -471,8 +554,28 @@ class MyCoordinator(DataUpdateCoordinator):
         inverter_active_optimizers = 0
         inverter_active_strings = 0
         inverter_lifetime_energy = 0.0
+        
+        inv_idx_str = f"{inv_idx}{inv_suffix}"
+        
+        # Resolve duplicate strings within this inverter
+        str_suffix_map = resolve_duplicate_indices(
+            inverter.strings,
+            get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, 0),
+            get_status=lambda s: getattr(s, "status", "") or "",
+            get_serial=lambda s: getattr(s, "serialNumber", "") or str(getattr(s, "stringId", "")),
+            logger=_LOGGER,
+        )
+        
+        # Log duplicate string count for this inverter
+        str_duplicates = sum(1 for suffix in str_suffix_map.values() if suffix)
+        if str_duplicates > 0 and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Found %d duplicate string positions in inverter %s for aggregation, assigned suffixes",
+                str_duplicates, inv_idx_str,
+            )
 
         for str_idx, string in enumerate(inverter.strings, start=1):
+            str_suffix = str_suffix_map.get(str_idx - 1, "")
             (
                 string_current,
                 string_power,
@@ -480,10 +583,10 @@ class MyCoordinator(DataUpdateCoordinator):
                 string_voltage_count,
                 string_last_measurement,
                 string_active_optimizers,
-            ) = self._aggregate_optimizers_in_string(string, data_dict, timetocheck)
+            ) = self._aggregate_optimizers_in_string(string, ctx.data_dict, ctx.timetocheck)
 
             string_lifetime_energy = 0.0
-            energy_data = lifetime_energy_lookup.get(string.stringId)
+            energy_data = ctx.lifetime_energy_lookup.get(string.stringId)
             if energy_data:
                 kWh = _lifetime_energy_to_kwh(energy_data)
                 if kWh is not None:
@@ -493,9 +596,11 @@ class MyCoordinator(DataUpdateCoordinator):
             parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
             if parsed is not None:
                 inv_num, str_num = parsed
-                string_entity_path = (site_id_str, inv_num, str_num) if include_site_id_in_entity_id else (inv_num, str_num)
+                str_num_str = f"{str_num}{str_suffix}"
+                string_entity_path = (ctx.site_id_str, inv_num, str_num_str) if ctx.include_site_id_in_entity_id else (inv_num, str_num_str)
             else:
-                string_entity_path = (site_id_str, inv_idx, str_idx) if include_site_id_in_entity_id else (inv_idx, str_idx)
+                str_idx_str = f"{str_idx}{str_suffix}"
+                string_entity_path = (ctx.site_id_str, inv_idx_str, str_idx_str) if ctx.include_site_id_in_entity_id else (inv_idx_str, str_idx_str)
             string_aggregated = self._create_string_aggregated(
                 string,
                 string_current,
@@ -505,10 +610,10 @@ class MyCoordinator(DataUpdateCoordinator):
                 string_last_measurement,
                 string_active_optimizers,
                 string_lifetime_energy,
-                current_utc,
+                ctx.current_utc,
                 string_entity_path,
             )
-            data_dict[string_aggregated.panel_id] = string_aggregated
+            ctx.data_dict[string_aggregated.panel_id] = string_aggregated
 
             if string_active_optimizers > 0:
                 inverter_current += string_aggregated.current
@@ -588,6 +693,10 @@ class MyCoordinator(DataUpdateCoordinator):
         aggregated is unreliable (e.g. very small while portal has a real total),
         site-level uses the portal total (sum of unscaledEnergy from layout/energy).
         include_site_id_in_entity_id: when False, entity_id_path omits site_id (shorter entity IDs).
+        
+        No deduplication - all inverters and strings are shown. When duplicates exist
+        (same position), active devices come first (sorted by serial), and subsequent
+        duplicates get letter suffixes (a, b, c...).
         """
         lifetime_energy_lookup = self._build_lifetime_energy_lookup(lifetime_energy_data)
         site_id_str = str(site_id)
@@ -602,8 +711,37 @@ class MyCoordinator(DataUpdateCoordinator):
             active_inverters=0,
             lifetime_energy=0.0,
         )
+        
+        # Resolve duplicate inverters
+        inv_suffix_map = resolve_duplicate_indices(
+            self._site_structure.inverters,
+            get_key=lambda inv: getattr(inv, "displayName", "") or str(getattr(inv, "inverterId", "")),
+            get_status=lambda inv: getattr(inv, "status", "") or "",
+            get_serial=lambda inv: getattr(inv, "serialNumber", "") or "",
+            logger=_LOGGER,
+        )
+        
+        # Log duplicate inverter count for aggregation
+        inv_duplicates = sum(1 for suffix in inv_suffix_map.values() if suffix)
+        if inv_duplicates > 0 and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Found %d duplicate inverter positions for aggregation, assigned suffixes",
+                inv_duplicates,
+            )
+
+        # Create aggregation context to reduce parameter passing
+        ctx = AggregationContext(
+            data_dict=data_dict,
+            timetocheck=timetocheck,
+            lifetime_energy_lookup=lifetime_energy_lookup,
+            current_utc=current_utc,
+            site_id_str=site_id_str,
+            include_site_id_in_entity_id=include_site_id_in_entity_id,
+        )
 
         for inv_idx, inverter in enumerate(self._site_structure.inverters, start=1):
+            inv_suffix = inv_suffix_map.get(inv_idx - 1, "")
+            inv_idx_str = f"{inv_idx}{inv_suffix}"
             (
                 inverter_current,
                 inverter_power,
@@ -613,20 +751,11 @@ class MyCoordinator(DataUpdateCoordinator):
                 inverter_active_optimizers,
                 inverter_active_strings,
                 inverter_lifetime_energy,
-            ) = self._process_inverter_strings(
-                inverter,
-                inv_idx,
-                data_dict,
-                timetocheck,
-                lifetime_energy_lookup,
-                current_utc,
-                site_id_str,
-                include_site_id_in_entity_id,
-            )
+            ) = self._process_inverter_strings(inverter, inv_idx, inv_suffix, ctx)
 
             inverter_aggregated = self._create_inverter_aggregated(
                 inverter,
-                inv_idx,
+                inv_idx_str,
                 inverter_current,
                 inverter_power,
                 inverter_voltage_sum,
