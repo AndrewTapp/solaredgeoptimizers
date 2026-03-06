@@ -90,6 +90,15 @@
       "obtained_from": {
         "name": "获取自"
       },
+      "status": {
+        "name": "状态"
+      },
+      "azimuth": {
+        "name": "方位角"
+      },
+      "tilt": {
+        "name": "倾斜角"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "面板类型"
