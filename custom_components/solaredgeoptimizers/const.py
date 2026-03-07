@@ -31,6 +31,14 @@ LIGHT_CHECK_MIN_INTERVAL = timedelta(minutes=2)
 # Site lifetime: use portal total when aggregated optimizer data is below this (kWh)
 RELIABLE_THRESHOLD_KWH = 100.0
 
+# Common User-Agent string for API requests (Chrome on Windows)
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+
+# Status sensor icons
+ICON_STATUS_ACTIVE = "mdi:check-circle"
+ICON_STATUS_INACTIVE = "mdi:alert-circle"
+ICON_STATUS_UNKNOWN = "mdi:help-circle"
+
 SENSOR_TYPE_CURRENT = "Current"
 SENSOR_TYPE_OPT_VOLTAGE = "Optimizer_voltage"
 SENSOR_TYPE_POWER = "Power"
