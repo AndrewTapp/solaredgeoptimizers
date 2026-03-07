@@ -35,6 +35,7 @@ import requests
 from requests.sessions import Session
 import pytz
 
+from .const import USER_AGENT
 from .solaredgeoptimizers import (
     SolarEdgeSite,
     SolarEdgeOptimizerData,
@@ -518,7 +519,7 @@ class solaredge_one:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: No token; starting OAuth PKCE login flow")
         with Session() as session:
-            session.headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+            session.headers["User-Agent"] = USER_AGENT
             self._access_token, self._refresh_token = _perform_oauth_pkce_login(
                 session, self.username, self.password
             )
@@ -531,7 +532,7 @@ class solaredge_one:
             "Accept": "application/json",
             "Content-Type": "application/json",
             "Authorization": f"Bearer {token}",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "User-Agent": USER_AGENT,
             "Origin": BASE_URL,
             "Referer": f"{BASE_URL}/",
         }
