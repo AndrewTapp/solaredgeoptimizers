@@ -1,4 +1,24 @@
-"""Typing Protocol for SolarEdge API clients: interface implemented by both the legacy Monitoring API and the SolarEdge One API, used by the coordinator."""
+"""
+SolarEdge Optimizers Integration - API Protocol (api.py)
+
+This module defines the typing Protocol that specifies the interface contract for
+SolarEdge API clients. Both the legacy Monitoring API (solaredgeoptimizers) and
+the SolarEdge One API (solaredge_one) implement this interface.
+
+Required Methods:
+- check_login() -> int: Validate credentials, return HTTP status (200=success, 401=auth failed)
+- requestListOfAllPanels() -> Any: Return site structure with inverters/strings/optimizers
+- requestAllData() -> list[Any]: Fetch live data for all optimizers
+- get_lifetime_energy_cached() -> dict[str, Any]: Return cached lifetime energy data
+- close() -> None: Release resources and close sessions
+
+Optional Methods (detected via getattr in coordinator):
+- requestSystemDataBatch(item_ids: list) -> list[Any]: Batch query for multiple optimizers
+- get_inverter_models(serials: list) -> dict[str, str]: Fetch inverter model names
+
+This Protocol enables type checking and IDE support while allowing the coordinator
+to work with either API implementation or the dual API wrapper interchangeably.
+"""
 from __future__ import annotations
 
 from typing import Any, Protocol
