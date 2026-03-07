@@ -59,6 +59,26 @@ SENSOR_TYPE_INDIVIDUAL = [
     SENSOR_TYPE_TILT,
 ]
 
+# Sensors to exclude for inactive optimizers (only create for active devices)
+# These sensors are not meaningful for inactive/disconnected optimizers
+SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE = [
+    SENSOR_TYPE_AZIMUTH,
+    SENSOR_TYPE_CURRENT,
+    SENSOR_TYPE_OPT_VOLTAGE,
+    SENSOR_TYPE_POWER,
+    SENSOR_TYPE_TEMPERATURE,
+    SENSOR_TYPE_TILT,
+    SENSOR_TYPE_VOLTAGE,
+]
+
+# Sensors to exclude for inactive strings/inverters (only create for active devices)
+# Current (average), power, and voltage (average) are not meaningful for inactive devices
+SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE = [
+    SENSOR_TYPE_CURRENT,
+    SENSOR_TYPE_POWER,
+    SENSOR_TYPE_VOLTAGE,
+]
+
 # Sensors for aggregated entities (strings and inverters)
 SENSOR_TYPE_AGGREGATED_COMMON = [
     SENSOR_TYPE_CURRENT,
