@@ -46,6 +46,9 @@ from .const import (
     resolve_duplicate_indices,
     SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE,
     SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE,
+    ICON_STATUS_ACTIVE,
+    ICON_STATUS_INACTIVE,
+    ICON_STATUS_UNKNOWN,
 )
 
 # Changed import to use coordinator module
@@ -377,6 +380,95 @@ def _build_individual_optimizer_sensors(
     return sensors_to_add, active_optimizer_count, inactive_optimizer_count, skipped_sensor_count
 
 
+def _build_string_entity_path(string, str_suffix, inv_idx_str, include_site_id, site_id):
+    """Build entity path for a string based on its display name or position."""
+    parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
+    if parsed is not None:
+        inv_num, str_num = parsed
+        str_num_str = f"{str_num}{str_suffix}"
+        return (site_id, inv_num, str_num_str) if include_site_id else (inv_num, str_num_str)
+    str_idx_str = f"{inv_idx_str.split(inv_idx_str[0])[0]}{str_suffix}" if str_suffix else inv_idx_str
+    return (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
+
+
+def _create_string_aggregated_data(string, string_entity_path):
+    """Create SolarEdgeAggregatedData for a string."""
+    string_aggregated = SolarEdgeAggregatedData(
+        entity_id=f"string_{string.stringId}",
+        entity_type="string",
+        entity_id_path=string_entity_path,
+    )
+    string_aggregated.serialnumber = f"String_{string.stringId}"
+    string_aggregated.panel_description = string.displayName
+    string_aggregated.status = getattr(string, "status", "") or ""
+    return string_aggregated
+
+
+def _create_string_sensors(coordinator, hass, entry, string, string_aggregated, inverter, base_name, is_active):
+    """Create sensor entities for a string, skipping excluded sensors for inactive strings.
+    
+    Returns (sensors_list, skipped_count).
+    """
+    sensors = []
+    skipped = 0
+    for sensortype in SENSOR_TYPE_AGGREGATED_STRING:
+        if not is_active and sensortype in SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE:
+            skipped += 1
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers sensor: Skipping %s sensor for inactive string %s",
+                    sensortype, string.displayName,
+                )
+            continue
+        sensors.append(
+            SolarEdgeAggregatedSensor(
+                coordinator, hass, entry, string_aggregated, sensortype, string, inverter,
+                base_name=base_name,
+            )
+        )
+    return sensors, skipped
+
+
+def _create_inverter_aggregated_data(inverter, inv_idx_str, include_site_id, site_id):
+    """Create SolarEdgeAggregatedData for an inverter."""
+    inverter_aggregated = SolarEdgeAggregatedData(
+        entity_id=f"inverter_{inverter.inverterId}",
+        entity_type="inverter",
+        entity_id_path=(site_id, inv_idx_str) if include_site_id else (inv_idx_str,),
+    )
+    inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
+    inverter_aggregated.panel_description = inverter.displayName
+    inverter_aggregated.status = getattr(inverter, "status", "") or ""
+    inverter_aggregated.manufacturer = getattr(inverter, "manufacturer", "") or "SolarEdge"
+    inverter_aggregated.model = getattr(inverter, "model", "") or ""
+    return inverter_aggregated
+
+
+def _create_inverter_sensors(coordinator, hass, entry, inverter, inverter_aggregated, base_name, is_active):
+    """Create sensor entities for an inverter, skipping excluded sensors for inactive inverters.
+    
+    Returns (sensors_list, skipped_count).
+    """
+    sensors = []
+    skipped = 0
+    for sensortype in SENSOR_TYPE_AGGREGATED_INVERTER:
+        if not is_active and sensortype in SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE:
+            skipped += 1
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers sensor: Skipping %s sensor for inactive inverter %s",
+                    sensortype, inverter.displayName,
+                )
+            continue
+        sensors.append(
+            SolarEdgeAggregatedSensor(
+                coordinator, hass, entry, inverter_aggregated, sensortype, None, inverter,
+                base_name=base_name,
+            )
+        )
+    return sensors, skipped
+
+
 def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, include_site_id, site_id):
     """Build list of SolarEdgeAggregatedSensor entities for strings, inverters, and site.
     
@@ -415,7 +507,6 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
         logger=_LOGGER,
     )
     
-    # Log duplicate inverter count
     inv_duplicates = sum(1 for suffix in inv_suffix_map.values() if suffix)
     if inv_duplicates > 0:
         _LOGGER.info(
@@ -423,11 +514,11 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
             inv_duplicates,
         )
     
+    # Build string sensors
     for inv_idx, inverter in enumerate(site_struct.inverters, start=1):
         inv_suffix = inv_suffix_map.get(inv_idx - 1, "")
         inv_idx_str = f"{inv_idx}{inv_suffix}"
         
-        # Resolve duplicate strings within this inverter
         str_suffix_map = resolve_duplicate_indices(
             inverter.strings,
             get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, 0),
@@ -438,25 +529,19 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
         
         for str_idx, string in enumerate(inverter.strings, start=1):
             str_suffix = str_suffix_map.get(str_idx - 1, "")
+            str_idx_str = f"{str_idx}{str_suffix}"
+            
             parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
             if parsed is not None:
                 inv_num, str_num = parsed
                 str_num_str = f"{str_num}{str_suffix}"
                 string_entity_path = (site_id, inv_num, str_num_str) if include_site_id else (inv_num, str_num_str)
             else:
-                str_idx_str = f"{str_idx}{str_suffix}"
                 string_entity_path = (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
-            string_aggregated = SolarEdgeAggregatedData(
-                entity_id=f"string_{string.stringId}",
-                entity_type="string",
-                entity_id_path=string_entity_path,
-            )
-            string_aggregated.serialnumber = f"String_{string.stringId}"
-            string_aggregated.panel_description = string.displayName
-            string_aggregated.status = getattr(string, "status", "") or ""
             
-            # Check if string is active
+            string_aggregated = _create_string_aggregated_data(string, string_entity_path)
             string_is_active = string_aggregated.status.upper() == "ACTIVE"
+            
             if string_is_active:
                 active_string_count += 1
             else:
@@ -467,39 +552,21 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
                     "SolarEdge Optimizers sensor: Creating aggregated sensors for string: %s status=%s suffix=%s is_active=%s",
                     string.displayName, string_aggregated.status or "(none)", str_suffix or "(none)", string_is_active,
                 )
-            for sensortype in SENSOR_TYPE_AGGREGATED_STRING:
-                # Skip certain sensors for inactive strings
-                if not string_is_active and sensortype in SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE:
-                    skipped_aggregated_sensor_count += 1
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "SolarEdge Optimizers sensor: Skipping %s sensor for inactive string %s",
-                            sensortype, string.displayName,
-                        )
-                    continue
-                sensors.append(
-                    SolarEdgeAggregatedSensor(
-                        coordinator, hass, entry, string_aggregated, sensortype, string, inverter,
-                        base_name=base_name,
-                    )
-                )
+            
+            string_sensors, skipped = _create_string_sensors(
+                coordinator, hass, entry, string, string_aggregated, inverter, base_name, string_is_active
+            )
+            sensors.extend(string_sensors)
+            skipped_aggregated_sensor_count += skipped
     
+    # Build inverter sensors
     for inv_idx, inverter in enumerate(site_struct.inverters, start=1):
         inv_suffix = inv_suffix_map.get(inv_idx - 1, "")
         inv_idx_str = f"{inv_idx}{inv_suffix}"
-        inverter_aggregated = SolarEdgeAggregatedData(
-            entity_id=f"inverter_{inverter.inverterId}",
-            entity_type="inverter",
-            entity_id_path=(site_id, inv_idx_str) if include_site_id else (inv_idx_str,),
-        )
-        inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
-        inverter_aggregated.panel_description = inverter.displayName
-        inverter_aggregated.status = getattr(inverter, "status", "") or ""
-        inverter_aggregated.manufacturer = getattr(inverter, "manufacturer", "") or "SolarEdge"
-        inverter_aggregated.model = getattr(inverter, "model", "") or ""
         
-        # Check if inverter is active
+        inverter_aggregated = _create_inverter_aggregated_data(inverter, inv_idx_str, include_site_id, site_id)
         inverter_is_active = inverter_aggregated.status.upper() == "ACTIVE"
+        
         if inverter_is_active:
             active_inverter_count += 1
         else:
@@ -511,22 +578,14 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
                 inverter.displayName, inverter_aggregated.status or "(none)",
                 inverter_aggregated.manufacturer, inverter_aggregated.model or "(none)", inv_suffix or "(none)", inverter_is_active,
             )
-        for sensortype in SENSOR_TYPE_AGGREGATED_INVERTER:
-            # Skip certain sensors for inactive inverters
-            if not inverter_is_active and sensortype in SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE:
-                skipped_aggregated_sensor_count += 1
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers sensor: Skipping %s sensor for inactive inverter %s",
-                        sensortype, inverter.displayName,
-                    )
-                continue
-            sensors.append(
-                SolarEdgeAggregatedSensor(
-                    coordinator, hass, entry, inverter_aggregated, sensortype, None, inverter,
-                    base_name=base_name,
-                )
-            )
+        
+        inverter_sensors, skipped = _create_inverter_sensors(
+            coordinator, hass, entry, inverter, inverter_aggregated, base_name, inverter_is_active
+        )
+        sensors.extend(inverter_sensors)
+        skipped_aggregated_sensor_count += skipped
+    
+    # Build site sensors
     site_aggregated = SolarEdgeAggregatedData(
         entity_id=f"site_{site_struct.siteId}",
         entity_type="site",
@@ -542,6 +601,7 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
                 coordinator, hass, entry, site_aggregated, sensortype, None, None, base_name=base_name,
             )
         )
+    
     return sensors, active_string_count, inactive_string_count, active_inverter_count, inactive_inverter_count, skipped_aggregated_sensor_count
 
 
@@ -1055,6 +1115,18 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
     def device_info(self):
         return self._attr_device_info
 
+    @property
+    def icon(self) -> str | None:
+        """Return dynamic icon for status sensors based on current value."""
+        if self._sensor_type is not SENSOR_TYPE_STATUS:
+            return None
+        status = (self._attr_native_value or "").upper()
+        if status == "ACTIVE":
+            return ICON_STATUS_ACTIVE
+        if status == "INACTIVE":
+            return ICON_STATUS_INACTIVE
+        return ICON_STATUS_UNKNOWN if status else None
+
 
 class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
     """An entity using CoordinatorEntity.
@@ -1237,6 +1309,18 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         if not attrs and getattr(self, "_panel", None):
             attrs["panel_type"] = self._panel
         return attrs
+
+    @property
+    def icon(self) -> str | None:
+        """Return dynamic icon for status sensors based on current value."""
+        if self._sensor_type is not SENSOR_TYPE_STATUS:
+            return None
+        status = (self._attr_native_value or "").upper()
+        if status == "ACTIVE":
+            return ICON_STATUS_ACTIVE
+        if status == "INACTIVE":
+            return ICON_STATUS_INACTIVE
+        return ICON_STATUS_UNKNOWN if status else None
 
     def _timetocheck_and_ts(self, item):
         """Return (timetocheck, ts) with ts timezone-aware. May mutate item.lastmeasurement."""
