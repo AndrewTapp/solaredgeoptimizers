@@ -1,22 +1,45 @@
 """
-SolarEdge One portal API client: OAuth authentication and services/layout endpoints for site structure, optimizer live data, temperatures, and lifetime energy.
+SolarEdge Optimizers Integration - SolarEdge One API Client (solaredge_one_api.py)
 
-Used by api_dual when Use SolarEdge One is enabled. Endpoints (monitoring.solaredge.com/services/...):
+This module implements the client for the modern SolarEdge One portal API, which provides
+richer data and better performance compared to the legacy Monitoring API.
 
-- **Site structure**: GET .../layout/logical/generic/v2/site/{siteId}?include-optimizers=true
-- **Optimizer info + live data**: POST .../layout/information/optimizers (body: list of serials).
-  Returns basicInformationList (serial, model e.g. P405-4RM4MRM-NA25) and serialToLiveData.
-  Used for full refresh (parallel per optimizer) and for lightweight check via requestSystemDataBatch
-  (one call with up to 5 random serials). Timeout 60 s with one automatic retry on read/connect timeout.
-- **Inverter information**: GET .../layout/information/inverters?inverter-serials=...
-  Returns fullModel (e.g. SE5000H-RW000BNN4). 403 Forbidden is non-fatal; devices still work with position-based identity.
-- **Optimizer temperatures**: GET .../layout/energy/site/{siteId}/by-inverter?start-date=...&end-date=...&inverter-serials=...&include-max-temperature=true.
-  Returns per-optimizer temperature (may be °C or °F per temperatureUnit). Cached 15 min; merged into optimizer data (normalized to °C).
-- **Lifetime energy**: GET .../layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...&start-date=...&end-date=...
-  One request per optimizer; when cache is cold, requests run in parallel (thread pool); cached 1 h.
+Authentication:
+- Uses OAuth 2.0 with PKCE (Proof Key for Code Exchange) flow
+- Authenticates via login.solaredge.com, exchanges authorization code for access token
+- Bearer token used for all /services/ API calls
 
-Authentication: SolarEdge One uses OAuth/OIDC via login.solaredge.com; we use PKCE, then exchange
-the authorization code at /oauth2/token for an access_token and use Bearer token for all /services/ API calls.
+API Endpoints (monitoring.solaredge.com/services/...):
+
+1. Site Structure:
+   GET .../layout/logical/generic/v2/site/{siteId}?include-optimizers=true
+   Returns hierarchical site layout with inverters, strings, and optimizers
+
+2. Optimizer Live Data:
+   POST .../layout/information/optimizers (body: list of serials)
+   Returns basicInformationList (serial, model) and serialToLiveData (power, voltage, current)
+   Used for both full refresh and lightweight batch checks (up to 5 optimizers)
+
+3. Inverter Information:
+   GET .../layout/information/inverters?inverter-serials=...
+   Returns fullModel (e.g. SE5000H-RW000BNN4) for device registry
+
+4. Optimizer Temperatures:
+   GET .../layout/energy/site/{siteId}/by-inverter?include-max-temperature=true
+   Returns per-optimizer temperature (auto-converts Fahrenheit to Celsius)
+   Cached for 15 minutes
+
+5. Lifetime Energy:
+   GET .../layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...
+   Fetches per-optimizer lifetime energy in parallel (thread pool)
+   Cached for 1 hour
+
+Key Features:
+- Automatic retry on timeout for optimizer data requests
+- Temperature unit normalization (F to C conversion)
+- Duplicate name resolution with letter suffixes for same-position devices
+- Azimuth and tilt extraction from optimizer module data (radians to degrees)
+- Panel cache (1 hour), temperature cache (15 min), lifetime energy cache (1 hour)
 """
 import math
 import base64
@@ -35,7 +58,7 @@ import requests
 from requests.sessions import Session
 import pytz
 
-from .const import USER_AGENT
+from .const import USER_AGENT, API_TIMEOUT_SHORT, API_TIMEOUT_LONG, MAX_PARALLEL_WORKERS
 from .solaredgeoptimizers import (
     SolarEdgeSite,
     SolarEdgeOptimizerData,
@@ -106,7 +129,7 @@ def _parse_login_form(html: str):
 def _oauth_get_login_page(session: Session, login_params: dict) -> tuple[str, str]:
     """GET login page; return (html, final_url). Raises if not on login.solaredge.com."""
     login_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
-    with session.get(login_url, timeout=30) as r:
+    with session.get(login_url, timeout=API_TIMEOUT_SHORT) as r:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: GET login page -> %s", r.status_code)
         login_page_html = r.text
@@ -128,7 +151,7 @@ def _oauth_post_credentials_and_follow(
         "Origin": LOGIN_BASE,
         "Referer": login_page_url,
     }
-    with session.post(post_url, data=post_body, headers=post_headers, timeout=30, allow_redirects=True) as r:
+    with session.post(post_url, data=post_body, headers=post_headers, timeout=API_TIMEOUT_SHORT, allow_redirects=True) as r:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: POST login -> %s, URL: %s", r.status_code, r.url)
         if r.status_code >= 400 and _LOGGER.isEnabledFor(logging.DEBUG):
@@ -138,7 +161,7 @@ def _oauth_post_credentials_and_follow(
             callback_url = r.headers["Location"]
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge One: 204 response, following Location: %s", callback_url)
-            with session.get(callback_url, timeout=30, allow_redirects=True) as r2:
+            with session.get(callback_url, timeout=API_TIMEOUT_SHORT, allow_redirects=True) as r2:
                 final_url = r2.url
     return final_url
 
@@ -176,7 +199,7 @@ def _oauth_exchange_code_for_tokens(
         "Referer": f"{BASE_URL}/",
         "User-Agent": session.headers["User-Agent"],
     }
-    with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=30) as r:
+    with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=API_TIMEOUT_SHORT) as r:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: POST oauth2/token -> %s", r.status_code)
         r.raise_for_status()
@@ -537,7 +560,7 @@ class solaredge_one:
             "Referer": f"{BASE_URL}/",
         }
 
-    def _get(self, path: str, params: dict | None = None, timeout=60):
+    def _get(self, path: str, params: dict | None = None, timeout: int = API_TIMEOUT_LONG):
         url = f"{BASE_URL}{path}"
         kwargs = {"headers": self._request_headers(), "timeout": timeout}
         if params:
@@ -553,7 +576,7 @@ class solaredge_one:
             r.raise_for_status()
             return r.json()
 
-    def _post(self, path: str, json_data, timeout=60):
+    def _post(self, path: str, json_data, timeout: int = API_TIMEOUT_LONG):
         url = f"{BASE_URL}{path}"
         with requests.post(
             url,
@@ -591,7 +614,7 @@ class solaredge_one:
         try:
             # API accepts comma-separated inverter-serials
             params = {"inverter-serials": ",".join(str(s).strip() for s in serials if s)}
-            data = self._get(path, params=params, timeout=30)
+            data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
         except requests.HTTPError as e:
             if e.response is not None and e.response.status_code == 403:
                 _LOGGER.warning(
@@ -620,7 +643,7 @@ class solaredge_one:
             _LOGGER.debug("SolarEdge One: check_login for site %s", self.siteid)
         path = f"/services/layout/logical/generic/v2/site/{self.siteid}"
         try:
-            self._get(path, params={"include-optimizers": "true"}, timeout=30)
+            self._get(path, params={"include-optimizers": "true"}, timeout=API_TIMEOUT_SHORT)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge One: check_login succeeded (200)")
             return 200
@@ -702,7 +725,7 @@ class solaredge_one:
                 "inverter-serials": ",".join(inverter_serials),
                 "include-max-temperature": "true",
             }
-            data = self._get(path, params=params, timeout=30)
+            data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
             result = {}
             fahrenheit_count = 0
             for inv_block in data.get("inverters") or []:
@@ -835,7 +858,7 @@ class solaredge_one:
             _LOGGER.error("SolarEdge One: Error building optimizer data for %s: %s", item_id, e)
             return None
 
-    def _post_optimizers_with_retry(self, path: str, payload: list, timeout: int = 60):
+    def _post_optimizers_with_retry(self, path: str, payload: list, timeout: int = API_TIMEOUT_LONG):
         """POST to optimizer endpoint with longer timeout and one retry on read/connect timeout."""
         try:
             return self._post(path, payload, timeout=timeout)
@@ -914,7 +937,7 @@ class solaredge_one:
         """Fetch live data for many optimizers in parallel. Returns list of SolarEdgeOptimizerData (successful only)."""
         if not optimizer_ids:
             return []
-        max_workers = min(os.cpu_count() or 4, len(optimizer_ids), 10)
+        max_workers = min(os.cpu_count() or 4, len(optimizer_ids), MAX_PARALLEL_WORKERS)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge One: requestAllData fetching %d optimizers with max_workers=%d",
@@ -986,7 +1009,7 @@ class solaredge_one:
                 "end-date": datetime.now().strftime("%Y-%m-%d"),
                 "optimizer-serials": serial,
             }
-            data = self._get(path, params=params, timeout=30)
+            data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
             total_wh = data.get("totalEnergy")
             if total_wh is not None:
                 return (str(serial), {"unscaledEnergy": float(total_wh)})
@@ -1004,7 +1027,7 @@ class solaredge_one:
             for opt in s.optimizers
         ]
         result = {}
-        max_workers = min(os.cpu_count() or 4, len(serials), 10)
+        max_workers = min(os.cpu_count() or 4, len(serials), MAX_PARALLEL_WORKERS)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_serial = {
                 executor.submit(self._fetch_one_optimizer_lifetime, s): s for s in serials
