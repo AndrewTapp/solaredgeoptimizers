@@ -1,4 +1,34 @@
-"""Config flow for adding and editing the integration: site ID, credentials, entity ID prefix and options, and choice of SolarEdge One vs legacy API."""
+"""
+SolarEdge Optimizers Integration - Config Flow (config_flow.py)
+
+This module implements the Home Assistant configuration flow for setting up and managing
+the integration through the UI (Settings > Devices & Services > Add Integration).
+
+Setup Flow (async_step_user):
+- Collects site ID, username, and password for SolarEdge Monitoring Portal
+- Optional entity ID prefix for custom sensor naming (e.g., "se_" -> sensor.se_power_...)
+- Option to include site ID in entity IDs for multi-site installations
+- Option to enable/disable SolarEdge One API (defaults to enabled with legacy fallback)
+- Validates credentials using dual API (tries One first, then legacy)
+- Creates unique config entry per site ID (prevents duplicate entries)
+
+Reauth Flow (async_step_reauth, async_step_reauth_confirm):
+- Triggered when authentication fails (HTTP 401)
+- Allows updating username/password without removing the integration
+- Preserves existing options (entity prefix, site ID inclusion)
+
+Options Flow (SolarEdgeOptimizersOptionsFlowHandler):
+- Accessible via Configure button on the integration card
+- Allows changing entity ID prefix, site ID inclusion, and One API toggle
+- Triggers integration reload after saving to apply new entity IDs
+
+Error Handling:
+- CannotConnect: Network/timeout errors during credential validation
+- InvalidAuth: HTTP 401 authentication failure
+
+Cleanup:
+- async_remove_entry: Removes all entities and devices when integration is deleted
+"""
 from __future__ import annotations
 
 import logging
@@ -79,11 +109,20 @@ async def validate_input(
         _LOGGER.debug("SolarEdge Optimizers config: Validating dual API for site %s", siteid)
     try:
         code = await hass.async_add_executor_job(api.check_login)
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
-        _LOGGER.warning("Connection or timeout during login check: %s", e)
+    except requests.exceptions.Timeout as e:
+        _LOGGER.warning("Timeout during login check: %s", e)
         raise CannotConnect from e
-    except Exception as e:  # pylint: disable=broad-except
-        _LOGGER.exception("Login check failed: %s", e)
+    except requests.exceptions.ConnectionError as e:
+        _LOGGER.warning("Connection error during login check: %s", e)
+        raise CannotConnect from e
+    except requests.exceptions.HTTPError as e:
+        _LOGGER.warning("HTTP error during login check: %s", e)
+        raise CannotConnect from e
+    except requests.exceptions.RequestException as e:
+        _LOGGER.warning("Request error during login check: %s", e)
+        raise CannotConnect from e
+    except (ValueError, KeyError, TypeError) as e:
+        _LOGGER.warning("Data parsing error during login check: %s", e)
         raise CannotConnect from e
 
     if code == 200:
