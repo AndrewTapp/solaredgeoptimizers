@@ -1,4 +1,52 @@
-"""Legacy SolarEdge Monitoring Portal API client: authentication, site layout (inverters/strings/optimizers), live optimizer data with locale-aware measurement keys, and lifetime energy."""
+"""
+SolarEdge Optimizers Integration - Legacy Monitoring API Client (solaredgeoptimizers.py)
+
+This module implements the client for the legacy SolarEdge Monitoring Portal API. It serves
+as a fallback when the SolarEdge One API is unavailable or returns no valid data.
+
+Authentication:
+- Uses HTTP Basic Authentication with site credentials
+- Session-based with CSRF token handling for subsequent requests
+- Thread-local sessions for safe concurrent access in ThreadPoolExecutor
+
+API Endpoints (monitoring.solaredge.com/solaredge-apigw/api/...):
+
+1. Login Check:
+   GET .../sites/{siteId}/layout/logical
+   Validates credentials and returns HTTP status code
+
+2. Site Structure (Logical Layout):
+   GET .../sites/{siteId}/layout/logical
+   Returns JSON with inverters, strings, and optimizers hierarchy
+
+3. Optimizer Live Data (System Data):
+   GET .../solaredge-web/p/systemData?reporterId={optimizerId}&...
+   Returns power, voltage, current, optimizer voltage for one optimizer
+   Locale-aware measurement keys (supports multiple languages)
+
+4. Lifetime Energy:
+   POST .../sites/{siteId}/layout/energy?timeUnit=ALL
+   Returns lifetime energy data keyed by optimizer/string ID
+
+5. Historical Data:
+   GET .../solaredge-web/p/chartData?reporterId={id}&...
+   Returns time-series data for power, current, voltage, energy
+
+Data Classes Defined:
+- SolarEdgeSite: Root container with site ID and list of inverters
+- SolarEdgeInverter: Inverter with serial, name, status, and list of strings
+- SolarEdgeString: String with ID, name, status, and list of optimizers
+- SolarlEdgeOptimizer: Optimizer with ID, serial, name, display name, status
+- SolarEdgeOptimizerData: Live measurement data (power, voltage, current, energy, etc.)
+- SolarEdgeAggregatedData: Aggregated data for string/inverter/site levels
+
+Key Features:
+- Locale-aware measurement key parsing (supports EN, DE, FR, ES, IT, NL, etc.)
+- Thread-local session reuse for efficient parallel requests
+- Caching for panels (1 hour) and lifetime energy (1 hour)
+- Unicode normalization for measurement keys (handles various dash/space variants)
+- Timezone-aware date parsing for lastMeasurementDate
+"""
 import time
 import threading
 import re
@@ -13,6 +61,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests import Session
 from datetime import datetime, timedelta
 from jsonfinder import jsonfinder
+
+from .const import API_TIMEOUT_SHORT, API_TIMEOUT_LONG, MAX_PARALLEL_WORKERS
 
 # Added logger setup to replace print statements with proper logging
 _LOGGER = logging.getLogger(__name__)
@@ -353,7 +403,7 @@ class solaredgeoptimizers:
         kwargs["headers"] = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
                              }
         # Add timeout to prevent hanging and log request attempt
-        kwargs["timeout"] = 30  # 30 second timeout
+        kwargs["timeout"] = API_TIMEOUT_SHORT
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Making login check request with 30s timeout")
 
@@ -416,7 +466,7 @@ class solaredgeoptimizers:
             _LOGGER.debug("SolarEdge Optimizers: Making logical layout request with 60s timeout")
         kwargs = {
             "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
-            "timeout": 60,
+            "timeout": API_TIMEOUT_LONG,
         }
         try:
             return self._fetch_logical_layout(url, kwargs)
@@ -483,7 +533,7 @@ class solaredgeoptimizers:
 
         kwargs = {
             "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
-            "timeout": 30,  # Prevent hung requests in ThreadPoolExecutor
+            "timeout": API_TIMEOUT_SHORT,
         }
         with requests.get(url, **kwargs) as r:
             if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -547,7 +597,7 @@ class solaredgeoptimizers:
             for optimizer in string.optimizers
         ]
 
-        max_workers = min(os.cpu_count() or 4, len(optimizer_ids), 10)
+        max_workers = min(os.cpu_count() or 4, len(optimizer_ids), MAX_PARALLEL_WORKERS)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers (legacy): requestAllData fetching %d optimizers with max_workers=%d",
