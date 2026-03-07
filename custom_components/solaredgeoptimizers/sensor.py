@@ -44,6 +44,8 @@ from .const import (
     parse_string_display_name_path,
     parse_optimizer_display_name_to_indices,
     resolve_duplicate_indices,
+    SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE,
+    SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE,
 )
 
 # Changed import to use coordinator module
@@ -310,25 +312,46 @@ def _build_individual_optimizer_sensors(
     coordinator, hass, entry, optimizer_tasks, coordinator_data, results_by_task_idx,
     base_name, site_id, include_site_id,
 ):
-    """Build list of SolarEdgeOptimizersSensor entities for all optimizers that have info."""
+    """Build list of SolarEdgeOptimizersSensor entities for all optimizers that have info.
+    
+    For inactive optimizers (status != 'ACTIVE'), certain sensors are excluded as they
+    are not meaningful: azimuth, current, optimizer voltage, power, temperature, tilt, voltage.
+    
+    Returns (sensors_to_add, active_count, inactive_count, skipped_sensor_count).
+    """
     sensors_to_add = []
+    active_optimizer_count = 0
+    inactive_optimizer_count = 0
+    skipped_sensor_count = 0
+    
     for task_idx, (optimizer, inverter, string, inv_idx, str_idx, opt_idx, suffix) in enumerate(optimizer_tasks):
         info, skip = _get_optimizer_info_for_task(
             task_idx, optimizer_tasks, coordinator_data, results_by_task_idx
         )
         if skip or info is None:
             continue
+        
+        # Check if optimizer is active (status from layout API)
+        optimizer_status = (getattr(optimizer, "status", "") or "").upper()
+        is_active = optimizer_status == "ACTIVE"
+        
+        if is_active:
+            active_optimizer_count += 1
+        else:
+            inactive_optimizer_count += 1
+        
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers sensor: Adding optimizer panel_id=%s serial=%s model=%s panel_type=%s status=%s azimuth=%s° tilt=%s° suffix=%s",
+                "SolarEdge Optimizers sensor: Adding optimizer panel_id=%s serial=%s model=%s panel_type=%s status=%s azimuth=%s° tilt=%s° suffix=%s is_active=%s",
                 optimizer.optimizerId,
                 getattr(info, "serialnumber", ""),
                 getattr(info, "model", ""),
                 getattr(info, "panel_description", "") or "(none)",
-                getattr(info, "status", "") or "(none)",
+                optimizer_status or "(none)",
                 getattr(info, "azimuth", None),
                 getattr(info, "tilt", None),
                 suffix or "(none)",
+                is_active,
             )
         # Use position-based path with suffix for unique_id so all optimizers (including duplicates)
         # get distinct entity IDs. Suffix is empty for first item, 'a', 'b', etc. for duplicates.
@@ -336,13 +359,22 @@ def _build_individual_optimizer_sensors(
             (site_id, inv_idx, str_idx, f"{opt_idx}{suffix}") if include_site_id else (inv_idx, str_idx, f"{opt_idx}{suffix}")
         )
         for sensortype in SENSOR_TYPE_INDIVIDUAL:
+            # Skip certain sensors for inactive optimizers
+            if not is_active and sensortype in SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE:
+                skipped_sensor_count += 1
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers sensor: Skipping %s sensor for inactive optimizer %s",
+                        sensortype, optimizer.optimizerId,
+                    )
+                continue
             sensors_to_add.append(
                 SolarEdgeOptimizersSensor(
                     coordinator, hass, entry, info, sensortype, optimizer, inverter, string,
                     base_name=base_name, site_id=site_id, entity_id_path=entity_id_path,
                 )
             )
-    return sensors_to_add
+    return sensors_to_add, active_optimizer_count, inactive_optimizer_count, skipped_sensor_count
 
 
 def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, include_site_id, site_id):
@@ -351,10 +383,21 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
     No deduplication - all inverters and strings are shown. When duplicates exist
     (same position), active devices come first (sorted by serial), and subsequent
     duplicates get letter suffixes (a, b, c...).
+    
+    For inactive strings/inverters (status != 'ACTIVE'), certain sensors are excluded
+    as they are not meaningful: current (average), power, voltage (average).
+    
+    Returns (sensors, active_strings, inactive_strings, active_inverters, inactive_inverters, skipped_count).
     """
     sensors = []
+    active_string_count = 0
+    inactive_string_count = 0
+    active_inverter_count = 0
+    inactive_inverter_count = 0
+    skipped_aggregated_sensor_count = 0
+    
     if not site_struct:
-        return sensors
+        return sensors, 0, 0, 0, 0, 0
     
     if _LOGGER.isEnabledFor(logging.DEBUG):
         total_strings = sum(len(inv.strings) for inv in site_struct.inverters)
@@ -411,12 +454,29 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
             string_aggregated.serialnumber = f"String_{string.stringId}"
             string_aggregated.panel_description = string.displayName
             string_aggregated.status = getattr(string, "status", "") or ""
+            
+            # Check if string is active
+            string_is_active = string_aggregated.status.upper() == "ACTIVE"
+            if string_is_active:
+                active_string_count += 1
+            else:
+                inactive_string_count += 1
+            
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge Optimizers sensor: Creating aggregated sensors for string: %s status=%s suffix=%s",
-                    string.displayName, string_aggregated.status or "(none)", str_suffix or "(none)",
+                    "SolarEdge Optimizers sensor: Creating aggregated sensors for string: %s status=%s suffix=%s is_active=%s",
+                    string.displayName, string_aggregated.status or "(none)", str_suffix or "(none)", string_is_active,
                 )
             for sensortype in SENSOR_TYPE_AGGREGATED_STRING:
+                # Skip certain sensors for inactive strings
+                if not string_is_active and sensortype in SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE:
+                    skipped_aggregated_sensor_count += 1
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "SolarEdge Optimizers sensor: Skipping %s sensor for inactive string %s",
+                            sensortype, string.displayName,
+                        )
+                    continue
                 sensors.append(
                     SolarEdgeAggregatedSensor(
                         coordinator, hass, entry, string_aggregated, sensortype, string, inverter,
@@ -437,13 +497,30 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
         inverter_aggregated.status = getattr(inverter, "status", "") or ""
         inverter_aggregated.manufacturer = getattr(inverter, "manufacturer", "") or "SolarEdge"
         inverter_aggregated.model = getattr(inverter, "model", "") or ""
+        
+        # Check if inverter is active
+        inverter_is_active = inverter_aggregated.status.upper() == "ACTIVE"
+        if inverter_is_active:
+            active_inverter_count += 1
+        else:
+            inactive_inverter_count += 1
+        
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers sensor: Creating aggregated sensors for inverter: %s status=%s manufacturer=%s model=%s suffix=%s",
+                "SolarEdge Optimizers sensor: Creating aggregated sensors for inverter: %s status=%s manufacturer=%s model=%s suffix=%s is_active=%s",
                 inverter.displayName, inverter_aggregated.status or "(none)",
-                inverter_aggregated.manufacturer, inverter_aggregated.model or "(none)", inv_suffix or "(none)",
+                inverter_aggregated.manufacturer, inverter_aggregated.model or "(none)", inv_suffix or "(none)", inverter_is_active,
             )
         for sensortype in SENSOR_TYPE_AGGREGATED_INVERTER:
+            # Skip certain sensors for inactive inverters
+            if not inverter_is_active and sensortype in SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE:
+                skipped_aggregated_sensor_count += 1
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers sensor: Skipping %s sensor for inactive inverter %s",
+                        sensortype, inverter.displayName,
+                    )
+                continue
             sensors.append(
                 SolarEdgeAggregatedSensor(
                     coordinator, hass, entry, inverter_aggregated, sensortype, None, inverter,
@@ -465,7 +542,7 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
                 coordinator, hass, entry, site_aggregated, sensortype, None, None, base_name=base_name,
             )
         )
-    return sensors
+    return sensors, active_string_count, inactive_string_count, active_inverter_count, inactive_inverter_count, skipped_aggregated_sensor_count
 
 
 async def async_setup_entry(
@@ -520,10 +597,17 @@ async def async_setup_entry(
         hass, coordinator, optimizer_tasks, coordinator_data
     )
 
-    sensors_to_add = _build_individual_optimizer_sensors(
+    (
+        optimizer_sensors,
+        active_opt_count,
+        inactive_opt_count,
+        skipped_opt_sensor_count,
+    ) = _build_individual_optimizer_sensors(
         coordinator, hass, entry, optimizer_tasks, coordinator_data, results_by_task_idx,
         base_name, site_id, include_site_id,
     )
+    
+    sensors_to_add = optimizer_sensors
     sensors_to_add.append(
         SolarEdgeIntegrationLastPolledSensor(
             coordinator, hass, entry, site_id, base_name=base_name, include_site_id_in_entity_id=include_site_id
@@ -534,9 +618,33 @@ async def async_setup_entry(
             coordinator, hass, entry, site_id, base_name=base_name, include_site_id_in_entity_id=include_site_id
         )
     )
-    sensors_to_add.extend(
-        _build_aggregated_sensors(coordinator, hass, entry, coordinator._site_structure, base_name, include_site_id, site_id)
-    )
+    
+    (
+        aggregated_sensors,
+        active_str_count,
+        inactive_str_count,
+        active_inv_count,
+        inactive_inv_count,
+        skipped_agg_sensor_count,
+    ) = _build_aggregated_sensors(coordinator, hass, entry, coordinator._site_structure, base_name, include_site_id, site_id)
+    sensors_to_add.extend(aggregated_sensors)
+
+    # Log summary of active/inactive devices
+    if inactive_opt_count > 0 or inactive_str_count > 0 or inactive_inv_count > 0:
+        _LOGGER.info(
+            "SolarEdge Optimizers sensor: Device status summary - Optimizers: %d active, %d inactive | "
+            "Strings: %d active, %d inactive | Inverters: %d active, %d inactive",
+            active_opt_count, inactive_opt_count,
+            active_str_count, inactive_str_count,
+            active_inv_count, inactive_inv_count,
+        )
+        total_skipped = skipped_opt_sensor_count + skipped_agg_sensor_count
+        if total_skipped > 0:
+            _LOGGER.info(
+                "SolarEdge Optimizers sensor: Skipped %d sensors for inactive devices "
+                "(%d optimizer sensors, %d aggregated sensors)",
+                total_skipped, skipped_opt_sensor_count, skipped_agg_sensor_count,
+            )
 
     if sensors_to_add:
         if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -544,10 +652,10 @@ async def async_setup_entry(
                 "SolarEdge Optimizers sensor: Adding %d entities (update_before_add=True)", len(sensors_to_add),
             )
         async_add_entities(sensors_to_add, update_before_add=True)
-        individual_count = len(optimizer_tasks) * len(SENSOR_TYPE_INDIVIDUAL)
-        aggregated_count = len(sensors_to_add) - individual_count
+        individual_count = len(optimizer_sensors)
+        aggregated_count = len(aggregated_sensors)
         _LOGGER.info(
-            "Done adding all sensors. Added %s sensors in total (%s individual optimizers + %s aggregated sensors).",
+            "Done adding all sensors. Added %d sensors in total (%d optimizer sensors + %d aggregated sensors + 2 site sensors).",
             len(sensors_to_add), individual_count, aggregated_count,
         )
     else:
