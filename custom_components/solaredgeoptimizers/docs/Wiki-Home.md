@@ -15,12 +15,13 @@ Use this as the main wiki page or copy sections into your GitHub wiki.
 6. [Configuration](#6-configuration)
 7. [Sensors and entities reference](#7-sensors-and-entities-reference)
 8. [Update behaviour and caches](#8-update-behaviour-and-caches)
-9. [Offline and stale data handling](#9-offline-and-stale-data-handling)
-10. [Internationalization (i18n)](#10-internationalization-i18n)
-11. [API client and SolarEdge portal](#11-api-client-and-solaredge-portal)
-12. [Troubleshooting and logging](#12-troubleshooting-and-logging)
-13. [File structure and constants](#13-file-structure-and-constants)
-14. [Credits and links](#14-credits-and-links)
+9. [Inactive devices](#9-inactive-devices)
+10. [Offline and stale data handling](#10-offline-and-stale-data-handling)
+11. [Internationalization (i18n)](#11-internationalization-i18n)
+12. [API client and SolarEdge portal](#12-api-client-and-solaredge-portal)
+13. [Troubleshooting and logging](#13-troubleshooting-and-logging)
+14. [File structure and constants](#14-file-structure-and-constants)
+15. [Credits and links](#15-credits-and-links)
 
 ---
 
@@ -196,15 +197,15 @@ sequenceDiagram
     API-->>C: SolarEdgeSite (inverters/strings/optimizers)
     C->>HA: Register site/inverter/string devices (_register_site_and_inverter_devices)
     C->>API: requestAllData()
-    Note over API: Dual API: try One first; if no valid measurements or fail, call legacy
+    Note over API: Dual API: try One first - if no valid measurements or fail then call legacy
     API->>SE: getLifeTimeEnergy / layout/energy (cached 1h)
     API->>SE: requestSystemData(opt_id) × N or One batch (parallel)
     SE-->>API: per-optimizer data
     API-->>C: list of SolarEdgeOptimizerData + lifetime, _obtained_from set
-    C->>C: _calculate_aggregated_data(); store _obtained_from
+    C->>C: _calculate_aggregated_data and store _obtained_from
     C-->>HA: data_dict (panel_id + position → data)
     HA->>C: async_setup_entry → sensor platform
-    Note over HA,C: Sensor platform calls ensure_devices_registered() then uses coordinator.data for optimizer info when present; only calls API for optimizers missing from data (avoids duplicate fetches). Optimizer unique_ids are position-based so duplicate display names do not cause "ID already exists".
+    Note over HA,C: Sensor platform uses coordinator.data for optimizer info - only calls API for missing data. Position-based unique_ids avoid duplicate ID errors.
     HA->>U: Sensors appear
 ```
 
@@ -220,7 +221,7 @@ flowchart LR
     FIRST -->|Yes| FULL[Full refresh: requestAllData]
     FIRST -->|No| LIGHT{Time for light check?}
     LIGHT -->|No| REUSE[Reuse existing data]
-    LIGHT -->|Yes| ONE[Light check: 1 opt (legacy) or batch of ≤5 random (SE One)]
+    LIGHT -->|Yes| ONE[Light check: 1 opt legacy / batch of 5 random SE One]
     ONE --> NEW{New data?}
     NEW -->|Yes| FULL
     NEW -->|No| REUSE
@@ -361,7 +362,33 @@ Aggregations (string/inverter/site) are computed in the coordinator from optimiz
 
 ---
 
-## 9. Offline and stale data handling
+## 9. Inactive devices
+
+When an optimizer, string, or inverter is marked as **Inactive** in the SolarEdge portal, certain sensors are not created because they are not meaningful for inactive/disconnected devices:
+
+### Sensors excluded for inactive devices
+
+| Device type | Sensors NOT created | Sensors still created |
+|-------------|---------------------|----------------------|
+| **Optimizer** | Azimuth, Current, Optimizer voltage, Power, Temperature, Tilt, Voltage | Lifetime energy, Last measurement, Status |
+| **String** | Current (average), Power, Voltage (average) | Lifetime energy, Last measurement, Optimizer count, Status |
+| **Inverter** | Current (average), Power, Voltage (average) | Lifetime energy, Last measurement, String count, Status |
+
+### Aggregation behaviour
+
+**Only active devices are included in aggregations.** When calculating totals and averages for strings, inverters, and the site:
+
+- Only optimizers with status "Active" contribute to string aggregations (current, power, voltage).
+- Only strings with status "Active" contribute to inverter aggregations.
+- Only inverters with status "Active" contribute to site aggregations.
+
+This ensures that stale or zero values from inactive devices do not skew the aggregated values shown at higher levels of the hierarchy.
+
+**Note:** Lifetime energy and last measurement are still tracked for inactive devices and shown in their individual sensors, but they do not contribute to aggregated totals when the device is inactive.
+
+---
+
+## 10. Offline and stale data handling
 
 - **Threshold**: When data is from **One API**, the coordinator uses `CHECK_TIME_DELTA_SOLAREDGE_ONE` = 1 hour; when from **Legacy API**, uses `CHECK_TIME_DELTA` = 2 hours (in `const.py`). The threshold follows the current data source (see **Obtained from** sensor).  
 - **Rule**: For each optimizer, if `lastmeasurement` is older than the threshold:
@@ -372,7 +399,7 @@ Aggregations (string/inverter/site) are computed in the coordinator from optimiz
 
 ---
 
-## 10. Internationalization (i18n)
+## 11. Internationalization (i18n)
 
 - **Config flow**: Labels (Site id, Username, Password, **Entity ID prefix (optional)**, **Include Site ID in Entity ID**, **Use SolarEdge One** — in that order), errors, abort messages (including **reauth_successful**, **reauth_entry_missing**), and config entry title are translated. The **re-authentication** step (`config.step.reauth_confirm`: title, description, data.username, data.password) is translated in all supported languages.
 - **Options flow (Reconfigure dialog)**: The Configure form uses the **options** translation section (`options.step.init`: title, description, data.entity_id_prefix, data.include_site_id_in_entity_id, data.use_solaredge_one). Field order: Entity ID prefix, then Include Site ID in Entity ID, then Use SolarEdge One. The integration sets `translation_domain` to the integration domain so the frontend loads these strings.  
@@ -407,7 +434,7 @@ Translation files: `translations/<code>.json` with **config**, **options**, **en
 
 ---
 
-## 11. API client and SolarEdge portal
+## 12. API client and SolarEdge portal
 
 The integration uses a **dual API** (`api_dual.py`): it always tries **SolarEdge One** first; if One returns no valid optimizer measurements or One login fails, it falls back to the **legacy** API. The site-level **Obtained from** sensor shows "One API" or "Legacy API". There is no user option to choose the API.
 
@@ -461,7 +488,7 @@ The layout/energy (legacy) or energy-graph (SolarEdge One) response provides per
 
 ---
 
-## 12. Troubleshooting and logging
+## 13. Troubleshooting and logging
 
 - **Log namespace**: The integration uses `logging.getLogger(__name__)` per module (e.g. `solaredgeoptimizers.sensor`); the top-level logger name is `solaredgeoptimizers`.  
 - **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures. All debug calls are guarded with `isEnabledFor(logging.DEBUG)`, so there is no performance cost when the log level is `info` or higher. Debug messages use consistent prefixes (`SolarEdge Optimizers`, `SolarEdge Optimizers coordinator`, `SolarEdge Optimizers sensor`, `SolarEdge Optimizers (legacy)`, `SolarEdge One`, `SolarEdge Dual API`) so you can filter logs by component.
@@ -511,7 +538,7 @@ logger:
 
 ---
 
-## 13. File structure and constants
+## 14. File structure and constants
 
 ### Repo layout (relevant files)
 
@@ -554,6 +581,8 @@ solaredgeoptimizers/
 | `LIGHT_CHECK_MIN_INTERVAL` | 2 minutes | Minimum time between a light check that detects new data and triggering a full refresh; avoids back-to-back full refreshes. |
 | `RELIABLE_THRESHOLD_KWH` | 100.0 | Site-level lifetime energy: when aggregated optimizer total is below this (kWh) and the portal total (from layout/energy) is ≥ this, the site sensor uses the portal total instead of the aggregated sum. |
 | `SENSOR_TYPE_*` | e.g. `Current`, `Power`, `Voltage` | Sensor type identifiers for individual and aggregated sensors. |
+| `SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE` | List of sensor types | Sensors not created for inactive optimizers: Azimuth, Current, Optimizer voltage, Power, Temperature, Tilt, Voltage. |
+| `SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE` | List of sensor types | Sensors not created for inactive strings/inverters: Current, Power, Voltage. |
 
 ### Shared utility functions (`const.py`)
 
@@ -566,7 +595,7 @@ solaredgeoptimizers/
 
 ---
 
-## 14. Credits and links
+## 15. Credits and links
 
 - **Repository**: [github.com/AndrewTapp/solaredgeoptimizers](https://github.com/AndrewTapp/solaredgeoptimizers)  
 - **Issues**: [GitHub Issues](https://github.com/AndrewTapp/solaredgeoptimizers/issues)  
