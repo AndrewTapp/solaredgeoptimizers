@@ -1,4 +1,31 @@
-"""Sensor entity definitions and registration: individual optimizer sensors plus aggregated string, inverter, and site-level sensors, populated from coordinator data."""
+"""
+SolarEdge Optimizers Integration - Sensor Platform (sensor.py)
+
+This module defines and registers all sensor entities for the integration. It creates:
+
+Individual Optimizer Sensors:
+- Power (W), Voltage (V), Current (A), Optimizer Voltage (V)
+- Temperature (°C), Lifetime Energy (kWh), Last Measurement (timestamp)
+- Status (Active/Inactive), Azimuth (°), Tilt (°)
+
+Aggregated Sensors (String, Inverter, Site levels):
+- Average Current, Total Power, Average Voltage
+- Lifetime Energy (summed from children), Last Measurement
+- Child Count (optimizers per string, strings per inverter, inverters per site)
+- Status (Active/Inactive)
+
+Site-Level Sensors:
+- Last Polled (integration polling timestamp)
+- Obtained From (indicates whether data came from One API or Legacy API)
+
+Key features:
+- Entities use CoordinatorEntity for automatic updates from the data coordinator
+- Position-based entity IDs ensure hardware swaps don't create duplicate entities
+- Inactive devices have certain sensors excluded (power, current, voltage, etc.)
+- Duplicate optimizer/string/inverter positions get letter suffixes (a, b, c...)
+- Supports optional entity ID prefix and site ID inclusion in entity names
+- Translations (i18n) for entity names via translation_key
+"""
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -49,6 +76,8 @@ from .const import (
     ICON_STATUS_ACTIVE,
     ICON_STATUS_INACTIVE,
     ICON_STATUS_UNKNOWN,
+    ICON_AZIMUTH,
+    ICON_TILT,
 )
 
 # Changed import to use coordinator module
@@ -469,36 +498,8 @@ def _create_inverter_sensors(coordinator, hass, entry, inverter, inverter_aggreg
     return sensors, skipped
 
 
-def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, include_site_id, site_id):
-    """Build list of SolarEdgeAggregatedSensor entities for strings, inverters, and site.
-    
-    No deduplication - all inverters and strings are shown. When duplicates exist
-    (same position), active devices come first (sorted by serial), and subsequent
-    duplicates get letter suffixes (a, b, c...).
-    
-    For inactive strings/inverters (status != 'ACTIVE'), certain sensors are excluded
-    as they are not meaningful: current (average), power, voltage (average).
-    
-    Returns (sensors, active_strings, inactive_strings, active_inverters, inactive_inverters, skipped_count).
-    """
-    sensors = []
-    active_string_count = 0
-    inactive_string_count = 0
-    active_inverter_count = 0
-    inactive_inverter_count = 0
-    skipped_aggregated_sensor_count = 0
-    
-    if not site_struct:
-        return sensors, 0, 0, 0, 0, 0
-    
-    if _LOGGER.isEnabledFor(logging.DEBUG):
-        total_strings = sum(len(inv.strings) for inv in site_struct.inverters)
-        _LOGGER.debug(
-            "SolarEdge Optimizers sensor: Building aggregated sensors for %d inverters, %d strings",
-            len(site_struct.inverters), total_strings,
-        )
-    
-    # Resolve duplicate inverters
+def _resolve_inverter_duplicates(site_struct) -> dict[int, str]:
+    """Resolve duplicate inverters and return suffix map with logging."""
     inv_suffix_map = resolve_duplicate_indices(
         site_struct.inverters,
         get_key=lambda inv: getattr(inv, "displayName", "") or str(getattr(inv, "inverterId", "")),
@@ -513,53 +514,120 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
             "SolarEdge Optimizers sensor: Found %d duplicate inverter positions, assigned suffixes",
             inv_duplicates,
         )
+    return inv_suffix_map
+
+
+def _build_string_entity_path_for_sensor(string, str_suffix: str, inv_idx_str: str, include_site_id: bool, site_id: str) -> tuple:
+    """Build entity path for a string sensor based on display name or position."""
+    parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
+    if parsed is not None:
+        inv_num, str_num = parsed
+        str_num_str = f"{str_num}{str_suffix}"
+        return (site_id, inv_num, str_num_str) if include_site_id else (inv_num, str_num_str)
+    str_idx_str = f"{inv_idx_str.split(inv_idx_str[0])[0]}{str_suffix}" if str_suffix else inv_idx_str
+    return (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
+
+
+def _build_string_sensors_for_inverter(
+    coordinator, hass: HomeAssistant, entry: ConfigEntry, inverter, inv_idx: int, inv_suffix: str, inv_suffix_map: dict,
+    base_name: str, include_site_id: bool, site_id: str
+) -> tuple[list, int, int, int]:
+    """Build string sensors for one inverter. Returns (sensors, active_count, inactive_count, skipped_count)."""
+    sensors = []
+    active_count = 0
+    inactive_count = 0
+    skipped_count = 0
     
-    # Build string sensors
+    inv_idx_str = f"{inv_idx}{inv_suffix}"
+    
+    str_suffix_map = resolve_duplicate_indices(
+        inverter.strings,
+        get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, 0),
+        get_status=lambda s: getattr(s, "status", "") or "",
+        get_serial=lambda s: getattr(s, "serialNumber", "") or str(getattr(s, "stringId", "")),
+        logger=_LOGGER,
+    )
+    
+    for str_idx, string in enumerate(inverter.strings, start=1):
+        str_suffix = str_suffix_map.get(str_idx - 1, "")
+        str_idx_str = f"{str_idx}{str_suffix}"
+        
+        parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
+        if parsed is not None:
+            inv_num, str_num = parsed
+            str_num_str = f"{str_num}{str_suffix}"
+            string_entity_path = (site_id, inv_num, str_num_str) if include_site_id else (inv_num, str_num_str)
+        else:
+            string_entity_path = (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
+        
+        string_aggregated = _create_string_aggregated_data(string, string_entity_path)
+        string_is_active = string_aggregated.status.upper() == "ACTIVE"
+        
+        if string_is_active:
+            active_count += 1
+        else:
+            inactive_count += 1
+        
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers sensor: Creating aggregated sensors for string: %s status=%s suffix=%s is_active=%s",
+                string.displayName, string_aggregated.status or "(none)", str_suffix or "(none)", string_is_active,
+            )
+        
+        string_sensors, skipped = _create_string_sensors(
+            coordinator, hass, entry, string, string_aggregated, inverter, base_name, string_is_active
+        )
+        sensors.extend(string_sensors)
+        skipped_count += skipped
+    
+    return sensors, active_count, inactive_count, skipped_count
+
+
+def _build_all_string_sensors(
+    coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, inv_suffix_map: dict, base_name: str, include_site_id: bool, site_id: str
+) -> tuple[list, int, int, int]:
+    """Build string sensors for all inverters. Returns (sensors, active_count, inactive_count, skipped_count)."""
+    sensors = []
+    active_count = 0
+    inactive_count = 0
+    skipped_count = 0
+    
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        total_strings = sum(len(inv.strings) for inv in site_struct.inverters)
+        _LOGGER.debug(
+            "SolarEdge Optimizers sensor: Building string sensors for %d inverters with %d total strings",
+            len(site_struct.inverters), total_strings,
+        )
+    
     for inv_idx, inverter in enumerate(site_struct.inverters, start=1):
         inv_suffix = inv_suffix_map.get(inv_idx - 1, "")
-        inv_idx_str = f"{inv_idx}{inv_suffix}"
-        
-        str_suffix_map = resolve_duplicate_indices(
-            inverter.strings,
-            get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, 0),
-            get_status=lambda s: getattr(s, "status", "") or "",
-            get_serial=lambda s: getattr(s, "serialNumber", "") or str(getattr(s, "stringId", "")),
-            logger=_LOGGER,
+        inv_sensors, inv_active, inv_inactive, inv_skipped = _build_string_sensors_for_inverter(
+            coordinator, hass, entry, inverter, inv_idx, inv_suffix, inv_suffix_map,
+            base_name, include_site_id, site_id
         )
-        
-        for str_idx, string in enumerate(inverter.strings, start=1):
-            str_suffix = str_suffix_map.get(str_idx - 1, "")
-            str_idx_str = f"{str_idx}{str_suffix}"
-            
-            parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
-            if parsed is not None:
-                inv_num, str_num = parsed
-                str_num_str = f"{str_num}{str_suffix}"
-                string_entity_path = (site_id, inv_num, str_num_str) if include_site_id else (inv_num, str_num_str)
-            else:
-                string_entity_path = (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
-            
-            string_aggregated = _create_string_aggregated_data(string, string_entity_path)
-            string_is_active = string_aggregated.status.upper() == "ACTIVE"
-            
-            if string_is_active:
-                active_string_count += 1
-            else:
-                inactive_string_count += 1
-            
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers sensor: Creating aggregated sensors for string: %s status=%s suffix=%s is_active=%s",
-                    string.displayName, string_aggregated.status or "(none)", str_suffix or "(none)", string_is_active,
-                )
-            
-            string_sensors, skipped = _create_string_sensors(
-                coordinator, hass, entry, string, string_aggregated, inverter, base_name, string_is_active
-            )
-            sensors.extend(string_sensors)
-            skipped_aggregated_sensor_count += skipped
+        sensors.extend(inv_sensors)
+        active_count += inv_active
+        inactive_count += inv_inactive
+        skipped_count += inv_skipped
     
-    # Build inverter sensors
+    return sensors, active_count, inactive_count, skipped_count
+
+
+def _build_all_inverter_sensors(
+    coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, inv_suffix_map: dict, base_name: str, include_site_id: bool, site_id: str
+) -> tuple[list, int, int, int]:
+    """Build inverter sensors for all inverters. Returns (sensors, active_count, inactive_count, skipped_count)."""
+    sensors = []
+    active_count = 0
+    inactive_count = 0
+    skipped_count = 0
+    
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge Optimizers sensor: Building inverter sensors for %d inverters",
+            len(site_struct.inverters),
+        )
+    
     for inv_idx, inverter in enumerate(site_struct.inverters, start=1):
         inv_suffix = inv_suffix_map.get(inv_idx - 1, "")
         inv_idx_str = f"{inv_idx}{inv_suffix}"
@@ -568,9 +636,9 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
         inverter_is_active = inverter_aggregated.status.upper() == "ACTIVE"
         
         if inverter_is_active:
-            active_inverter_count += 1
+            active_count += 1
         else:
-            inactive_inverter_count += 1
+            inactive_count += 1
         
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
@@ -583,9 +651,14 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
             coordinator, hass, entry, inverter, inverter_aggregated, base_name, inverter_is_active
         )
         sensors.extend(inverter_sensors)
-        skipped_aggregated_sensor_count += skipped
+        skipped_count += skipped
     
-    # Build site sensors
+    return sensors, active_count, inactive_count, skipped_count
+
+
+def _build_site_sensors(coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, base_name: str, site_id: str) -> list:
+    """Build site-level aggregated sensors. Returns list of sensors."""
+    sensors = []
     site_aggregated = SolarEdgeAggregatedData(
         entity_id=f"site_{site_struct.siteId}",
         entity_type="site",
@@ -593,53 +666,80 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
     )
     site_aggregated.serialnumber = f"Site_{site_struct.siteId}"
     site_aggregated.panel_description = f"Site {site_struct.siteId}"
+    
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug("SolarEdge Optimizers sensor: Creating aggregated sensors for site: %s", site_id)
+    
     for sensortype in SENSOR_TYPE_AGGREGATED_SITE:
         sensors.append(
             SolarEdgeAggregatedSensor(
                 coordinator, hass, entry, site_aggregated, sensortype, None, None, base_name=base_name,
             )
         )
+    return sensors
+
+
+def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, include_site_id, site_id):
+    """Build list of SolarEdgeAggregatedSensor entities for strings, inverters, and site.
     
-    return sensors, active_string_count, inactive_string_count, active_inverter_count, inactive_inverter_count, skipped_aggregated_sensor_count
-
-
-async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Add an solarEdge entry."""
+    No deduplication - all inverters and strings are shown. When duplicates exist
+    (same position), active devices come first (sorted by serial), and subsequent
+    duplicates get letter suffixes (a, b, c...).
+    
+    For inactive strings/inverters (status != 'ACTIVE'), certain sensors are excluded
+    as they are not meaningful: current (average), power, voltage (average).
+    
+    Returns (sensors, active_strings, inactive_strings, active_inverters, inactive_inverters, skipped_count).
+    """
+    if not site_struct:
+        return [], 0, 0, 0, 0, 0
+    
     if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug("SolarEdge Optimizers sensor: async_setup_entry for entry_id=%s", entry.entry_id)
-    coordinator: MyCoordinator = hass.data[DOMAIN][entry.entry_id]
-    site = coordinator._site_structure
-    if site is None:
-        _LOGGER.error("SolarEdge Optimizers sensor: No site structure on coordinator; setup cannot continue")
-        return
-
-    # Ensure site/inverter/string devices exist before adding optimizer entities (avoids via_device errors)
-    coordinator.ensure_devices_registered()
-
-    try:
-        _remove_sensor_entities_for_entry(hass, entry)
-    except Exception as e:  # pylint: disable=broad-except
-        _LOGGER.warning(
-            "SolarEdge Optimizers sensor: Error removing existing entities before setup: %s", e,
+        total_strings = sum(len(inv.strings) for inv in site_struct.inverters)
+        _LOGGER.debug(
+            "SolarEdge Optimizers sensor: Building aggregated sensors for %d inverters, %d strings",
+            len(site_struct.inverters), total_strings,
         )
-
-    _LOGGER.info("Found all information for site: %s", site.siteId)
-    _LOGGER.info("Site has %s inverters", len(site.inverters))
-    _LOGGER.info(
-        "Setting up sensors for %s optimizers (plus string/inverter/site aggregations)",
-        site.returnNumberOfOptimizers(),
+    
+    inv_suffix_map = _resolve_inverter_duplicates(site_struct)
+    
+    # Build string sensors
+    string_sensors, active_str, inactive_str, skipped_str = _build_all_string_sensors(
+        coordinator, hass, entry, site_struct, inv_suffix_map, base_name, include_site_id, site_id
     )
+    
+    # Build inverter sensors
+    inverter_sensors, active_inv, inactive_inv, skipped_inv = _build_all_inverter_sensors(
+        coordinator, hass, entry, site_struct, inv_suffix_map, base_name, include_site_id, site_id
+    )
+    
+    # Build site sensors
+    site_sensors = _build_site_sensors(coordinator, hass, entry, site_struct, base_name, site_id)
+    
+    sensors = string_sensors + inverter_sensors + site_sensors
+    skipped_total = skipped_str + skipped_inv
+    
+    return sensors, active_str, inactive_str, active_inv, inactive_inv, skipped_total
+
+
+def _get_setup_config(entry: ConfigEntry, site) -> tuple[str | None, str, bool]:
+    """Extract setup configuration from entry and site. Returns (base_name, site_id, include_site_id)."""
     base_name = _entity_prefix(entry)
     site_id = str(site.siteId)
     include_site_id = entry.options.get(
         CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
         entry.data.get(CONF_INCLUDE_SITE_ID_IN_ENTITY_ID, False),
+    )
+    return base_name, site_id, include_site_id
+
+
+def _log_setup_info(site, base_name: str, include_site_id: bool, site_id: str) -> None:
+    """Log setup information for the integration."""
+    _LOGGER.info("Found all information for site: %s", site.siteId)
+    _LOGGER.info("Site has %s inverters", len(site.inverters))
+    _LOGGER.info(
+        "Setting up sensors for %s optimizers (plus string/inverter/site aggregations)",
+        site.returnNumberOfOptimizers(),
     )
     _LOGGER.info(
         "SolarEdge Optimizers sensor: entity_id prefix=%r, include_site_id_in_entity_id=%s",
@@ -651,75 +751,121 @@ async def async_setup_entry(
             base_name, include_site_id, site_id,
         )
 
-    optimizer_tasks = _build_optimizer_tasks(site)
-    coordinator_data = coordinator.data if isinstance(coordinator.data, dict) else None
-    results_by_task_idx = await _fetch_missing_optimizer_data(
-        hass, coordinator, optimizer_tasks, coordinator_data
-    )
 
-    (
-        optimizer_sensors,
-        active_opt_count,
-        inactive_opt_count,
-        skipped_opt_sensor_count,
-    ) = _build_individual_optimizer_sensors(
-        coordinator, hass, entry, optimizer_tasks, coordinator_data, results_by_task_idx,
-        base_name, site_id, include_site_id,
-    )
-    
-    sensors_to_add = optimizer_sensors
-    sensors_to_add.append(
+def _create_site_level_sensors(coordinator, hass: HomeAssistant, entry: ConfigEntry, site_id: str, base_name: str | None, include_site_id: bool) -> list:
+    """Create site-level sensors (Last Polled, Obtained From). Returns list of sensors."""
+    return [
         SolarEdgeIntegrationLastPolledSensor(
             coordinator, hass, entry, site_id, base_name=base_name, include_site_id_in_entity_id=include_site_id
-        )
-    )
-    sensors_to_add.append(
+        ),
         SolarEdgeObtainedFromSensor(
             coordinator, hass, entry, site_id, base_name=base_name, include_site_id_in_entity_id=include_site_id
-        )
-    )
-    
-    (
-        aggregated_sensors,
-        active_str_count,
-        inactive_str_count,
-        active_inv_count,
-        inactive_inv_count,
-        skipped_agg_sensor_count,
-    ) = _build_aggregated_sensors(coordinator, hass, entry, coordinator._site_structure, base_name, include_site_id, site_id)
-    sensors_to_add.extend(aggregated_sensors)
+        ),
+    ]
 
-    # Log summary of active/inactive devices
-    if inactive_opt_count > 0 or inactive_str_count > 0 or inactive_inv_count > 0:
+
+def _log_device_status_summary(
+    active_opt: int, inactive_opt: int,
+    active_str: int, inactive_str: int,
+    active_inv: int, inactive_inv: int,
+    skipped_opt: int, skipped_agg: int
+) -> None:
+    """Log summary of active/inactive devices and skipped sensors."""
+    if inactive_opt > 0 or inactive_str > 0 or inactive_inv > 0:
         _LOGGER.info(
             "SolarEdge Optimizers sensor: Device status summary - Optimizers: %d active, %d inactive | "
             "Strings: %d active, %d inactive | Inverters: %d active, %d inactive",
-            active_opt_count, inactive_opt_count,
-            active_str_count, inactive_str_count,
-            active_inv_count, inactive_inv_count,
+            active_opt, inactive_opt, active_str, inactive_str, active_inv, inactive_inv,
         )
-        total_skipped = skipped_opt_sensor_count + skipped_agg_sensor_count
+        total_skipped = skipped_opt + skipped_agg
         if total_skipped > 0:
             _LOGGER.info(
                 "SolarEdge Optimizers sensor: Skipped %d sensors for inactive devices "
                 "(%d optimizer sensors, %d aggregated sensors)",
-                total_skipped, skipped_opt_sensor_count, skipped_agg_sensor_count,
+                total_skipped, skipped_opt, skipped_agg,
             )
 
+
+def _finalize_sensor_setup(
+    async_add_entities: AddEntitiesCallback,
+    sensors_to_add: list[SensorEntity],
+    optimizer_count: int,
+    aggregated_count: int
+) -> None:
+    """Add sensors to Home Assistant and log completion."""
     if sensors_to_add:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers sensor: Adding %d entities (update_before_add=True)", len(sensors_to_add),
             )
         async_add_entities(sensors_to_add, update_before_add=True)
-        individual_count = len(optimizer_sensors)
-        aggregated_count = len(aggregated_sensors)
         _LOGGER.info(
             "Done adding all sensors. Added %d sensors in total (%d optimizer sensors + %d aggregated sensors + 2 site sensors).",
-            len(sensors_to_add), individual_count, aggregated_count,
+            len(sensors_to_add), optimizer_count, aggregated_count,
         )
     else:
         _LOGGER.warning("No sensors were created - check for errors above")
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Add an solarEdge entry."""
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug("SolarEdge Optimizers sensor: async_setup_entry for entry_id=%s", entry.entry_id)
+    
+    coordinator: MyCoordinator = hass.data[DOMAIN][entry.entry_id]
+    site = coordinator._site_structure
+    if site is None:
+        _LOGGER.error("SolarEdge Optimizers sensor: No site structure on coordinator; setup cannot continue")
+        return
+
+    coordinator.ensure_devices_registered()
+
+    try:
+        _remove_sensor_entities_for_entry(hass, entry)
+    except Exception as e:  # pylint: disable=broad-except
+        _LOGGER.warning(
+            "SolarEdge Optimizers sensor: Error removing existing entities before setup: %s", e,
+        )
+
+    base_name, site_id, include_site_id = _get_setup_config(entry, site)
+    _log_setup_info(site, base_name, include_site_id, site_id)
+
+    # Build optimizer sensors
+    optimizer_tasks = _build_optimizer_tasks(site)
+    coordinator_data = coordinator.data if isinstance(coordinator.data, dict) else None
+    results_by_task_idx = await _fetch_missing_optimizer_data(
+        hass, coordinator, optimizer_tasks, coordinator_data
+    )
+
+    optimizer_sensors, active_opt, inactive_opt, skipped_opt = _build_individual_optimizer_sensors(
+        coordinator, hass, entry, optimizer_tasks, coordinator_data, results_by_task_idx,
+        base_name, site_id, include_site_id,
+    )
+    
+    # Build site-level sensors
+    site_level_sensors = _create_site_level_sensors(
+        coordinator, hass, entry, site_id, base_name, include_site_id
+    )
+    
+    # Build aggregated sensors
+    aggregated_sensors, active_str, inactive_str, active_inv, inactive_inv, skipped_agg = _build_aggregated_sensors(
+        coordinator, hass, entry, coordinator._site_structure, base_name, include_site_id, site_id
+    )
+
+    # Combine all sensors
+    sensors_to_add = optimizer_sensors + site_level_sensors + aggregated_sensors
+
+    # Log status summary
+    _log_device_status_summary(
+        active_opt, inactive_opt, active_str, inactive_str, active_inv, inactive_inv, skipped_opt, skipped_agg
+    )
+
+    # Finalize setup
+    _finalize_sensor_setup(async_add_entities, sensors_to_add, len(optimizer_sensors), len(aggregated_sensors))
 
 
 class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
@@ -1312,7 +1458,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def icon(self) -> str | None:
-        """Return dynamic icon for status sensors based on current value."""
+        """Return icon for status, azimuth, and tilt sensors."""
+        if self._sensor_type is SENSOR_TYPE_AZIMUTH:
+            return ICON_AZIMUTH
+        if self._sensor_type is SENSOR_TYPE_TILT:
+            return ICON_TILT
         if self._sensor_type is not SENSOR_TYPE_STATUS:
             return None
         status = (self._attr_native_value or "").upper()
