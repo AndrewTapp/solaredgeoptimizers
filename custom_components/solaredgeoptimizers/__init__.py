@@ -1,8 +1,25 @@
-"""Entry point for the SolarEdge Optimizers integration: config entry setup, API and coordinator initialization, platform registration, and migration of use_solaredge_one option."""
+"""
+SolarEdge Optimizers Integration - Entry Point (__init__.py)
+
+This module serves as the main entry point for the Home Assistant integration. It handles:
+
+- Config entry setup and teardown (async_setup_entry, async_unload_entry)
+- API client initialization using the dual API wrapper (SolarEdge One + legacy fallback)
+- Data coordinator creation for polling optimizer data at regular intervals
+- Platform registration (sensor platform) for exposing optimizer data as HA entities
+- Migration of legacy configuration options (use_solaredge_one default)
+- Entity and device registry cleanup when the integration is removed or reloaded
+- Timezone configuration for proper date/time parsing of API responses
+
+The integration authenticates with the SolarEdge Monitoring Portal using site credentials,
+retrieves the site layout (inverters, strings, optimizers), and creates sensor entities
+for power, voltage, current, temperature, energy, and status at optimizer, string,
+inverter, and site levels.
+"""
 import logging
 from typing import Any
 
-from requests import ConnectTimeout, HTTPError
+from requests import ConnectTimeout, HTTPError, RequestException
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
@@ -75,11 +92,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         http_result_code = await hass.async_add_executor_job(api.check_login)
         LOGGER.info("SolarEdge Optimizers: Login check result: %s", http_result_code)
-    except (ConnectTimeout, HTTPError) as ex:
-        LOGGER.error("SolarEdge Optimizers: Could not retrieve details from SolarEdge API: %s", ex)
+    except ConnectTimeout as ex:
+        LOGGER.error("SolarEdge Optimizers: Connection timeout during login check: %s", ex)
         raise ConfigEntryNotReady from ex
-    except Exception as ex:  # pylint: disable=broad-except
-        LOGGER.error("SolarEdge Optimizers: Unexpected error during login check: %s", ex)
+    except HTTPError as ex:
+        LOGGER.error("SolarEdge Optimizers: HTTP error during login check: %s", ex)
+        raise ConfigEntryNotReady from ex
+    except RequestException as ex:
+        LOGGER.error("SolarEdge Optimizers: Network error during login check: %s", ex)
+        raise ConfigEntryNotReady from ex
+    except (ValueError, KeyError, TypeError) as ex:
+        LOGGER.error("SolarEdge Optimizers: Data parsing error during login check: %s", ex)
         raise ConfigEntryNotReady from ex
 
     if http_result_code == 401:
@@ -108,8 +131,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     try:
         await coordinator.async_config_entry_first_refresh()
         LOGGER.info("SolarEdge Optimizers: Initial coordinator refresh completed successfully")
-    except Exception as ex:  # pylint: disable=broad-except
-        LOGGER.error("SolarEdge Optimizers: Initial coordinator refresh failed: %s", ex)
+    except (ConnectTimeout, HTTPError, RequestException) as ex:
+        LOGGER.error("SolarEdge Optimizers: Network error during initial coordinator refresh: %s", ex)
+        raise
+    except (ValueError, KeyError, TypeError) as ex:
+        LOGGER.error("SolarEdge Optimizers: Data parsing error during initial coordinator refresh: %s", ex)
+        raise
+    except ConfigEntryNotReady:
+        raise
+    except RuntimeError as ex:
+        LOGGER.error("SolarEdge Optimizers: Runtime error during initial coordinator refresh: %s", ex)
         raise
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
