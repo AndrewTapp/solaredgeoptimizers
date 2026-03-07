@@ -11,6 +11,8 @@ This integration brings your SolarEdge optimizer data from the SolarEdge monitor
 
 ## Upgrading from an earlier version
 
+As with previous versions you may need to delete and re-add this integtration after updating through HACS.
+
 If you are on a version prior to v2.4.0 (or want a clean registry after any upgrade), the steps below ensure entities and devices are recreated correctly:
 
 1. **Update the integration via HACS** so the new code (including cleanup) is installed.
@@ -81,6 +83,15 @@ Names are kept short (e.g. “Current (average)”, “Power”) because the dev
 - **Temperature** (SolarEdge One only): When the integration does not perform a full refresh (e.g. it reuses existing data after a light check), it still refreshes optimizer temperatures about every 15 minutes via a cached temperature API. So temperature sensors stay updated even when power, voltage, and current are not being refreshed.
 
 So in normal use you see updates every few minutes when the portal has new data; temperature (when using One API) is refreshed about every 15 minutes even when there is no full refresh, and lifetime energy at most once per hour.
+
+## Inactive Devices
+
+When an optimizer, string, or inverter is marked as **Inactive** in the SolarEdge portal, certain sensors are not created because they are not meaningful for inactive/disconnected devices:
+
+- **Inactive optimizers**: Azimuth, Current, Optimizer voltage, Power, Temperature, Tilt, and Voltage sensors are not created. Only Lifetime energy, Last measurement, and Status sensors are created.
+- **Inactive strings/inverters**: Current (average), Power, and Voltage (average) sensors are not created. Only Lifetime energy, Last measurement, Child count, and Status sensors are created.
+
+Additionally, **aggregation only includes active devices**: when calculating totals and averages for strings, inverters, and the site, only data from devices with status "Active" is included. This prevents stale or zero values from inactive devices from skewing the aggregated values.
 
 ## When an Optimizer Is Offline or Not Reporting
 
