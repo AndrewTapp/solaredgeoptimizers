@@ -1,7 +1,35 @@
-"""Integration constants: domain, config keys, update intervals, and sensor type definitions for individual optimizers and aggregated (string, inverter, site) entities."""
+"""
+SolarEdge Optimizers Integration - Constants (const.py)
+
+This module defines all constants and shared utility functions used throughout the integration:
+
+Configuration Keys:
+- DOMAIN: Integration identifier ("solaredgeoptimizers")
+- CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, CONF_ENTITY_PREFIX, CONF_INCLUDE_SITE_ID_IN_ENTITY_ID
+
+Timing Constants:
+- UPDATE_DELAY: Coordinator polling interval (2 minutes)
+- COORDINATOR_REFRESH_TIMEOUT_SEC: Maximum time for API refresh (30 minutes)
+- CHECK_TIME_DELTA: Stale data threshold for legacy API (2 hours)
+- CHECK_TIME_DELTA_SOLAREDGE_ONE: Stale data threshold for One API (1 hour)
+- REVERT_TO_ONE_RETRY_INTERVAL: How often to retry One API when using legacy (30 minutes)
+- LIGHT_CHECK_MIN_INTERVAL: Minimum interval between lightweight checks (2 minutes)
+
+Sensor Type Definitions:
+- SENSOR_TYPE_INDIVIDUAL: Sensors created for each optimizer
+- SENSOR_TYPE_AGGREGATED_STRING/INVERTER/SITE: Sensors for aggregated levels
+- SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE: Sensors skipped for inactive optimizers
+- SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE: Sensors skipped for inactive strings/inverters
+
+Utility Functions:
+- parse_string_display_name_path(): Extract (inv, str) from display names like "1.0"
+- parse_optimizer_display_name_to_indices(): Extract (inv, str, opt) from display names
+- resolve_duplicate_indices(): Assign letter suffixes to duplicate positions
+"""
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import timedelta
 import logging
 
@@ -31,6 +59,14 @@ LIGHT_CHECK_MIN_INTERVAL = timedelta(minutes=2)
 # Site lifetime: use portal total when aggregated optimizer data is below this (kWh)
 RELIABLE_THRESHOLD_KWH = 100.0
 
+# API request timeouts (seconds)
+API_TIMEOUT_SHORT = 30  # For quick requests (login check, single optimizer)
+API_TIMEOUT_LONG = 60   # For longer requests (layout, batch operations)
+
+# Batch operation limits
+LIGHT_CHECK_BATCH_SIZE = 5  # Number of optimizers to sample in lightweight checks
+MAX_PARALLEL_WORKERS = 10   # Maximum threads for parallel API requests
+
 # Common User-Agent string for API requests (Chrome on Windows)
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
@@ -38,6 +74,10 @@ USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 ICON_STATUS_ACTIVE = "mdi:check-circle"
 ICON_STATUS_INACTIVE = "mdi:alert-circle"
 ICON_STATUS_UNKNOWN = "mdi:help-circle"
+
+# Orientation sensor icons
+ICON_AZIMUTH = "mdi:compass"
+ICON_TILT = "mdi:angle-acute"
 
 SENSOR_TYPE_CURRENT = "Current"
 SENSOR_TYPE_OPT_VOLTAGE = "Optimizer_voltage"
@@ -155,7 +195,7 @@ def parse_optimizer_display_name_to_indices(display_name: str) -> tuple[int, int
     return (nums[1], nums[2], nums[3])  # site.inv.str.opt -> inv, str, opt
 
 
-def make_duplicate_sort_key(item, get_status, get_serial):
+def make_duplicate_sort_key(item, get_status: Callable, get_serial: Callable) -> tuple[int, str]:
     """Create sort key for duplicate resolution: active first, then alphabetically by serial number.
     
     Used by resolve_duplicate_indices to sort items with the same position key.
@@ -167,7 +207,7 @@ def make_duplicate_sort_key(item, get_status, get_serial):
     return (is_active, serial)
 
 
-def resolve_duplicate_indices(items, get_key, get_status, get_serial, logger=None):
+def resolve_duplicate_indices(items: list, get_key: Callable, get_status: Callable, get_serial: Callable, logger=None) -> dict[int, str]:
     """Resolve duplicate position keys by adding letter suffixes.
     
     Args:
