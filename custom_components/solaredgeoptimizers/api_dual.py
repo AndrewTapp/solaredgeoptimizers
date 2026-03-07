@@ -1,4 +1,31 @@
-"""Dual API wrapper: uses SolarEdge One API when enabled, falls back to the legacy Monitoring API when One returns no valid optimizer data; tracks the active source for the 'Obtained from' sensor."""
+"""
+SolarEdge Optimizers Integration - Dual API Wrapper (api_dual.py)
+
+This module provides a unified API interface that intelligently switches between the
+SolarEdge One API and the legacy Monitoring API based on availability and data quality.
+
+API Selection Strategy:
+- When use_solaredge_one=True (default): Tries One API first, falls back to legacy
+- When use_solaredge_one=False: Uses legacy API exclusively
+- Fallback triggered when One API fails or returns no valid optimizer measurements
+
+Methods Implemented:
+- check_login(): Succeeds if either API authenticates successfully
+- requestListOfAllPanels(): Prefers One for site layout, falls back to legacy
+- requestAllData(): Tries One first, uses legacy if One has no valid measurements
+- get_lifetime_energy_cached(): Uses whichever API was last used for requestAllData
+- requestSystemData(): Delegates to last-used API for single optimizer queries
+- requestSystemDataBatch(): One API only (batch queries for lightweight checks)
+- get_inverter_models(): One API only (legacy doesn't provide inverter models)
+- close(): Closes both API sessions
+
+Tracking:
+- _last_used_api: Tracks which API ("one" or "legacy") provided the last data
+- _obtained_from: Human-readable string ("One API" or "Legacy API") for the sensor
+
+The "Obtained from" sensor shows users which API is currently providing data,
+helping diagnose issues when One API is unavailable or returning stale data.
+"""
 from __future__ import annotations
 
 import logging
@@ -21,7 +48,7 @@ class SolarEdgeDualAPI:
     _obtained_from for the site-level "Obtained from" sensor.
     """
 
-    def __init__(self, siteid: str, username: str, password: str, timezone=None, language=None, use_solaredge_one: bool = True):
+    def __init__(self, siteid: str, username: str, password: str, timezone: str | None = None, language: str | None = None, use_solaredge_one: bool = True):
         self._use_solaredge_one = bool(use_solaredge_one)
         self._one = solaredge_one(siteid, username, password, timezone, language)
         self._legacy = solaredgeoptimizers(siteid, username, password, timezone, language)
