@@ -88,8 +88,8 @@ flowchart TB
     API -->|HTTPS| GW
     INIT -->|Create API + Coordinator| COORD
     COORD -->|Poll data| API
-    API -->|Layout, optimizer batch (One), energy| GW
-    API -->|systemData per optimizer (legacy)| WEB
+    API -->|"Layout, optimizer batch (One), energy"| GW
+    API -->|"systemData per optimizer (legacy)"| WEB
     COORD -->|Data dict| SENSOR
     SENSOR -->|Entities| U
 ```
