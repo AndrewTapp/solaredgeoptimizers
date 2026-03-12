@@ -1,25 +1,83 @@
 """
 SolarEdge Optimizers Integration - Constants (const.py)
 
-This module defines all constants and shared utility functions used throughout the integration:
+This module defines all constants and shared utility functions used throughout the integration.
+Each constant is documented below with a full description of what it is used for.
 
-Configuration Keys:
-- DOMAIN: Integration identifier ("solaredgeoptimizers")
-- CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, CONF_ENTITY_PREFIX, CONF_INCLUDE_SITE_ID_IN_ENTITY_ID
+=== CONFIGURATION KEYS (config flow, options, entry data) ===
+- DOMAIN: Integration identifier for Home Assistant ("solaredgeoptimizers"); used in
+  device/entity identifiers and platform registration.
+- CONF_SITE_ID: Config key for SolarEdge site ID ("siteid"); used in setup and API calls.
+- CONF_USE_SOLAREDGE_ONE: Config key to enable/disable SolarEdge One API ("use_solaredge_one").
+  When True, integration uses One API with legacy fallback; when False, legacy only.
+- CONF_ENTITY_PREFIX: Optional prefix for entity_id (e.g. "se_" -> sensor.se_power_...).
+- CONF_INCLUDE_SITE_ID_IN_ENTITY_ID: When True, entity IDs include site ID for multi-site setups.
+- DATA_API_CLIENT: Key used in hass.data for the API client (internal).
+- PANEL_DATA: Key for panel data in coordinator (internal).
 
-Timing Constants:
-- UPDATE_DELAY: Coordinator polling interval (2 minutes)
-- COORDINATOR_REFRESH_TIMEOUT_SEC: Maximum time for API refresh (30 minutes)
-- CHECK_TIME_DELTA: Stale data threshold for legacy API (2 hours)
-- CHECK_TIME_DELTA_SOLAREDGE_ONE: Stale data threshold for One API (1 hour)
-- REVERT_TO_ONE_RETRY_INTERVAL: How often to retry One API when using legacy (30 minutes)
-- LIGHT_CHECK_MIN_INTERVAL: Minimum interval between lightweight checks (2 minutes)
+=== TIMING & POLLING ===
+- UPDATE_DELAY: Coordinator tick interval (how often the coordinator runs its update logic).
+  Actual portal load is controlled by adaptive polling (light check vs full refresh).
+- COORDINATOR_REFRESH_TIMEOUT_SEC: Maximum seconds for one coordinator refresh (initial or full).
+  Slow API or many optimizers may need more than 15 min; 30 min avoids premature timeout.
+- CHECK_TIME_DELTA: Legacy API stale threshold. Live values older than this are treated as stale.
+- CHECK_TIME_DELTA_SOLAREDGE_ONE: SolarEdge One API stale threshold (shorter than legacy).
+- REVERT_TO_ONE_RETRY_INTERVAL: When data is from legacy API, how often to re-try One API
+  so we revert to One when it becomes available.
+- LIGHT_CHECK_MIN_INTERVAL: Minimum interval between lightweight check and next full refresh
+  trigger; avoids thundering herd when many optimizers update at once (adaptive polling).
+- LIGHT_CHECK_DESIRED_INTERVAL_FRESH: When data is fresh (within stale delta), desired
+  interval between lightweight checks (e.g. 5 min).
+- LIGHT_CHECK_DESIRED_INTERVAL_STALE: When data is stale (or age unknown), desired
+  interval between lightweight checks (e.g. 30 min).
 
-Sensor Type Definitions:
-- SENSOR_TYPE_INDIVIDUAL: Sensors created for each optimizer
-- SENSOR_TYPE_AGGREGATED_STRING/INVERTER/SITE: Sensors for aggregated levels
-- SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE: Sensors skipped for inactive optimizers
-- SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE: Sensors skipped for inactive strings/inverters
+=== CACHE TTLs (SolarEdge One API) ===
+- PANELS_CACHE_TTL_ONE: How long to cache site structure (layout) from One API before
+  refetching; reduces portal calls when coordinator repeatedly needs panel list.
+- LIFETIME_ENERGY_CACHE_TTL: How long to cache lifetime energy data (One and legacy);
+  changes slowly so 1 hour is typical.
+- TEMPERATURE_CACHE_TTL: How long to cache optimizer temperatures from One API (e.g. 30 min).
+
+=== CACHE TTLs (Legacy API) ===
+- PANELS_CACHE_TTL_LEGACY: How long to cache site structure from legacy API (e.g. 1 hour).
+
+=== SITE & AGGREGATION ===
+- RELIABLE_THRESHOLD_KWH: Site lifetime energy (kWh) below which aggregated optimizer
+  data is considered unreliable; above this, portal total can be used for site-level.
+
+=== API REQUEST SETTINGS ===
+- API_TIMEOUT_SHORT: Timeout in seconds for quick requests (login check, single optimizer).
+- API_TIMEOUT_LONG: Timeout for longer requests (layout, batch operations).
+- LIGHT_CHECK_BATCH_SIZE: Number of optimizers to sample in One API lightweight checks;
+  sampling several (e.g. 5) from different strings improves detection of new data.
+- MAX_PARALLEL_WORKERS: Maximum threads for parallel API requests (legacy per-optimizer, etc.).
+- USER_AGENT: Common User-Agent string for API requests (Chrome on Windows).
+
+=== SOLAREDGE ONE API (URLs & OAuth) ===
+- BASE_URL_MONITORING: Base URL for SolarEdge monitoring portal (One API services).
+- LOGIN_BASE: Base URL for SolarEdge login (OAuth).
+- SOLAREDGE_ONE_CLIENT_ID: OAuth client_id for SolarEdge One (from portal redirect).
+- MFE_AUTH_PATH, MFE_AUTH_CALLBACK_PATH, TOKEN_PATH: Path segments for OAuth (combined with bases).
+
+=== API SOURCE LABELS ===
+- OBTAINED_FROM_ONE: Human-readable label when data came from SolarEdge One API.
+- OBTAINED_FROM_LEGACY: Human-readable label when data came from legacy Monitoring API.
+
+=== LOCALE-DEPENDENT MEASUREMENT KEYS (Legacy API) ===
+- MEASUREMENT_KEYS: Map of measurement type -> list of locale-specific key strings returned
+  by legacy API (e.g. "Power [W]", "Leistung [W]") so power/current/voltage work in any language.
+
+=== SENSOR ICONS & STATUS DISPLAY ===
+- ICON_STATUS_ACTIVE / INACTIVE / UNKNOWN: Icons for status sensors (check, alert, question mark).
+- STATUS_DISPLAY_BLANK: Display value "blank" when API status is empty (treated as active).
+- is_status_active(status): True if status is blank or "ACTIVE" (for aggregation and sorting).
+- status_display_value(raw): "blank" | "Active" | "Inactive" | raw (for sensor state).
+- status_icon(display_value): active icon for blank/Active, inactive for Inactive, unknown for other.
+- ICON_AZIMUTH / ICON_TILT: Icons for orientation sensors.
+
+=== SENSOR TYPE STRINGS & LISTS ===
+- SENSOR_TYPE_*: Sensor type identifiers and lists (individual, aggregated, exclude lists).
+  See in-code comments for which entities get which sensor types.
 
 Utility Functions:
 - parse_string_display_name_path(): Extract (inv, str) from display names like "1.0"
@@ -46,7 +104,7 @@ PANEL_DATA = "panel_data"
 LOGGER = logging.getLogger(__package__)
 
 # Coordinator tick interval. Actual portal load is controlled by adaptive polling in the coordinator.
-UPDATE_DELAY = timedelta(minutes=2)
+UPDATE_DELAY = timedelta(minutes=5)
 # Max seconds for one coordinator refresh (initial and full refresh). Slow API or many optimizers may need >15 min.
 COORDINATOR_REFRESH_TIMEOUT_SEC = 1800  # 30 min
 
@@ -55,9 +113,20 @@ CHECK_TIME_DELTA_SOLAREDGE_ONE = timedelta(hours=1)  # SolarEdge One: 1 hour sta
 # When data is from legacy API, re-try One this often so we revert to One when it becomes available
 REVERT_TO_ONE_RETRY_INTERVAL = timedelta(minutes=30)
 # Adaptive polling: min interval between light check and full refresh trigger (avoid thundering herd)
-LIGHT_CHECK_MIN_INTERVAL = timedelta(minutes=2)
+LIGHT_CHECK_MIN_INTERVAL = timedelta(minutes=5)
+# Desired interval between lightweight checks when data is fresh (within stale delta)
+LIGHT_CHECK_DESIRED_INTERVAL_FRESH = timedelta(minutes=5)
+# Desired interval between lightweight checks when data is stale or age unknown
+LIGHT_CHECK_DESIRED_INTERVAL_STALE = timedelta(minutes=30)
 # Site lifetime: use portal total when aggregated optimizer data is below this (kWh)
 RELIABLE_THRESHOLD_KWH = 100.0
+
+# --- Cache TTLs: SolarEdge One API ---
+PANELS_CACHE_TTL_ONE = timedelta(hours=2)       # Site structure (layout) cache
+LIFETIME_ENERGY_CACHE_TTL = timedelta(hours=1)  # Lifetime energy cache (One and legacy)
+TEMPERATURE_CACHE_TTL = timedelta(minutes=30)   # Optimizer temperatures cache (One API)
+# --- Cache TTLs: Legacy API ---
+PANELS_CACHE_TTL_LEGACY = timedelta(hours=1)    # Site structure cache for legacy API
 
 # API request timeouts (seconds)
 API_TIMEOUT_SHORT = 30  # For quick requests (login check, single optimizer)
@@ -70,10 +139,78 @@ MAX_PARALLEL_WORKERS = 10   # Maximum threads for parallel API requests
 # Common User-Agent string for API requests (Chrome on Windows)
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
 
-# Status sensor icons
+# --- SolarEdge One API: base URLs and OAuth ---
+BASE_URL_MONITORING = "https://monitoring.solaredge.com"
+LOGIN_BASE = "https://login.solaredge.com"
+SOLAREDGE_ONE_CLIENT_ID = "ugfnsujd3384sshcjehaphlh3"
+MFE_AUTH_PATH = "/mfe/auth/"
+MFE_AUTH_CALLBACK_PATH = "/mfe/auth/callback"
+TOKEN_PATH = "/oauth2/token"
+
+# --- API source labels (for "Obtained from" sensor and logging) ---
+OBTAINED_FROM_ONE = "One API"
+OBTAINED_FROM_LEGACY = "Legacy API"
+
+# --- Legacy API: locale-dependent measurement keys (power/current/voltage/optimizer_voltage) ---
+# SolarEdge returns keys in user locale (e.g. "Power [W]" in EN, "Leistung [W]" in DE).
+MEASUREMENT_KEYS = {
+    "power": [
+        "Power [W]", "Leistung [W]", "Puissance [W]", "Potencia [W]", "Potenza [W]",
+        "Vermogen [W]", "Effekt [W]", "Moc [W]", "Výkon [W]", "Teljesítmény [W]",
+        "Ισχύς [W]", "Güç [W]", "Мощность [W]", "功率 [W]", "電力 [W]", "Teho [W]",
+    ],
+    "current": [
+        "Current [A]", "Strom [A]", "Courant [A]", "Corriente [A]", "Corrente [A]",
+        "Stroom [A]", "Strøm [A]", "Ström [A]", "Prąd [A]", "Proud [A]", "Áram [A]",
+        "Ρεύμα [A]", "Akım [A]", "Ток [A]", "电流 [A]", "電流 [A]", "Virta [A]",
+    ],
+    "voltage": [
+        "Voltage [V]", "Spannung [V]", "Tension [V]", "Tensión [V]", "Tensione [V]",
+        "Spanning [V]", "Spänning [V]", "Spænding [V]", "Spenning [V]", "Napięcie [V]",
+        "Napětí [V]", "Feszültség [V]", "Τάση [V]", "Gerilim [V]", "Напряжение [V]",
+        "电压 [V]", "電圧 [V]", "Jännite [V]",
+    ],
+    "optimizer_voltage": [
+        "Optimizer Voltage [V]", "Optimierer-Spannung [V]", "Optimizer-Spannung [V]",
+    ],
+}
+
+# Status sensor icons (active=check, inactive=alert, unknown=question mark)
 ICON_STATUS_ACTIVE = "mdi:check-circle"
 ICON_STATUS_INACTIVE = "mdi:alert-circle"
 ICON_STATUS_UNKNOWN = "mdi:help-circle"
+
+# Display value when status is blank (treated as active)
+STATUS_DISPLAY_BLANK = "blank"
+
+
+def is_status_active(status: str | None) -> bool:
+    """Return True if the device should be treated as active: blank/empty or 'ACTIVE' (case-insensitive)."""
+    s = (status or "").strip()
+    return s == "" or s.upper() == "ACTIVE"
+
+
+def status_display_value(raw_status: str | None) -> str:
+    """Convert raw API status to display value: blank→'blank', ACTIVE→'Active', INACTIVE→'Inactive', else as-is."""
+    s = (raw_status or "").strip()
+    if s == "":
+        return STATUS_DISPLAY_BLANK
+    u = s.upper()
+    if u == "ACTIVE":
+        return "Active"
+    if u == "INACTIVE":
+        return "Inactive"
+    return s
+
+
+def status_icon(display_value: str | None) -> str:
+    """Return icon for status sensor from display value: blank/Active→active icon, Inactive→inactive, else unknown."""
+    v = (display_value or "").strip()
+    if v == STATUS_DISPLAY_BLANK or v == "Active":
+        return ICON_STATUS_ACTIVE
+    if v == "Inactive":
+        return ICON_STATUS_INACTIVE
+    return ICON_STATUS_UNKNOWN
 
 # Orientation sensor icons
 ICON_AZIMUTH = "mdi:compass"
@@ -199,10 +336,10 @@ def make_duplicate_sort_key(item, get_status: Callable, get_serial: Callable) ->
     """Create sort key for duplicate resolution: active first, then alphabetically by serial number.
     
     Used by resolve_duplicate_indices to sort items with the same position key.
-    Active devices (status="ACTIVE") sort before inactive ones.
+    Active devices (blank or status='ACTIVE') sort before inactive ones.
     """
-    status = (get_status(item) or "").upper()
-    is_active = 0 if status == "ACTIVE" else 1  # 0 sorts before 1
+    status = get_status(item) or ""
+    is_active = 0 if is_status_active(status) else 1  # 0 sorts before 1
     serial = get_serial(item) or ""
     return (is_active, serial)
 
