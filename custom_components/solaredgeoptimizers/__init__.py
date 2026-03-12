@@ -86,76 +86,90 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         language=hass.config.language,
         use_solaredge_one=use_solaredge_one,
     )
-
-    if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug("SolarEdge Optimizers: Starting login check")
+    coordinator_stored = False
     try:
-        http_result_code = await hass.async_add_executor_job(api.check_login)
-        LOGGER.info("SolarEdge Optimizers: Login check result: %s", http_result_code)
-    except ConnectTimeout as ex:
-        LOGGER.error("SolarEdge Optimizers: Connection timeout during login check: %s", ex)
-        raise ConfigEntryNotReady from ex
-    except HTTPError as ex:
-        LOGGER.error("SolarEdge Optimizers: HTTP error during login check: %s", ex)
-        raise ConfigEntryNotReady from ex
-    except RequestException as ex:
-        LOGGER.error("SolarEdge Optimizers: Network error during login check: %s", ex)
-        raise ConfigEntryNotReady from ex
-    except (ValueError, KeyError, TypeError) as ex:
-        LOGGER.error("SolarEdge Optimizers: Data parsing error during login check: %s", ex)
-        raise ConfigEntryNotReady from ex
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug("SolarEdge Optimizers: Starting login check")
+        try:
+            http_result_code = await hass.async_add_executor_job(api.check_login)
+            LOGGER.info("SolarEdge Optimizers: Login check result: %s", http_result_code)
+        except ConnectTimeout as ex:
+            LOGGER.error("SolarEdge Optimizers: Connection timeout during login check: %s", ex)
+            raise ConfigEntryNotReady from ex
+        except HTTPError as ex:
+            LOGGER.error("SolarEdge Optimizers: HTTP error during login check: %s", ex)
+            raise ConfigEntryNotReady from ex
+        except RequestException as ex:
+            LOGGER.error("SolarEdge Optimizers: Network error during login check: %s", ex)
+            raise ConfigEntryNotReady from ex
+        except (ValueError, KeyError, TypeError) as ex:
+            LOGGER.error("SolarEdge Optimizers: Data parsing error during login check: %s", ex)
+            raise ConfigEntryNotReady from ex
 
-    if http_result_code == 401:
-        LOGGER.error("SolarEdge Optimizers: Authentication failed (401); please re-authenticate")
-        raise ConfigEntryAuthFailed("Invalid or expired credentials; please re-authenticate")
-    if http_result_code != 200:
-        LOGGER.error("SolarEdge Optimizers: Missing details data in SolarEdge response (status: %s)", http_result_code)
-        raise ConfigEntryNotReady
+        if http_result_code == 401:
+            LOGGER.error("SolarEdge Optimizers: Authentication failed (401); please re-authenticate")
+            raise ConfigEntryAuthFailed("Invalid or expired credentials; please re-authenticate")
+        if http_result_code != 200:
+            LOGGER.error("SolarEdge Optimizers: Missing details data in SolarEdge response (status: %s)", http_result_code)
+            raise ConfigEntryNotReady
 
-    if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug("SolarEdge Optimizers: Login successful, creating coordinator")
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug("SolarEdge Optimizers: Login successful, creating coordinator")
 
-    hass.data.setdefault(DOMAIN, {})
+        hass.data.setdefault(DOMAIN, {})
 
-    # Pass config_entry to coordinator to enable async_config_entry_first_refresh()
-    if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug("SolarEdge Optimizers: Creating coordinator instance")
-    coordinator = MyCoordinator(hass, api, True, entry)
+        # Pass config_entry to coordinator to enable async_config_entry_first_refresh()
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug("SolarEdge Optimizers: Creating coordinator instance")
+        coordinator = MyCoordinator(hass, api, True, entry)
 
-    # Fetch initial data so we have data when entities subscribe
-    #
-    # If the refresh fails, async_config_entry_first_refresh will
-    # raise ConfigEntryNotReady and setup will try again later
-    if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug("SolarEdge Optimizers: Starting initial coordinator refresh")
-    try:
-        await coordinator.async_config_entry_first_refresh()
-        LOGGER.info("SolarEdge Optimizers: Initial coordinator refresh completed successfully")
-    except (ConnectTimeout, HTTPError, RequestException) as ex:
-        LOGGER.error("SolarEdge Optimizers: Network error during initial coordinator refresh: %s", ex)
-        raise
-    except (ValueError, KeyError, TypeError) as ex:
-        LOGGER.error("SolarEdge Optimizers: Data parsing error during initial coordinator refresh: %s", ex)
-        raise
-    except ConfigEntryNotReady:
-        raise
-    except RuntimeError as ex:
-        LOGGER.error("SolarEdge Optimizers: Runtime error during initial coordinator refresh: %s", ex)
-        raise
+        # Fetch initial data so we have data when entities subscribe
+        #
+        # If the refresh fails, async_config_entry_first_refresh will
+        # raise ConfigEntryNotReady and setup will try again later
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug("SolarEdge Optimizers: Starting initial coordinator refresh")
+        try:
+            await coordinator.async_config_entry_first_refresh()
+            LOGGER.info("SolarEdge Optimizers: Initial coordinator refresh completed successfully")
+        except (ConnectTimeout, HTTPError, RequestException) as ex:
+            LOGGER.error("SolarEdge Optimizers: Network error during initial coordinator refresh: %s", ex)
+            raise
+        except (ValueError, KeyError, TypeError) as ex:
+            LOGGER.error("SolarEdge Optimizers: Data parsing error during initial coordinator refresh: %s", ex)
+            raise
+        except ConfigEntryNotReady:
+            raise
+        except RuntimeError as ex:
+            LOGGER.error("SolarEdge Optimizers: Runtime error during initial coordinator refresh: %s", ex)
+            raise
 
-    hass.data[DOMAIN][entry.entry_id] = coordinator
-    if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug(
-            "SolarEdge Optimizers: Stored coordinator for entry %s, forwarding to platforms: %s",
-            entry.entry_id,
-            PLATFORMS,
-        )
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    if LOGGER.isEnabledFor(logging.DEBUG):
-        LOGGER.debug("SolarEdge Optimizers: Platform setup complete for entry %s", entry.entry_id)
-
-    return True
+        hass.data[DOMAIN][entry.entry_id] = coordinator
+        coordinator_stored = True
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug(
+                "SolarEdge Optimizers: Stored coordinator for entry %s, forwarding to platforms: %s",
+                entry.entry_id,
+                PLATFORMS,
+            )
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug("SolarEdge Optimizers: Platform setup complete for entry %s", entry.entry_id)
+        return True
+    finally:
+        if not coordinator_stored:
+            try:
+                await hass.async_add_executor_job(api.close)
+                if LOGGER.isEnabledFor(logging.DEBUG):
+                    LOGGER.debug(
+                        "SolarEdge Optimizers: Closed API after setup failure for entry %s",
+                        entry.entry_id,
+                    )
+            except Exception as e:  # pylint: disable=broad-except
+                LOGGER.warning(
+                    "SolarEdge Optimizers: Error closing API after setup failure: %s",
+                    e,
+                )
 
 
 def _entity_matches_entry(e: Any, entry_id: str) -> bool:
