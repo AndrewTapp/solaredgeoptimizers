@@ -18,7 +18,7 @@ API Endpoints (monitoring.solaredge.com/services/...):
 2. Optimizer Live Data:
    POST .../layout/information/optimizers (body: list of serials)
    Returns basicInformationList (serial, model) and serialToLiveData (power, voltage, current)
-   Used for both full refresh and lightweight batch checks (up to 5 optimizers)
+   Full refresh: one batch POST with all optimizer serials. Lightweight checks: one batch with up to 5 representative serials.
 
 3. Inverter Information:
    GET .../layout/information/inverters?inverter-serials=...
@@ -27,19 +27,19 @@ API Endpoints (monitoring.solaredge.com/services/...):
 4. Optimizer Temperatures:
    GET .../layout/energy/site/{siteId}/by-inverter?include-max-temperature=true
    Returns per-optimizer temperature (auto-converts Fahrenheit to Celsius)
-   Cached for 15 minutes
+   Cached per TEMPERATURE_CACHE_TTL (e.g. 30 min)
 
 5. Lifetime Energy:
    GET .../layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...
    Fetches per-optimizer lifetime energy in parallel (thread pool)
-   Cached for 1 hour
+   Cached per LIFETIME_ENERGY_CACHE_TTL (e.g. 1 hour)
 
 Key Features:
 - Automatic retry on timeout for optimizer data requests
 - Temperature unit normalization (F to C conversion)
 - Duplicate name resolution with letter suffixes for same-position devices
 - Azimuth and tilt extraction from optimizer module data (radians to degrees)
-- Panel cache (1 hour), temperature cache (15 min), lifetime energy cache (1 hour)
+- Panel cache (PANELS_CACHE_TTL_ONE, e.g. 2 h), temperature (TEMPERATURE_CACHE_TTL), lifetime (LIFETIME_ENERGY_CACHE_TTL)
 """
 import math
 import base64
@@ -58,7 +58,22 @@ import requests
 from requests.sessions import Session
 import pytz
 
-from .const import USER_AGENT, API_TIMEOUT_SHORT, API_TIMEOUT_LONG, MAX_PARALLEL_WORKERS
+from .const import (
+    USER_AGENT,
+    API_TIMEOUT_SHORT,
+    API_TIMEOUT_LONG,
+    MAX_PARALLEL_WORKERS,
+    BASE_URL_MONITORING,
+    LOGIN_BASE,
+    SOLAREDGE_ONE_CLIENT_ID,
+    MFE_AUTH_PATH,
+    MFE_AUTH_CALLBACK_PATH,
+    TOKEN_PATH,
+    PANELS_CACHE_TTL_ONE,
+    LIFETIME_ENERGY_CACHE_TTL,
+    TEMPERATURE_CACHE_TTL,
+    is_status_active,
+)
 from .solaredgeoptimizers import (
     SolarEdgeSite,
     SolarEdgeOptimizerData,
@@ -67,13 +82,10 @@ from .solaredgeoptimizers import (
 
 _LOGGER = logging.getLogger(__name__)
 
-BASE_URL = "https://monitoring.solaredge.com"
-LOGIN_BASE = "https://login.solaredge.com"
-# SolarEdge One OAuth client_id (from monitoring portal redirect)
-SOLAREDGE_ONE_CLIENT_ID = "ugfnsujd3384sshcjehaphlh3"
-MFE_AUTH_URL = f"{BASE_URL}/mfe/auth/"
-MFE_AUTH_CALLBACK = f"{BASE_URL}/mfe/auth/callback"
-TOKEN_URL = f"{LOGIN_BASE}/oauth2/token"
+BASE_URL = BASE_URL_MONITORING
+MFE_AUTH_URL = f"{BASE_URL_MONITORING}{MFE_AUTH_PATH}"
+MFE_AUTH_CALLBACK = f"{BASE_URL_MONITORING}{MFE_AUTH_CALLBACK_PATH}"
+TOKEN_URL = f"{LOGIN_BASE}{TOKEN_PATH}"
 
 
 def _pkce_verifier_and_challenge():
@@ -292,11 +304,11 @@ def _v2_build_optimizer_logical_node(opt_node: dict, resolved_name: str = None) 
 
 
 def _make_duplicate_sort_key(get_status, get_serial, get_position):
-    """Create a sort key function for duplicate name resolution."""
+    """Create a sort key function for duplicate name resolution (blank or ACTIVE = active first)."""
     def sort_key(idx_item):
         idx, item = idx_item
-        status = (get_status(item) or "").upper()
-        is_active = 1 if status == "ACTIVE" else 0
+        status = get_status(item) or ""
+        is_active = 1 if is_status_active(status) else 0
         serial = get_serial(item) if get_serial else ""
         position = get_position(item) if get_position else idx
         return (-is_active, serial if serial else "", position)
@@ -522,18 +534,21 @@ class solaredge_one:
         self._session = None
         self._panels_cache = None
         self._panels_cache_time = None
-        self._panels_cache_ttl = timedelta(hours=1)
+        self._panels_cache_ttl = PANELS_CACHE_TTL_ONE
         self._lifetime_energy_cache = None
         self._lifetime_energy_cache_time = None
-        self._lifetime_energy_cache_ttl = timedelta(hours=1)
+        self._lifetime_energy_cache_ttl = LIFETIME_ENERGY_CACHE_TTL
         self._temperature_cache = None
         self._temperature_cache_time = None
-        self._temperature_cache_ttl = timedelta(minutes=15)
+        self._temperature_cache_ttl = TEMPERATURE_CACHE_TTL
         self._access_token = None
         self._refresh_token = None
+        self._closed = False
 
     def _ensure_token(self) -> str:
         """Obtain OAuth access_token via PKCE flow and token exchange. Returns access_token."""
+        if self._closed:
+            raise RuntimeError("SolarEdge One API client is closed")
         if self._access_token:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge One: Using cached access token")
@@ -674,7 +689,10 @@ class solaredge_one:
             or (now - self._panels_cache_time) > self._panels_cache_ttl
         ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: Panels cache miss, fetching site structure")
+                _LOGGER.debug(
+                    "SolarEdge One: Panels cache miss (TTL=%s), fetching site structure",
+                    self._panels_cache_ttl,
+                )
             raw = self._get(
                 f"/services/layout/logical/generic/v2/site/{self.siteid}",
                 params={"include-optimizers": "true"},
@@ -688,15 +706,16 @@ class solaredge_one:
         else:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: Using cached panels (age: %s)",
+                    "SolarEdge One: Using cached panels (age=%s, TTL=%s)",
                     now - self._panels_cache_time,
+                    self._panels_cache_ttl,
                 )
         return self._panels_cache
 
     def get_optimizer_temperatures_cached(self):
         """
         Return dict optimizer_serial -> temperature (float, Celsius) from layout/energy/site/.../by-inverter
-        with include-max-temperature=true. Cached for 15 minutes.
+        with include-max-temperature=true. Cached per TEMPERATURE_CACHE_TTL.
         """
         now = datetime.now()
         if (
@@ -706,10 +725,16 @@ class solaredge_one:
         ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: Using cached optimizer temperatures (age: %s)",
+                    "SolarEdge One: Using cached optimizer temperatures (age=%s, TTL=%s)",
                     now - self._temperature_cache_time,
+                    self._temperature_cache_ttl,
                 )
             return self._temperature_cache
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge One: Temperature cache miss or expired (TTL=%s), fetching",
+                self._temperature_cache_ttl,
+            )
         try:
             site = self.requestListOfAllPanels()
             inverter_serials = [inv.serialNumber for inv in site.inverters if getattr(inv, "serialNumber", None)]
@@ -934,31 +959,49 @@ class solaredge_one:
         return result
 
     def _fetch_all_optimizer_data(self, optimizer_ids: list) -> list:
-        """Fetch live data for many optimizers in parallel. Returns list of SolarEdgeOptimizerData (successful only)."""
+        """Fetch live data for all optimizers in one batch POST. Returns list of SolarEdgeOptimizerData (successful only)."""
         if not optimizer_ids:
             return []
-        max_workers = min(os.cpu_count() or 4, len(optimizer_ids), MAX_PARALLEL_WORKERS)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge One: requestAllData fetching %d optimizers with max_workers=%d",
+                "SolarEdge One: requestAllData fetching %d optimizers (single batch)",
                 len(optimizer_ids),
-                max_workers,
             )
-        data = []
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_id = {
-                executor.submit(self.requestSystemData, oid): oid
-                for oid in optimizer_ids
-            }
-            for future in as_completed(future_to_id):
-                oid = future_to_id[future]
-                try:
-                    info = future.result()
-                    if info is not None:
-                        data.append(info)
-                except Exception as e:  # pylint: disable=broad-except
-                    _LOGGER.error("SolarEdge One: Error fetching data for optimizer %s: %s", oid, e)
-        return data
+        try:
+            result = self.requestSystemDataBatch(optimizer_ids)
+            return [item for item in result if item is not None]
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "SolarEdge One: Batch optimizer fetch failed (%s), falling back to per-optimizer",
+                e,
+            )
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge One: Per-optimizer fallback: fetching %d optimizers with ThreadPoolExecutor",
+                    len(optimizer_ids),
+                )
+            # Fallback: one request per optimizer if batch fails
+            data = []
+            with ThreadPoolExecutor(
+                max_workers=min(os.cpu_count() or 4, len(optimizer_ids), MAX_PARALLEL_WORKERS)
+            ) as executor:
+                future_to_id = {
+                    executor.submit(self.requestSystemData, oid): oid
+                    for oid in optimizer_ids
+                }
+                for future in as_completed(future_to_id):
+                    oid = future_to_id[future]
+                    try:
+                        info = future.result()
+                        if info is not None:
+                            data.append(info)
+                    except Exception as err:  # pylint: disable=broad-except
+                        _LOGGER.error(
+                            "SolarEdge One: Error fetching data for optimizer %s: %s",
+                            oid,
+                            err,
+                        )
+            return data
 
     def _attach_lifetime_energy_and_temperatures(
         self, data_list: list, lifetimeenergy: dict, temperature_map: dict
@@ -1053,7 +1096,10 @@ class solaredge_one:
             or (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl
         ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: Lifetime energy cache miss, fetching per-optimizer")
+                _LOGGER.debug(
+                    "SolarEdge One: Lifetime energy cache miss (TTL=%s), fetching per-optimizer",
+                    self._lifetime_energy_cache_ttl,
+                )
             try:
                 self._lifetime_energy_cache = self._fetch_lifetime_energy_uncached()
                 self._lifetime_energy_cache_time = now
@@ -1064,15 +1110,21 @@ class solaredge_one:
         else:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: Using cached lifetime energy (age: %s, %d entries)",
+                    "SolarEdge One: Using cached lifetime energy (age=%s, TTL=%s, %d entries)",
                     now - self._lifetime_energy_cache_time,
+                    self._lifetime_energy_cache_ttl,
                     len(self._lifetime_energy_cache or {}),
                 )
         return self._lifetime_energy_cache or {}
 
     def close(self):
-        """Clear tokens and release resources."""
+        """Clear tokens and release resources. Idempotent; safe to call multiple times.
+        
+        One API uses requests.get/post with context managers (no persistent Session),
+        so no file descriptors are held. Clearing tokens ensures no reuse after close.
+        """
         if self._access_token and _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: close() clearing access token")
         self._access_token = None
         self._refresh_token = None
+        self._closed = True
