@@ -31,13 +31,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from .const import OBTAINED_FROM_ONE, OBTAINED_FROM_LEGACY
 from .solaredgeoptimizers import solaredgeoptimizers
 from .solaredge_one_api import solaredge_one
 
 _LOGGER = logging.getLogger(__name__)
-
-OBTAINED_FROM_ONE = "One API"
-OBTAINED_FROM_LEGACY = "Legacy API"
 
 
 class SolarEdgeDualAPI:
@@ -169,14 +167,17 @@ class SolarEdgeDualAPI:
         return self._one.get_inverter_models(serials)
 
     def close(self) -> None:
-        """Close both API sessions."""
-        try:
-            self._one.close()
-        except Exception as e:  # pylint: disable=broad-except
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Dual API: Error closing One API: %s", e)
-        try:
-            self._legacy.close()
-        except Exception as e:  # pylint: disable=broad-except
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Dual API: Error closing legacy API: %s", e)
+        """Close both API clients and release all file descriptors (sessions, connection pools).
+        Idempotent; safe to call multiple times. Both clients are always closed even if one raises.
+        """
+        for name, client in [("One", self._one), ("Legacy", self._legacy)]:
+            try:
+                client.close()
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Dual API: Closed %s API client", name)
+            except Exception as e:  # pylint: disable=broad-except
+                _LOGGER.warning(
+                    "SolarEdge Dual API: Error closing %s API (file descriptors may leak): %s",
+                    name,
+                    e,
+                )
