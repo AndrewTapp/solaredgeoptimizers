@@ -712,6 +712,40 @@ class solaredge_one:
                 )
         return self._panels_cache
 
+    def _parse_temperature_response(self, data: dict) -> tuple[dict[str, float], int]:
+        """
+        Parse layout/energy by-inverter API response into optimizer_serial -> temperature (Celsius).
+        Returns (result_dict, fahrenheit_count) for logging.
+        """
+        result = {}
+        fahrenheit_count = 0
+        for inv_block in data.get("inverters") or []:
+            for opt in inv_block.get("optimizers") or []:
+                serial = (opt.get("serial") or "").strip()
+                temp_obj = opt.get("temperature")
+                if not serial or not isinstance(temp_obj, dict):
+                    continue
+                t = temp_obj.get("temperature")
+                if t is None:
+                    continue
+                try:
+                    temp_val = float(t)
+                    unit = (temp_obj.get("temperatureUnit") or "CELSIUS").strip().upper()
+                    # Portal may send FAHRENHEIT or F (e.g. US). Convert to Celsius for storage.
+                    if unit in ("FAHRENHEIT", "F"):
+                        raw_f = temp_val
+                        temp_val = (temp_val - 32.0) * (5.0 / 9.0)
+                        fahrenheit_count += 1
+                        if _LOGGER.isEnabledFor(logging.DEBUG):
+                            _LOGGER.debug(
+                                "SolarEdge One: Temperature unit %s for optimizer %s: %.1f°F -> %.1f°C",
+                                unit, serial, raw_f, temp_val,
+                            )
+                    result[serial] = round(temp_val, 1)
+                except (TypeError, ValueError):
+                    pass
+        return result, fahrenheit_count
+
     def get_optimizer_temperatures_cached(self):
         """
         Return dict optimizer_serial -> temperature (float, Celsius) from layout/energy/site/.../by-inverter
@@ -751,32 +785,7 @@ class solaredge_one:
                 "include-max-temperature": "true",
             }
             data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
-            result = {}
-            fahrenheit_count = 0
-            for inv_block in data.get("inverters") or []:
-                for opt in inv_block.get("optimizers") or []:
-                    serial = (opt.get("serial") or "").strip()
-                    temp_obj = opt.get("temperature")
-                    if serial and isinstance(temp_obj, dict):
-                        t = temp_obj.get("temperature")
-                        if t is not None:
-                            try:
-                                temp_val = float(t)
-                                unit = (temp_obj.get("temperatureUnit") or "CELSIUS").strip().upper()
-                                # Portal may send FAHRENHEIT or F (e.g. US). Convert to Celsius for storage.
-                                # F -> C: (x - 32) * 5/9  (e.g. 138°F -> 58.9°C). Do NOT use C->F formula.
-                                if unit in ("FAHRENHEIT", "F"):
-                                    raw_f = temp_val
-                                    temp_val = (temp_val - 32.0) * (5.0 / 9.0)
-                                    fahrenheit_count += 1
-                                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                                        _LOGGER.debug(
-                                            "SolarEdge One: Temperature unit %s for optimizer %s: %.1f°F -> %.1f°C",
-                                            unit, serial, raw_f, temp_val,
-                                        )
-                                result[serial] = round(temp_val, 1)
-                            except (TypeError, ValueError):
-                                pass
+            result, fahrenheit_count = self._parse_temperature_response(data)
             self._temperature_cache = result
             self._temperature_cache_time = now
             if _LOGGER.isEnabledFor(logging.DEBUG):
