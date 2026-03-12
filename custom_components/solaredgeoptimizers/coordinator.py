@@ -6,7 +6,7 @@ for the integration. It serves as the central data hub for all sensor entities.
 
 Key Responsibilities:
 - Fetches site structure (inverters, strings, optimizers) on startup
-- Polls optimizer data at regular intervals (default 2 minutes)
+- Polls optimizer data at regular intervals (coordinator tick every 5 minutes)
 - Implements adaptive polling: lightweight checks detect new data before full refresh
 - Manages One API vs Legacy API fallback (retries One periodically when using legacy)
 - Calculates aggregated data (power, voltage, current, energy) at string/inverter/site levels
@@ -14,16 +14,15 @@ Key Responsibilities:
 - Registers devices in Home Assistant device registry (site, inverters, strings)
 
 Adaptive Polling Strategy:
-- Lightweight check: samples 5 random optimizers (batch) or 1 representative (single)
+- Lightweight check: samples 5 random optimizers (batch, One API) or 1 representative (single, legacy)
+- Full refresh: One API uses one batch POST for all optimizers; legacy uses parallel per-optimizer requests
 - Full refresh triggered when lightweight check detects newer lastmeasurement
 - Stale threshold: 1 hour (One API) or 2 hours (Legacy API)
-- Minimum interval between full refreshes: 2 minutes
+- Minimum interval between full refreshes: 5 minutes (LIGHT_CHECK_MIN_INTERVAL)
 
 Data Aggregation:
-- String level: sums power, averages voltage/current from active optimizers
-- Inverter level: sums power, averages voltage/current from active strings
-- Site level: sums power, averages voltage/current from active inverters
-- Inactive devices excluded from aggregation to avoid skewing averages
+- Power, current, voltage, and lifetime energy aggregate from all devices (any status) with recent data
+- Child counts (optimizer/string/inverter count) count only active devices (status blank or "Active")
 - Lifetime energy uses portal total when aggregated data is unreliable (<100 kWh)
 
 Duplicate Handling:
@@ -60,10 +59,14 @@ from .const import (
     RELIABLE_THRESHOLD_KWH,
     LIGHT_CHECK_MIN_INTERVAL,
     LIGHT_CHECK_BATCH_SIZE,
+    LIGHT_CHECK_DESIRED_INTERVAL_FRESH,
+    LIGHT_CHECK_DESIRED_INTERVAL_STALE,
+    OBTAINED_FROM_LEGACY,
+    OBTAINED_FROM_ONE,
+    is_status_active,
     parse_string_display_name_path,
     resolve_duplicate_indices,
 )
-from .api_dual import OBTAINED_FROM_LEGACY, OBTAINED_FROM_ONE
 from .solaredgeoptimizers import (
     SolarEdgeAggregatedData,
     _lifetime_energy_to_kwh,
@@ -93,6 +96,7 @@ def _get_first_optimizer_id(site):
 
 
 # Rollup state types to avoid passing many parameters (CodeFactor: too many arguments)
+# inverter_count = inverters with data (for average divisor); active_inverters = for child_count only
 SiteRollupState = namedtuple(
     "SiteRollupState",
     [
@@ -104,6 +108,7 @@ SiteRollupState = namedtuple(
         "active_optimizers",
         "active_strings",
         "active_inverters",
+        "inverter_count",
         "lifetime_energy",
     ],
 )
@@ -113,6 +118,7 @@ InverterRollupResult = namedtuple(
         "aggregated",
         "power",
         "active_strings",
+        "string_count",
         "voltage_count",
         "last_measurement",
         "active_optimizers",
@@ -131,6 +137,7 @@ AggregationContext = namedtuple(
     ],
 )
 # Inverter aggregation data to reduce parameter count in _create_inverter_aggregated
+# string_count = strings with data (for average divisor); active_strings = for child_count only
 InverterAggData = namedtuple(
     "InverterAggData",
     [
@@ -142,9 +149,11 @@ InverterAggData = namedtuple(
         "lifetime_energy",
         "active_optimizers",
         "active_strings",
+        "string_count",
     ],
 )
 # String aggregation data to reduce parameter count in _create_string_aggregated
+# optimizer_count = optimizers with recent data (all statuses) for average divisor; active_optimizers = for child_count only
 StringAggData = namedtuple(
     "StringAggData",
     [
@@ -154,6 +163,7 @@ StringAggData = namedtuple(
         "voltage_count",
         "last_measurement",
         "active_optimizers",
+        "optimizer_count",
         "lifetime_energy",
     ],
 )
@@ -278,10 +288,12 @@ class MyCoordinator(DataUpdateCoordinator):
         return lifetime_energy_lookup
 
     def _aggregate_optimizers_in_string(self, string, data_dict, timetocheck):
-        """Aggregate optimizer data for one string. Returns (current, power, voltage_sum, voltage_count, last_measurement, active_optimizers).
+        """Aggregate optimizer data for one string.
         
-        Only includes values from optimizers with status='ACTIVE'. Inactive optimizers are
-        excluded from aggregation to avoid skewing averages with stale/zero values.
+        Returns (current, power, voltage_sum, voltage_count, last_measurement, active_optimizers, optimizer_count).
+        Power, current, voltage, and last_measurement include ALL optimizers with recent data (all statuses).
+        active_optimizers is the count of active (blank or ACTIVE) optimizers, used for child_count only.
+        optimizer_count is the count of optimizers with recent data, used for average divisor.
         """
         string_current = 0.0
         string_power = 0.0
@@ -289,26 +301,19 @@ class MyCoordinator(DataUpdateCoordinator):
         string_voltage_count = 0
         string_last_measurement = None
         string_active_optimizers = 0
+        string_optimizer_count = 0
         for optimizer in string.optimizers:
+            optimizer_status_raw = getattr(optimizer, "status", "") or ""
+            if is_status_active(optimizer_status_raw):
+                string_active_optimizers += 1
             optimizer_data = data_dict.get(optimizer.optimizerId)
             if optimizer_data:
-                optimizer_status = (getattr(optimizer, "status", "") or "").upper()
-                optimizer_data.status = getattr(optimizer, "status", "") or ""
+                optimizer_data.status = optimizer_status_raw
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug(
                         "SolarEdge Optimizers: Set optimizer %s status=%s",
                         optimizer.optimizerId, optimizer_data.status or "(none)",
                     )
-                
-                # Only aggregate values from active optimizers
-                if optimizer_status != "ACTIVE":
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "SolarEdge Optimizers: Skipping inactive optimizer %s (status=%s) from aggregation",
-                            optimizer.optimizerId, optimizer_status or "(none)",
-                        )
-                    continue
-                
                 last_measurement = optimizer_data.lastmeasurement
                 is_datetime = isinstance(last_measurement, datetime)
                 if is_datetime and (string_last_measurement is None or last_measurement > string_last_measurement):
@@ -324,7 +329,7 @@ class MyCoordinator(DataUpdateCoordinator):
                     if opt_voltage:
                         string_voltage_sum += opt_voltage
                         string_voltage_count += 1
-                    string_active_optimizers += 1
+                    string_optimizer_count += 1
         return (
             string_current,
             string_power,
@@ -332,6 +337,7 @@ class MyCoordinator(DataUpdateCoordinator):
             string_voltage_count,
             string_last_measurement,
             string_active_optimizers,
+            string_optimizer_count,
         )
 
     def _create_string_aggregated(self, string, agg_data: StringAggData, current_utc, string_entity_path):
@@ -346,8 +352,8 @@ class MyCoordinator(DataUpdateCoordinator):
             lifetime_energy=agg_data.lifetime_energy,
             entity_id_path=string_entity_path,
         )
-        if agg_data.active_optimizers > 0:
-            string_aggregated.current = agg_data.current / agg_data.active_optimizers
+        if agg_data.optimizer_count > 0:
+            string_aggregated.current = agg_data.current / agg_data.optimizer_count
             string_aggregated.power = round(agg_data.power, 2)
         else:
             string_aggregated.current = 0.0
@@ -356,14 +362,15 @@ class MyCoordinator(DataUpdateCoordinator):
             round(agg_data.voltage_sum / agg_data.voltage_count, 2) if agg_data.voltage_count > 0 else 0.0
         )
         string_aggregated.lastmeasurement = agg_data.last_measurement if agg_data.last_measurement is not None else current_utc
-        string_aggregated.child_count = int(len(string.optimizers))
+        # Child count = only active (and blank-status) optimizers in this string
+        string_aggregated.child_count = int(agg_data.active_optimizers)
         string_aggregated.active_optimizer_count = agg_data.active_optimizers
         string_aggregated.serialnumber = f"String_{string.stringId}"
         string_aggregated.panel_description = string.displayName
         string_aggregated.status = getattr(string, "status", "") or ""
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers: Created string aggregated %s status=%s child_count=%d active=%d",
+                "SolarEdge Optimizers: Created string aggregated %s status=%s child_count=%d (active optimizers) active=%d",
                 string_aggregated.panel_id, string_aggregated.status or "(none)",
                 string_aggregated.child_count, string_aggregated.active_optimizer_count,
             )
@@ -385,22 +392,23 @@ class MyCoordinator(DataUpdateCoordinator):
             lifetime_energy=round(inv_data.lifetime_energy, 3),
             entity_id_path=inverter_entity_path,
         )
-        if inv_data.active_strings > 0:
-            inverter_aggregated.current = inv_data.current / inv_data.active_strings
+        if inv_data.string_count > 0:
+            inverter_aggregated.current = inv_data.current / inv_data.string_count
             inverter_aggregated.power = round(inv_data.power, 2)
         else:
             inverter_aggregated.current = 0.0
             inverter_aggregated.power = 0.0
         inverter_aggregated.voltage = round((inv_data.voltage_sum / inv_data.voltage_count), 2) if inv_data.voltage_count > 0 else 0.0
         inverter_aggregated.lastmeasurement = inv_data.last_measurement if inv_data.last_measurement is not None else ctx.current_utc
-        inverter_aggregated.child_count = int(len(inverter.strings))
+        # Child count = only active (and blank-status) strings in this inverter
+        inverter_aggregated.child_count = int(inv_data.active_strings)
         inverter_aggregated.active_optimizer_count = inv_data.active_optimizers
         inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
         inverter_aggregated.panel_description = inverter.displayName
         inverter_aggregated.status = getattr(inverter, "status", "") or ""
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers: Created inverter aggregated %s status=%s child_count=%d active_optimizers=%d",
+                "SolarEdge Optimizers: Created inverter aggregated %s status=%s child_count=%d (active strings) active_optimizers=%d",
                 inverter_aggregated.panel_id, inverter_aggregated.status or "(none)",
                 inverter_aggregated.child_count, inverter_aggregated.active_optimizer_count,
             )
@@ -422,18 +430,24 @@ class MyCoordinator(DataUpdateCoordinator):
             lifetime_energy=round(site_state.lifetime_energy, 3),
             entity_id_path=site_entity_path,
         )
-        if site_state.active_inverters > 0:
-            site_aggregated.current = site_state.current / site_state.active_inverters
+        if site_state.inverter_count > 0:
+            site_aggregated.current = site_state.current / site_state.inverter_count
             site_aggregated.power = round(site_state.power, 2)
         else:
             site_aggregated.current = 0.0
             site_aggregated.power = 0.0
         site_aggregated.voltage = round((site_state.voltage_sum / site_state.voltage_count), 2) if site_state.voltage_count > 0 else 0.0
         site_aggregated.lastmeasurement = site_state.last_measurement if site_state.last_measurement is not None else current_utc
-        site_aggregated.child_count = int(len(self._site_structure.inverters))
+        # Child count = only active (and blank-status) inverters at site
+        site_aggregated.child_count = int(site_state.active_inverters)
         site_aggregated.active_optimizer_count = site_state.active_optimizers
         site_aggregated.serialnumber = f"Site_{site_id}"
         site_aggregated.panel_description = f"Site {site_id}"
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Created site aggregated %s child_count=%d (active inverters) active_optimizers=%d",
+                site_aggregated.panel_id, site_aggregated.child_count, site_aggregated.active_optimizer_count,
+            )
         return site_aggregated
 
     def _register_inverter_and_string_devices(
@@ -621,11 +635,12 @@ class MyCoordinator(DataUpdateCoordinator):
             string_voltage_count,
             string_last_measurement,
             string_active_optimizers,
+            string_optimizer_count,
         ) = self._aggregate_optimizers_in_string(string, ctx.data_dict, ctx.timetocheck)
 
         string_lifetime_energy = self._get_string_lifetime_energy(string, ctx)
-        string_status = (getattr(string, "status", "") or "").upper()
-        string_is_active = string_status == "ACTIVE"
+        string_status_raw = getattr(string, "status", "") or ""
+        string_is_active = is_status_active(string_status_raw)
 
         agg_data = StringAggData(
             current=string_current,
@@ -634,6 +649,7 @@ class MyCoordinator(DataUpdateCoordinator):
             voltage_count=string_voltage_count,
             last_measurement=string_last_measurement,
             active_optimizers=string_active_optimizers,
+            optimizer_count=string_optimizer_count,
             lifetime_energy=string_lifetime_energy,
         )
         string_entity_path = self._build_string_entity_path(string, str_suffix, str_idx, inv_idx_str, ctx)
@@ -642,21 +658,23 @@ class MyCoordinator(DataUpdateCoordinator):
 
         return (string_aggregated, string_is_active, agg_data)
 
-    def _accumulate_string_into_inverter(self, inv_state, string_aggregated, agg_data: StringAggData):
-        """Accumulate an active string's values into inverter totals.
+    def _accumulate_string_into_inverter(self, inv_state, string_aggregated, agg_data: StringAggData, string_is_active: bool):
+        """Accumulate a string's values into inverter totals (all strings included for power/current/voltage/lifetime).
         
         inv_state is a dict with current inverter accumulation values.
-        agg_data is the StringAggData from _process_single_string.
+        string_is_active: if True, this string counts toward active_strings (child_count).
         """
-        if agg_data.active_optimizers > 0:
+        if agg_data.optimizer_count > 0:
             inv_state["current"] += string_aggregated.current
-            inv_state["active_strings"] += 1
             inv_state["power"] += agg_data.power
             if agg_data.voltage_count > 0:
                 inv_state["voltage_sum"] += string_aggregated.voltage
                 inv_state["voltage_count"] += 1
+            inv_state["string_count"] += 1
+        if string_is_active:
+            inv_state["active_strings"] += 1
             inv_state["active_optimizers"] += agg_data.active_optimizers
-        
+        inv_state["lifetime_energy"] = round(inv_state["lifetime_energy"] + agg_data.lifetime_energy, 3)
         if inv_state["last_measurement"] is None or (
             agg_data.last_measurement and agg_data.last_measurement > inv_state["last_measurement"]
         ):
@@ -667,18 +685,17 @@ class MyCoordinator(DataUpdateCoordinator):
 
         Returns (inverter_current, inverter_power, inverter_voltage_sum, inverter_voltage_count,
                  inverter_last_measurement, inverter_active_optimizers, inverter_active_strings,
-                 inverter_lifetime_energy).
+                 inverter_string_count, inverter_lifetime_energy).
         
         inv_suffix is empty for first inverter at position, 'a', 'b', etc. for duplicates.
         ctx is an AggregationContext namedtuple with shared aggregation parameters.
         
-        Only includes values from strings with status='ACTIVE' in the inverter aggregation.
-        Inactive strings are still processed (to create their aggregated data) but their
-        values are not rolled up into the inverter totals.
+        Power, current, voltage, and lifetime include ALL strings; child_count uses active_strings only.
         """
         inv_state = {
             "current": 0.0, "power": 0.0, "voltage_sum": 0.0, "voltage_count": 0,
-            "last_measurement": None, "active_optimizers": 0, "active_strings": 0, "lifetime_energy": 0.0,
+            "last_measurement": None, "active_optimizers": 0, "active_strings": 0, "string_count": 0,
+            "lifetime_energy": 0.0,
         }
         inv_idx_str = f"{inv_idx}{inv_suffix}"
         
@@ -702,35 +719,23 @@ class MyCoordinator(DataUpdateCoordinator):
             string_aggregated, string_is_active, agg_data = self._process_single_string(
                 string, str_suffix, str_idx, inv_idx_str, ctx
             )
-            
-            if string_is_active:
-                inv_state["lifetime_energy"] = round(inv_state["lifetime_energy"] + agg_data.lifetime_energy, 3)
-                self._accumulate_string_into_inverter(inv_state, string_aggregated, agg_data)
-            else:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    string_status = (getattr(string, "status", "") or "").upper()
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers: Skipping inactive string %s (status=%s) from inverter aggregation",
-                        string.displayName, string_status or "(none)",
-                    )
-                if inv_state["last_measurement"] is None or (
-                    agg_data.last_measurement and agg_data.last_measurement > inv_state["last_measurement"]
-                ):
-                    inv_state["last_measurement"] = agg_data.last_measurement
+            self._accumulate_string_into_inverter(inv_state, string_aggregated, agg_data, string_is_active)
 
         return (
             inv_state["current"], inv_state["power"], inv_state["voltage_sum"], inv_state["voltage_count"],
             inv_state["last_measurement"], inv_state["active_optimizers"], inv_state["active_strings"],
-            inv_state["lifetime_energy"],
+            inv_state["string_count"], inv_state["lifetime_energy"],
         )
 
     def _merge_inverter_into_site_rollup(
-        self, site: SiteRollupState, inv_result: InverterRollupResult
+        self, site: SiteRollupState, inv_result: InverterRollupResult, inverter_is_active: bool
     ) -> SiteRollupState:
-        """Update site rollup state with one inverter's aggregated data. Returns new state."""
+        """Update site rollup state with one inverter's aggregated data (all inverters included).
+        inverter_is_active: if True, this inverter counts toward active_inverters (child_count).
+        """
         lifetime_energy = round(site.lifetime_energy + inv_result.aggregated.lifetime_energy, 3)
-        active_optimizers = site.active_optimizers + inv_result.active_optimizers
-        active_strings = site.active_strings + inv_result.active_strings
+        active_optimizers = site.active_optimizers + (inv_result.active_optimizers if inverter_is_active else 0)
+        active_strings = site.active_strings + (inv_result.active_strings if inverter_is_active else 0)
         last_measurement = site.last_measurement
         if last_measurement is None or (
             inv_result.last_measurement and inv_result.last_measurement > last_measurement
@@ -741,11 +746,12 @@ class MyCoordinator(DataUpdateCoordinator):
         power = site.power
         voltage_sum = site.voltage_sum
         voltage_count = site.voltage_count
-        active_inverters = site.active_inverters
-        if inv_result.active_strings > 0:
+        active_inverters = site.active_inverters + (1 if inverter_is_active else 0)
+        inverter_count = site.inverter_count
+        if inv_result.string_count > 0:
             current += inv_result.aggregated.current
-            active_inverters += 1
             power += inv_result.power
+            inverter_count += 1
             if inv_result.voltage_count > 0:
                 voltage_sum += inv_result.aggregated.voltage
                 voltage_count += 1
@@ -759,6 +765,7 @@ class MyCoordinator(DataUpdateCoordinator):
             active_optimizers=active_optimizers,
             active_strings=active_strings,
             active_inverters=active_inverters,
+            inverter_count=inverter_count,
             lifetime_energy=lifetime_energy,
         )
 
@@ -771,39 +778,27 @@ class MyCoordinator(DataUpdateCoordinator):
         (
             inverter_current, inverter_power, inverter_voltage_sum, inverter_voltage_count,
             inverter_last_measurement, inverter_active_optimizers, inverter_active_strings,
-            inverter_lifetime_energy,
+            inverter_string_count, inverter_lifetime_energy,
         ) = self._process_inverter_strings(inverter, inv_idx, inv_suffix, ctx)
 
         inv_data = InverterAggData(
             current=inverter_current, power=inverter_power, voltage_sum=inverter_voltage_sum,
             voltage_count=inverter_voltage_count, last_measurement=inverter_last_measurement,
             lifetime_energy=inverter_lifetime_energy, active_optimizers=inverter_active_optimizers,
-            active_strings=inverter_active_strings,
+            active_strings=inverter_active_strings, string_count=inverter_string_count,
         )
         inverter_aggregated = self._create_inverter_aggregated(inverter, inv_idx_str, inv_data, ctx)
         ctx.data_dict[inverter_aggregated.panel_id] = inverter_aggregated
 
-        inverter_status = (getattr(inverter, "status", "") or "").upper()
-        inverter_is_active = inverter_status == "ACTIVE"
+        inverter_status_raw = getattr(inverter, "status", "") or ""
+        inverter_is_active = is_status_active(inverter_status_raw)
         
-        if not inverter_is_active:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers: Skipping inactive inverter %s (status=%s) from site aggregation",
-                    inverter.displayName, inverter_status or "(none)",
-                )
-            if site.last_measurement is None or (
-                inverter_last_measurement and inverter_last_measurement > site.last_measurement
-            ):
-                site = site._replace(last_measurement=inverter_last_measurement)
-            return site
-
         inv_result = InverterRollupResult(
             aggregated=inverter_aggregated, power=inverter_power, active_strings=inverter_active_strings,
-            voltage_count=inverter_voltage_count, last_measurement=inverter_last_measurement,
-            active_optimizers=inverter_active_optimizers,
+            string_count=inverter_string_count, voltage_count=inverter_voltage_count,
+            last_measurement=inverter_last_measurement, active_optimizers=inverter_active_optimizers,
         )
-        return self._merge_inverter_into_site_rollup(site, inv_result)
+        return self._merge_inverter_into_site_rollup(site, inv_result, inverter_is_active)
 
     def _resolve_inverter_duplicates(self):
         """Resolve duplicate inverters and return suffix map."""
@@ -843,16 +838,15 @@ class MyCoordinator(DataUpdateCoordinator):
         (same position), active devices come first (sorted by serial), and subsequent
         duplicates get letter suffixes (a, b, c...).
         
-        Only includes values from devices with status='ACTIVE' in aggregation.
-        Inactive inverters are still processed (to create their aggregated data) but
-        their values are not rolled up into the site totals.
+        Power, current, voltage, and lifetime energy aggregate ALL devices (all statuses).
+        Child counts (optimizer count, string count, inverter count) count only active (blank or ACTIVE) devices.
         """
         lifetime_energy_lookup = self._build_lifetime_energy_lookup(lifetime_energy_data)
         site_id_str = str(site_id)
         site = SiteRollupState(
             current=0.0, power=0.0, voltage_sum=0.0, voltage_count=0,
             last_measurement=None, active_optimizers=0, active_strings=0,
-            active_inverters=0, lifetime_energy=0.0,
+            active_inverters=0, inverter_count=0, lifetime_energy=0.0,
         )
         
         inv_suffix_map = self._resolve_inverter_duplicates()
@@ -919,9 +913,9 @@ class MyCoordinator(DataUpdateCoordinator):
             return False
         measurement_age = (now_utc - latest_measurement) if isinstance(latest_measurement, datetime) else None
         desired_interval = (
-            timedelta(minutes=15)
+            LIGHT_CHECK_DESIRED_INTERVAL_STALE
             if (measurement_age is None or measurement_age > stale_delta)
-            else timedelta(minutes=2)
+            else LIGHT_CHECK_DESIRED_INTERVAL_FRESH
         )
         if self._last_light_check_utc is None:
             return True
@@ -1034,8 +1028,8 @@ class MyCoordinator(DataUpdateCoordinator):
         """
         When we did not do a full refresh, still refresh optimizer temperatures if the API
         supports it (e.g. SolarEdge One). get_optimizer_temperatures_cached() only hits the
-        API when its 15-minute cache is expired, so this keeps temperature updated about
-        every 15 minutes even when power/voltage etc. are not updating.
+        API when its temperature cache (TEMPERATURE_CACHE_TTL) is expired, so this keeps
+        temperature updated periodically even when power/voltage etc. are not updating.
         """
         get_temps = getattr(self.my_api, "get_optimizer_temperatures_cached", None)
         if get_temps is None or not data_dict:
@@ -1095,17 +1089,21 @@ class MyCoordinator(DataUpdateCoordinator):
         if not _LOGGER.isEnabledFor(logging.DEBUG):
             return
         measurement_age = (now_utc - latest_measurement) if isinstance(latest_measurement, datetime) else None
+        is_stale = measurement_age is None or measurement_age > stale_delta
         desired_interval = (
-            timedelta(minutes=15)
-            if (measurement_age is None or measurement_age > stale_delta)
-            else timedelta(minutes=2)
+            LIGHT_CHECK_DESIRED_INTERVAL_STALE
+            if is_stale
+            else LIGHT_CHECK_DESIRED_INTERVAL_FRESH
         )
+        interval_kind = "stale" if is_stale else "fresh"
         _LOGGER.debug(
-            "SolarEdge Optimizers coordinator: update cycle do_full_refresh=%s should_light_check=%s measurement_age=%s desired_interval=%s latest_measurement=%s",
+            "SolarEdge Optimizers coordinator: update cycle do_full_refresh=%s should_light_check=%s "
+            "measurement_age=%s desired_interval=%s interval_kind=%s latest_measurement=%s",
             do_full_refresh,
             should_light_check,
             measurement_age,
             desired_interval,
+            interval_kind,
             latest_measurement,
         )
 
