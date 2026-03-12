@@ -124,6 +124,15 @@ async def validate_input(
     except (ValueError, KeyError, TypeError) as e:
         _LOGGER.warning("Data parsing error during login check: %s", e)
         raise CannotConnect from e
+    finally:
+        # Always close API to release any sessions/connections opened during check_login
+        try:
+            await hass.async_add_executor_job(api.close)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers config: Closed API after validation (site %s)", siteid)
+        except Exception as e:  # pylint: disable=broad-except
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers config: Error closing API after validation: %s", e)
 
     if code == 200:
         return {"title": translated_title % {"siteid": siteid}}
@@ -179,8 +188,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors["base"] = "cannot_connect"
         except InvalidAuth:
             errors["base"] = "invalid_auth"
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception("Unexpected exception")
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected exception: %s", e)
             errors["base"] = "unknown"
         else:
             if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -244,8 +253,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await validate_input(self.hass, data, title_template)
         except InvalidAuth:
             errors["base"] = "invalid_auth"
-        except Exception:  # pylint: disable=broad-except
-            _LOGGER.exception("Unexpected exception during reauth")
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.exception("Unexpected exception during reauth: %s", e)
             errors["base"] = "unknown"
 
         if errors:
@@ -270,12 +279,27 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_remove_entry(
         self, hass: HomeAssistant, entry: ConfigEntry
     ) -> None:
-        """Clean up device and entity registry when the integration is removed."""
+        """Clean up when the integration is removed: close API (release file descriptors), then remove entities/devices."""
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers: async_remove_entry for entry %s",
                 entry.entry_id,
             )
+        # Close API so all sessions/connection pools are released (in case unload did not run or did not close)
+        coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        if coordinator is not None and hasattr(coordinator, "my_api"):
+            try:
+                await hass.async_add_executor_job(coordinator.my_api.close)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers: Closed API on config entry removal for entry %s",
+                        entry.entry_id,
+                    )
+            except Exception as e:  # pylint: disable=broad-except
+                _LOGGER.warning(
+                    "SolarEdge Optimizers: Error closing API on removal (file descriptors may leak): %s",
+                    e,
+                )
         remove_entities_and_devices_for_entry(hass, entry)
 
     @staticmethod

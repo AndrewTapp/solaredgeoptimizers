@@ -68,14 +68,14 @@ from .const import (
     SENSOR_TYPE_AZIMUTH,
     SENSOR_TYPE_TILT,
     CHECK_TIME_DELTA,
+    is_status_active,
     parse_string_display_name_path,
     parse_optimizer_display_name_to_indices,
     resolve_duplicate_indices,
+    status_display_value,
+    status_icon,
     SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE,
     SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE,
-    ICON_STATUS_ACTIVE,
-    ICON_STATUS_INACTIVE,
-    ICON_STATUS_UNKNOWN,
     ICON_AZIMUTH,
     ICON_TILT,
 )
@@ -346,8 +346,8 @@ def _build_individual_optimizer_sensors(
 ):
     """Build list of SolarEdgeOptimizersSensor entities for all optimizers that have info.
     
-    For inactive optimizers (status != 'ACTIVE'), certain sensors are excluded as they
-    are not meaningful: azimuth, current, optimizer voltage, power, temperature, tilt, voltage.
+    For inactive optimizers (not active: status not blank and not 'ACTIVE'), certain sensors
+    are excluded as they are not meaningful: azimuth, current, optimizer voltage, power, temperature, tilt, voltage.
     
     Returns (sensors_to_add, active_count, inactive_count, skipped_sensor_count).
     """
@@ -363,9 +363,9 @@ def _build_individual_optimizer_sensors(
         if skip or info is None:
             continue
         
-        # Check if optimizer is active (status from layout API)
-        optimizer_status = (getattr(optimizer, "status", "") or "").upper()
-        is_active = optimizer_status == "ACTIVE"
+        # Check if optimizer is active (blank or Active from layout API)
+        optimizer_status_raw = getattr(optimizer, "status", "") or ""
+        is_active = is_status_active(optimizer_status_raw)
         
         if is_active:
             active_optimizer_count += 1
@@ -379,7 +379,7 @@ def _build_individual_optimizer_sensors(
                 getattr(info, "serialnumber", ""),
                 getattr(info, "model", ""),
                 getattr(info, "panel_description", "") or "(none)",
-                optimizer_status or "(none)",
+                optimizer_status_raw or "(none)",
                 getattr(info, "azimuth", None),
                 getattr(info, "tilt", None),
                 suffix or "(none)",
@@ -561,7 +561,7 @@ def _build_string_sensors_for_inverter(
             string_entity_path = (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
         
         string_aggregated = _create_string_aggregated_data(string, string_entity_path)
-        string_is_active = string_aggregated.status.upper() == "ACTIVE"
+        string_is_active = is_status_active(string_aggregated.status)
         
         if string_is_active:
             active_count += 1
@@ -633,7 +633,7 @@ def _build_all_inverter_sensors(
         inv_idx_str = f"{inv_idx}{inv_suffix}"
         
         inverter_aggregated = _create_inverter_aggregated_data(inverter, inv_idx_str, include_site_id, site_id)
-        inverter_is_active = inverter_aggregated.status.upper() == "ACTIVE"
+        inverter_is_active = is_status_active(inverter_aggregated.status)
         
         if inverter_is_active:
             active_count += 1
@@ -686,8 +686,8 @@ def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, 
     (same position), active devices come first (sorted by serial), and subsequent
     duplicates get letter suffixes (a, b, c...).
     
-    For inactive strings/inverters (status != 'ACTIVE'), certain sensors are excluded
-    as they are not meaningful: current (average), power, voltage (average).
+    For inactive strings/inverters (not active: status not blank and not 'ACTIVE'), certain
+    sensors are excluded as they are not meaningful: current (average), power, voltage (average).
     
     Returns (sensors, active_strings, inactive_strings, active_inverters, inactive_inverters, skipped_count).
     """
@@ -1216,7 +1216,8 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         elif self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE):
             new_value = self._normalize_aggregated_live_value(new_value, 2)
         elif self._sensor_type is SENSOR_TYPE_STATUS:
-            new_value = str(new_value) if new_value else ""
+            raw = str(new_value).strip() if new_value else ""
+            new_value = status_display_value(raw)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
                     "SolarEdge Optimizers sensor: %s aggregated status updated to '%s'",
@@ -1263,15 +1264,10 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def icon(self) -> str | None:
-        """Return dynamic icon for status sensors based on current value."""
+        """Return dynamic icon for status sensors: blank/Active→active, Inactive→inactive, other→unknown."""
         if self._sensor_type is not SENSOR_TYPE_STATUS:
             return None
-        status = (self._attr_native_value or "").upper()
-        if status == "ACTIVE":
-            return ICON_STATUS_ACTIVE
-        if status == "INACTIVE":
-            return ICON_STATUS_INACTIVE
-        return ICON_STATUS_UNKNOWN if status else None
+        return status_icon(self._attr_native_value)
 
 
 class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
@@ -1465,12 +1461,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             return ICON_TILT
         if self._sensor_type is not SENSOR_TYPE_STATUS:
             return None
-        status = (self._attr_native_value or "").upper()
-        if status == "ACTIVE":
-            return ICON_STATUS_ACTIVE
-        if status == "INACTIVE":
-            return ICON_STATUS_INACTIVE
-        return ICON_STATUS_UNKNOWN if status else None
+        return status_icon(self._attr_native_value)
 
     def _timetocheck_and_ts(self, item):
         """Return (timetocheck, ts) with ts timezone-aware. May mutate item.lastmeasurement."""
@@ -1555,9 +1546,10 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         self._attr_native_value = self._round_live_value(actual_value)
 
     def _set_status_value_from_item(self, item) -> None:
-        """Set _attr_native_value from item.status."""
-        actual_value = getattr(item, "status", None)
-        self._attr_native_value = str(actual_value) if actual_value else ""
+        """Set _attr_native_value from item.status (display: blank, Active, Inactive, or raw)."""
+        raw = getattr(item, "status", None)
+        raw_str = str(raw).strip() if raw else ""
+        self._attr_native_value = status_display_value(raw_str)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers sensor: %s status updated to '%s'",
