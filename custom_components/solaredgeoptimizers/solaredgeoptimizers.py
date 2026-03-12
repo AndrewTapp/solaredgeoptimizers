@@ -62,34 +62,19 @@ from requests import Session
 from datetime import datetime, timedelta
 from jsonfinder import jsonfinder
 
-from .const import API_TIMEOUT_SHORT, API_TIMEOUT_LONG, MAX_PARALLEL_WORKERS
+from .const import (
+    API_TIMEOUT_SHORT,
+    API_TIMEOUT_LONG,
+    MAX_PARALLEL_WORKERS,
+    USER_AGENT,
+    PANELS_CACHE_TTL_LEGACY,
+    LIFETIME_ENERGY_CACHE_TTL,
+    MEASUREMENT_KEYS,
+)
+from .exceptions import SolarEdgeAPIError
 
 # Added logger setup to replace print statements with proper logging
 _LOGGER = logging.getLogger(__name__)
-
-# SolarEdge API returns measurement keys in the user's locale (e.g. "Power [W]" in EN, "Leistung [W]" in DE).
-# Try all known locale variants so power/current/voltage work regardless of HA language.
-MEASUREMENT_KEYS = {
-    "power": [
-        "Power [W]", "Leistung [W]", "Puissance [W]", "Potencia [W]", "Potenza [W]",
-        "Vermogen [W]", "Effekt [W]", "Moc [W]", "Výkon [W]", "Teljesítmény [W]",
-        "Ισχύς [W]", "Güç [W]", "Мощность [W]", "功率 [W]", "電力 [W]", "Teho [W]",
-    ],
-    "current": [
-        "Current [A]", "Strom [A]", "Courant [A]", "Corriente [A]", "Corrente [A]",
-        "Stroom [A]", "Strøm [A]", "Ström [A]", "Prąd [A]", "Proud [A]", "Áram [A]",
-        "Ρεύμα [A]", "Akım [A]", "Ток [A]", "电流 [A]", "電流 [A]", "Virta [A]",
-    ],
-    "voltage": [
-        "Voltage [V]", "Spannung [V]", "Tension [V]", "Tensión [V]", "Tensione [V]",
-        "Spanning [V]", "Spänning [V]", "Spænding [V]", "Spenning [V]", "Napięcie [V]",
-        "Napětí [V]", "Feszültség [V]", "Τάση [V]", "Gerilim [V]", "Напряжение [V]",
-        "电压 [V]", "電圧 [V]", "Jännite [V]",
-    ],
-    "optimizer_voltage": [
-        "Optimizer Voltage [V]", "Optimierer-Spannung [V]", "Optimizer-Spannung [V]",
-    ],
-}
 
 
 def _normalize_measurement_key(key):
@@ -178,7 +163,7 @@ def _parse_system_data_json(json_object, item_id, timezone):
     except Exception as e:  # pylint: disable=broad-except
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers (legacy): Response data: %s", json_object)
-        raise Exception("Error while processing data") from e
+        raise SolarEdgeAPIError("Error while processing data") from e
 
 
 def _apply_lifetime_energy_to_optimizer_info(info, optimizer_id, lifetimeenergy):
@@ -202,11 +187,11 @@ def _raise_for_system_data_http_error(response, item_id):
         )
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("Server error response body for optimizer %s: %s", item_id, response.text)
-        raise Exception(f"Temporary server error from SolarEdge (HTTP {response.status_code})")
+        raise SolarEdgeAPIError(f"Temporary server error from SolarEdge (HTTP {response.status_code})")
     _LOGGER.error("Error sending request to SolarEdge. Status code: %s", response.status_code)
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug("Error response body for optimizer %s: %s", item_id, response.text)
-    raise Exception(f"Problem sending request to SolarEdge (HTTP {response.status_code})")
+    raise SolarEdgeAPIError(f"Problem sending request to SolarEdge (HTTP {response.status_code})")
 
 
 def _safe_float(value, default=0.0):
@@ -320,14 +305,18 @@ class solaredgeoptimizers:
         }
         # Thread-local storage for session reuse (one session per thread)
         self._thread_local = threading.local()
-        # Cache for requestListOfAllPanels() result (TTL: 1 hour)
+        # Track all sessions so we can close them on unload (thread pool may create many)
+        self._all_sessions: set = set()
+        self._sessions_lock = threading.Lock()
+        self._closed = False
+        # Cache for requestListOfAllPanels() result
         self._panels_cache = None
         self._panels_cache_time = None
-        self._panels_cache_ttl = timedelta(hours=1)
-        # Cache for lifetime energy data (TTL: 1 hour, changes slowly)
+        self._panels_cache_ttl = PANELS_CACHE_TTL_LEGACY
+        # Cache for lifetime energy data (changes slowly)
         self._lifetime_energy_cache = None
         self._lifetime_energy_cache_time = None
-        self._lifetime_energy_cache_ttl = timedelta(hours=1)
+        self._lifetime_energy_cache_ttl = LIFETIME_ENERGY_CACHE_TTL
 
     def _locale_from_language(self):
         """Return SolarEdge locale string for the configured language."""
@@ -348,7 +337,10 @@ class solaredgeoptimizers:
             or (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl
         ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Optimizers (legacy): get_lifetime_energy_cached cache miss, fetching")
+                _LOGGER.debug(
+                    "SolarEdge Optimizers (legacy): Lifetime energy cache miss (TTL=%s), fetching",
+                    self._lifetime_energy_cache_ttl,
+                )
             try:
                 lifetime_energy_response = self.getLifeTimeEnergy()
                 if lifetime_energy_response.startswith("ERROR001"):
@@ -383,8 +375,9 @@ class solaredgeoptimizers:
                 cache = self._lifetime_energy_cache or {}
                 age = now - self._lifetime_energy_cache_time if self._lifetime_energy_cache_time else None
                 _LOGGER.debug(
-                    "SolarEdge Optimizers (legacy): get_lifetime_energy_cached using cache (age=%s, %d entries)",
+                    "SolarEdge Optimizers (legacy): Using cached lifetime energy (age=%s, TTL=%s, %d entries)",
                     age,
+                    self._lifetime_energy_cache_ttl,
                     len(cache) if isinstance(cache, dict) else 0,
                 )
         return self._lifetime_energy_cache or {}
@@ -400,12 +393,14 @@ class solaredgeoptimizers:
 
         kwargs = {}
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
-        kwargs["headers"] = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
-                             }
+        kwargs["headers"] = {"user-agent": USER_AGENT}
         # Add timeout to prevent hanging and log request attempt
         kwargs["timeout"] = API_TIMEOUT_SHORT
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers: Making login check request with 30s timeout")
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Making login check request (timeout=%ss)",
+                API_TIMEOUT_SHORT,
+            )
 
         try:
             # Use context manager to ensure response is properly closed
@@ -416,7 +411,11 @@ class solaredgeoptimizers:
                     _LOGGER.debug("SolarEdge Optimizers: Login check response body length: %s bytes", len(r.text))
                 return r.status_code
         except requests.exceptions.Timeout as e:
-            _LOGGER.error("SolarEdge Optimizers: Login check timed out after 30s: %s", e)
+            _LOGGER.error(
+                "SolarEdge Optimizers: Login check timed out (timeout=%ss): %s",
+                API_TIMEOUT_SHORT,
+                e,
+            )
             raise
         except requests.exceptions.ConnectionError as e:
             _LOGGER.error("SolarEdge Optimizers: Login check connection error: %s", e)
@@ -449,7 +448,11 @@ class solaredgeoptimizers:
     def _log_layout_request_error(self, e: Exception) -> None:
         """Log logical layout request error by exception type."""
         if isinstance(e, requests.exceptions.Timeout):
-            _LOGGER.error("SolarEdge Optimizers: Logical layout request timed out after 60s: %s", e)
+            _LOGGER.error(
+                "SolarEdge Optimizers: Logical layout request timed out (timeout=%ss): %s",
+                API_TIMEOUT_LONG,
+                e,
+            )
         elif isinstance(e, requests.exceptions.ConnectionError):
             _LOGGER.error("SolarEdge Optimizers: Logical layout connection error: %s", e)
         elif isinstance(e, requests.exceptions.RequestException):
@@ -463,7 +466,10 @@ class solaredgeoptimizers:
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Logical layout URL: %s", url)
-            _LOGGER.debug("SolarEdge Optimizers: Making logical layout request with 60s timeout")
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Making logical layout request (timeout=%ss)",
+                API_TIMEOUT_LONG,
+            )
         kwargs = {
             "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
             "timeout": API_TIMEOUT_LONG,
@@ -500,7 +506,10 @@ class solaredgeoptimizers:
             or (now - self._panels_cache_time) > self._panels_cache_ttl
         ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Optimizers: Cache miss, fetching fresh layout data")
+                _LOGGER.debug(
+                    "SolarEdge Optimizers (legacy): Panels cache miss (TTL=%s), fetching fresh layout data",
+                    self._panels_cache_ttl,
+                )
             try:
                 raw_layout = self.requestLogicalLayout()
                 return self._parse_and_cache_layout(raw_layout, now)
@@ -517,8 +526,9 @@ class solaredgeoptimizers:
                 raise
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers: Using cached panels data (age: %s)",
+                "SolarEdge Optimizers (legacy): Using cached panels (age=%s, TTL=%s)",
                 now - self._panels_cache_time,
+                self._panels_cache_ttl,
             )
         return self._panels_cache
 
@@ -526,7 +536,9 @@ class solaredgeoptimizers:
         # Fixed endpoint URL - changed from monitoringpublic.solaredge.com/publicSystemData to monitoring.solaredge.com/systemData,
         # changed isPublic=true to false, added locale parameter, and added v parameter with timestamp
         locale = self._locale_from_language()
-        url = f"https://monitoring.solaredge.com/solaredge-web/p/systemData?reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale={locale}&v={round(time.time() * 1000)}"
+        base = "https://monitoring.solaredge.com/solaredge-web/p/systemData"
+        params = f"reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale={locale}&v={round(time.time() * 1000)}"
+        url = f"{base}?{params}"
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("Endpoint (single optimizer systemData): %s", url)
@@ -645,38 +657,50 @@ class solaredgeoptimizers:
             endtime = int(endtime.timestamp() * 1000)
 
         # Use f-string instead of .format() for better performance
-        url = f'https://monitoring.solaredge.com/solaredge-web/p/chartData?reporterId={itemId}&fieldId={self.siteid}&reporterType=&startDate={starttime:d}&endDate={endtime:d}&uom=W&parameterName={parameter}'
+        base = "https://monitoring.solaredge.com/solaredge-web/p/chartData"
+        q = f"reporterId={itemId}&fieldId={self.siteid}&reporterType=&startDate={starttime:d}&endDate={endtime:d}&uom=W&parameterName={parameter}"
+        url = f"{base}?{q}"
 
         r = self._doRequestWithCooldown("GET", url)
         if r.startswith("ERROR001"):
-            raise Exception(f"Error while doing request: {r}")
+            raise SolarEdgeAPIError(f"Error while doing request: {r}")
 
         json_object = self.decodeResult(r)
         try:
             # Note: the timestamp provided by SolarEdge is not a pure POSIX timestamp, but in fact contains a timezone offset.
-            return {datetime.utcfromtimestamp(pair['date']/1000).astimezone(pytz.utc): pair['value'] for pair in json_object['dateValuePairs']}
+            return {
+                datetime.utcfromtimestamp(pair['date'] / 1000).astimezone(pytz.utc): pair['value']
+                for pair in json_object['dateValuePairs']
+            }
         except Exception as e:  # pylint: disable=broad-except
-            raise Exception("Error while processing data") from e
+            raise SolarEdgeAPIError("Error while processing data") from e
 
     def requestPanelHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
-        assert parameter in ("Power", "Current", "Voltage", "Energy", "PowerBox Voltage")
+        allowed = ("Power", "Current", "Voltage", "Energy", "PowerBox Voltage")
+        if parameter not in allowed:
+            raise ValueError(f"parameter must be one of {allowed}, got {parameter!r}")
         return self.requestItemHistory(itemId, starttime=starttime, endtime=endtime, parameter=parameter)
 
     def requestStringHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
-        assert parameter in ("Energy", "Power")
+        if parameter not in ("Energy", "Power"):
+            raise ValueError("parameter must be 'Energy' or 'Power'")
         return self.requestItemHistory(itemId, starttime=starttime, endtime=endtime, parameter=parameter)
 
     def requestInverterHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
         # https://monitoring.solaredge.com/solaredge-web/p/chartParamsList?fieldId={}reporterId={}&format=form
-        assert parameter in ("AC Energy",
-                             "AC Frequency", "AC Frequency P2", "AC Frequency P3",
-                             "AC Voltage", "AC Voltage P2", "AC Voltage P3",
-                             "AC Current", "AC Current P2", "AC Current P3",
-                             "Power", "DC Voltage", "Purchased back feed AC Energy", "Total Reactive Power", "Power Factor")
+        allowed = (
+            "AC Energy", "AC Frequency", "AC Frequency P2", "AC Frequency P3",
+            "AC Voltage", "AC Voltage P2", "AC Voltage P3",
+            "AC Current", "AC Current P2", "AC Current P3",
+            "Power", "DC Voltage", "Purchased back feed AC Energy", "Total Reactive Power", "Power Factor",
+        )
+        if parameter not in allowed:
+            raise ValueError(f"parameter must be one of {allowed}, got {parameter!r}")
         return self.requestItemHistory(itemId, starttime=starttime, endtime=endtime, parameter=parameter)
 
     def requestHistoricalData(self, starttime=None, endtime=None, type="optimizer", parameter="Power"):
-        assert type in ("optimizer", "inverter", "string")
+        if type not in ("optimizer", "inverter", "string"):
+            raise ValueError("type must be 'optimizer', 'inverter', or 'string'")
 
         solarsite = self.requestListOfAllPanels()
 
@@ -701,7 +725,7 @@ class solaredgeoptimizers:
         Same as _doRequest, but waiting before each call, and in between retries in case it fails
         """
         # Use f-string instead of % formatting for better performance
-        e = Exception(f"Could not perform request within {n_retries} retries")
+        last_error = SolarEdgeAPIError(f"Could not perform request within {n_retries} retries")
         for i in range(n_retries):
             try:
                 time.sleep(wait_sec)
@@ -710,27 +734,33 @@ class solaredgeoptimizers:
             except ConnectionError as e:
                 if isinstance(e.args[0], Exception) and len(e.args[0].args) > 1 and \
                         isinstance(e.args[0].args[1], ConnectionResetError) and e.args[0].args[1].errno == 10054:
+                    last_error = e
                     time.sleep(cooldown_sec)
                     continue
-                raise e
-        raise e
+                raise
+        raise last_error
 
     def _get_session(self):
         """Get or create a thread-local session for reuse.
         
         Each thread gets its own session to avoid conflicts when using ThreadPoolExecutor.
         Sessions are reused within the same thread to reduce login overhead.
+        All sessions are tracked so close() can close them and avoid leaking file descriptors.
         """
+        if self._closed:
+            raise RuntimeError("SolarEdge legacy API client is closed")
         if not hasattr(self._thread_local, 'session') or self._thread_local.session is None:
             # Create new session for this thread
-            self._thread_local.session = Session()
+            session = Session()
+            with self._sessions_lock:
+                self._all_sessions.add(session)
+            self._thread_local.session = session
             # Perform initial login setup
             # Use f-string instead of .format() for better performance
             # Use context manager to ensure response is closed
             with self._thread_local.session.head(
                 f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy",
-                headers={"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
-                         }
+                headers={"user-agent": USER_AGENT},
             ) as r:
                 pass  # Response automatically closed by context manager
             url = "https://monitoring.solaredge.com/solaredge-web/p/login"
@@ -758,7 +788,7 @@ class solaredgeoptimizers:
             "sec-fetch-dest": "empty",
             "sec-fetch-mode": "cors",
             "sec-fetch-site": "same-origin",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36",
+            "user-agent": USER_AGENT,
             "x-csrf-token": csrf_token,
             "x-kl-ajax-request": "Ajax_Request",
             "x-requested-with": "XMLHttpRequest",
@@ -803,19 +833,27 @@ class solaredgeoptimizers:
         return self._doRequest("POST", url)
 
     def close(self):
-        """Close all thread-local sessions to prevent file descriptor leaks.
+        """Close all sessions (all threads) to prevent file descriptor leaks.
         
         This should be called when the API client is no longer needed, e.g., during integration unload.
+        ThreadPoolExecutor may have created sessions in multiple threads; we track and close all.
+        Session.close() releases the connection pool and all underlying file descriptors.
+        Idempotent; safe to call multiple times.
         """
-        if hasattr(self._thread_local, 'session') and self._thread_local.session is not None:
+        self._closed = True
+        with self._sessions_lock:
+            sessions_to_close = set(self._all_sessions)
+            self._all_sessions.clear()
+        for session in sessions_to_close:
             try:
-                self._thread_local.session.close()
+                session.close()
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("Closed thread-local session")
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Closed session")
             except Exception as e:  # pylint: disable=broad-except
-                _LOGGER.warning("Error closing thread-local session: %s", e)
-            finally:
-                self._thread_local.session = None
+                _LOGGER.warning("SolarEdge Optimizers (legacy): Error closing session: %s", e)
+        # Clear current thread's session reference so _get_session would not reuse a closed session
+        if hasattr(self._thread_local, "session"):
+            self._thread_local.session = None
 
     def getAlerts(self, only_open=False):
         # Note: this might require FULL_ACCESS rights in the SE portal, as opposed to DASHBOARD_AND_LAYOUT
