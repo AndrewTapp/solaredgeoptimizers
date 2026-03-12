@@ -41,16 +41,16 @@ The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitorin
 | **Re-authentication** | When the API returns 401 (invalid or expired credentials), the integration raises `ConfigEntryAuthFailed`; Home Assistant shows a re-auth form (username, password). Only credentials are updated; options (entity ID prefix, Include Site ID in Entity ID, Use SolarEdge One) are preserved. Re-auth step and abort messages are translated. |
 | **Options (reconfigure)** | Entity ID prefix, Include Site ID in Entity ID, and Use SolarEdge One can be changed via the integration’s Configure (options flow) without removing the entry. The form shows Entity ID prefix (description shows current prefix; leave empty to remove it), Include Site ID in Entity ID, and Use SolarEdge One. Saving reloads the integration. Documented: changing prefix or Include Site ID can change entity IDs and unique_ids, so history/statistics can be lost. |
 | **Cloud polling** | Uses SolarEdge’s cloud API; no local hardware discovery. |
-| **Adaptive polling** | Lightweight checks every ~2–15 minutes; full refresh when new data is detected, on first boot, or **every 30 minutes when data is from legacy** (re-try One so the integration can switch back). When using **SolarEdge One:** up to `LIGHT_CHECK_BATCH_SIZE` (5) optimizers chosen at random, one batch API call (`requestSystemDataBatch`). When using **legacy API:** one representative optimizer. The integration tries One first; if One has no valid measurements or fails, it uses legacy. |
-| **Parallel API calls** | Optimizer data fetched in parallel for full refresh. |
+| **Adaptive polling** | Coordinator runs every **5 minutes** (`UPDATE_DELAY`). Lightweight checks: when data is **fresh**, desired interval about **5 minutes** (`LIGHT_CHECK_DESIRED_INTERVAL_FRESH`); when **stale or missing**, about **30 minutes** (`LIGHT_CHECK_DESIRED_INTERVAL_STALE`). Full refresh when new data is detected, on first boot, or **every 30 minutes when data is from legacy** (re-try One). A full refresh is not triggered again within **5 minutes** of the last one (`LIGHT_CHECK_MIN_INTERVAL`). When using **SolarEdge One:** up to `LIGHT_CHECK_BATCH_SIZE` (5) optimizers chosen at random, one batch API call (`requestSystemDataBatch`). When using **legacy API:** one representative optimizer. The integration tries One first; if One has no valid measurements or fails, it uses legacy. |
+| **Optimizer live data (full refresh)** | **SolarEdge One:** one batch POST (all serials). **Legacy:** parallel per-optimizer requests. |
 | **Sensor setup optimization** | After the coordinator’s first refresh, the sensor platform uses `coordinator.data` for optimizer info when present and only calls the API for optimizers missing from that data, avoiding duplicate fetches and speeding setup. |
-| **Caching** | Logical layout (1 h) and lifetime energy (1 h) cached to reduce API load. |
+| **Caching** | Logical layout: **2 h** when using SolarEdge One (`PANELS_CACHE_TTL_ONE`), **1 h** when using legacy (`PANELS_CACHE_TTL_LEGACY`). Lifetime energy: **1 h** (`LIFETIME_ENERGY_CACHE_TTL`). Optimizer temperatures (One only): **30 min** (`TEMPERATURE_CACHE_TTL`). |
 | **Multi-language** | Config flow (including re-auth step and abort messages) and entity names translated; API locale follows HA language. |
 | **Stale handling** | Live values (V, I, P) zeroed when last measurement is older than threshold: **1 hour** when data is from One API, **2 hours** when from Legacy API. The **Obtained from** sensor on the site device shows "One API" or "Legacy API". |
-| **Reliability** | Temporary server/network errors (5xx, DNS) handled with cached data. API sessions and connections are closed on remove/reload (OAuth session in SolarEdge One is used as a context manager and closed after login; legacy and dual API clients expose `close()` called on unload). **SolarEdge One** optimizer data requests use `API_TIMEOUT_LONG` (60s) timeout and one automatic retry on read/connect timeout to reduce failures when the portal is slow. API requests use configurable timeouts (`API_TIMEOUT_SHORT` = 30s for quick requests, `API_TIMEOUT_LONG` = 60s for longer operations). |
-| **Removal cleanup** | When the integration is deleted from **Settings → Integrations**, config flow’s `async_remove_entry` calls the shared helper `remove_entities_and_devices_for_entry` (defined in `__init__.py`), which removes all associated entities and devices from the registries. The same helper is used on unload. No leftover registry entries remain. |
+| **Reliability** | Temporary server/network errors (5xx, DNS) handled with cached data. **Session/connection cleanup:** On remove/reload, all API sessions and connections are closed. **SolarEdge One** uses no persistent session (each request uses `requests.get`/`requests.post` with context managers; OAuth login uses `with Session() as session`); `close()` clears tokens and marks the client closed. **Legacy** uses thread-local sessions; every session created (including those in the thread pool) is tracked and closed on unload, avoiding file descriptor leaks. Dual API `close()` is called on unload and closes both backends. **SolarEdge One** optimizer data requests use `API_TIMEOUT_LONG` (60s) timeout and one automatic retry on read/connect timeout. API requests use configurable timeouts (`API_TIMEOUT_SHORT` = 30s, `API_TIMEOUT_LONG` = 60s). |
+| **Removal cleanup** | When the integration is deleted from **Settings → Integrations**, config flow’s `async_remove_entry` closes the API client (releasing file descriptors) if the coordinator is still in `hass.data`, then calls the shared helper `remove_entities_and_devices_for_entry` (defined in `__init__.py`), which removes all associated entities and devices from the registries. The same helper is used on unload. No leftover registry entries remain. |
 | **Hardware replacement** | Optimizer, string, and inverter devices and entities are identified by **logical position** (e.g. inverter index, string index, optimizer index), not by serial number. When an optimizer or inverter is replaced (e.g. after a hardware failure), the same device and sensors continue to show the new unit’s data after the next refresh; no duplicate entities. Data is keyed by position so sensor lookup finds the unit currently at that position. If duplicates already exist from an earlier swap, remove the integration and add it again to clean up. |
-| **Duplicate name handling** | When the API returns multiple inverters, strings, or optimizers with the same name (e.g. after hardware replacement), the integration resolves duplicates automatically: active items come first (sorted by serial number for inverters/optimizers, by position for strings), then other statuses. The first active item keeps the original name; subsequent duplicates get alphabetical suffixes (e.g. "Inverter 1a", "String 1.0a", "Optimizer 1.0.1a"). |
+| **Duplicate name handling** | When the API returns multiple inverters, strings, or optimizers with the same name (e.g. after hardware replacement), the integration resolves duplicates automatically: active (including blank status) items come first (sorted by serial number for inverters/optimizers, by position for strings), then other statuses. The first active item keeps the original name; subsequent duplicates get alphabetical suffixes (e.g. "Inverter 1a", "String 1.0a", "Optimizer 1.0.1a"). |
 
 ### Requirements
 
@@ -88,8 +88,8 @@ flowchart TB
     API -->|HTTPS| GW
     INIT -->|Create API + Coordinator| COORD
     COORD -->|Poll data| API
-    API -->|Layout, systemData, energy| GW
-    API -->|systemData per optimizer| WEB
+    API -->|Layout, optimizer batch (One), energy| GW
+    API -->|systemData per optimizer (legacy)| WEB
     COORD -->|Data dict| SENSOR
     SENSOR -->|Entities| U
 ```
@@ -98,11 +98,11 @@ flowchart TB
 
 | Component | Role |
 |-----------|------|
-| **Config flow** | Collects Site ID, username, password, optional Entity ID prefix, optional Include Site ID in Entity ID; validates via dual API `check_login()` (succeeds if either One or legacy returns 200); creates config entry with translated title. On setup, migrates existing entries to ensure `use_solaredge_one` is set (default True) if missing. On removal, `async_remove_entry` calls the shared helper `remove_entities_and_devices_for_entry` to clear entities and devices for that config entry. |
+| **Config flow** | Collects Site ID, username, password, optional Entity ID prefix, optional Include Site ID in Entity ID; validates via dual API `check_login()` (succeeds if either One or legacy returns 200); creates config entry with translated title. On setup, migrates existing entries to ensure `use_solaredge_one` is set (default True) if missing. On removal, `async_remove_entry` closes the API client (if present) then calls the shared helper `remove_entities_and_devices_for_entry` to clear entities and devices for that config entry. |
 | **`__init__.py`** | Runs migration to ensure `use_solaredge_one` exists in data/options (default True); sets up dual API client (`SolarEdgeDualAPI` from `api_dual.py`, with HA timezone, language, and `use_solaredge_one`), runs login check, creates coordinator, runs first refresh, forwards to sensor platform. Defines `remove_entities_and_devices_for_entry(hass, entry)`, used by both unload and config flow for registry cleanup. |
-| **Coordinator** | Runs every `UPDATE_DELAY` (2 min); implements adaptive polling (light check vs full refresh); when data is from legacy, forces full refresh every 30 min (`REVERT_TO_ONE_RETRY_INTERVAL`) to re-try One; when not doing a full refresh, still refreshes optimizer temperatures (SolarEdge One) via `_refresh_temperature_when_no_full_refresh()` so temperature stays updated ~every 15 min; builds data dict keyed by serial and by (inv_idx, str_idx, opt_idx) for optimizers so hardware swap keeps same sensor; full refresh timeout **30 min** (`COORDINATOR_REFRESH_TIMEOUT_SEC`, default 1800 s); exposes `_obtained_from` ("One API" or "Legacy API") to the Obtained from sensor. Types the API client via `SolarEdgeAPIProtocol` (`api.py`). |
+| **Coordinator** | Runs every `UPDATE_DELAY` (**5 min**); implements adaptive polling (light check vs full refresh); when data is from legacy, forces full refresh every 30 min (`REVERT_TO_ONE_RETRY_INTERVAL`) to re-try One; when not doing a full refresh, still refreshes optimizer temperatures (SolarEdge One) via `_refresh_temperature_when_no_full_refresh()` when the temperature cache (`TEMPERATURE_CACHE_TTL`, 30 min) expires; builds data dict keyed by serial and by (inv_idx, str_idx, opt_idx) for optimizers so hardware swap keeps same sensor; full refresh timeout **30 min** (`COORDINATOR_REFRESH_TIMEOUT_SEC`, default 1800 s); exposes `_obtained_from` ("One API" or "Legacy API") to the Obtained from sensor. Types the API client via `SolarEdgeAPIProtocol` (`api.py`). |
 | **Sensor platform** | At setup, removes existing sensor entities for this config entry so new entity IDs match current options (e.g. prefix, Include Site ID). Creates one device per site, inverter, string, optimizer (at string/optimizer level keyed by parsed API display name when it parses, else position). **String and inverter aggregated sensors** use the same position-based device identifiers and `via_device` as the coordinator (`_set_aggregated_device_info`), so they attach to the devices created in `_register_site_and_inverter_devices` and the hierarchy (site → inverter → string → optimizer) is correct; avoids “references a non existing via_device” and duplicate inverter devices. Creates sensors (individual + aggregated + **Last polled** + **Obtained from** on site device). Optimizer sensors look up coordinator data by (inv_idx, str_idx, opt_idx) first so replacement hardware at the same position updates the same entity. Uses `coordinator.data` for optimizer info when available (after first refresh), only calling the API for optimizers missing from that data; deduplicates optimizer tasks by position. |
-| **API client** | **Dual API** (`api_dual.py`): when `use_solaredge_one` is True, tries **SolarEdge One** (`solaredge_one_api.py`) first; if One returns no valid measurements or fails (e.g. login), uses **legacy** (`solaredgeoptimizers.py`). When `use_solaredge_one` is False, always uses legacy only. Exposes `_obtained_from` for the site-level sensor. Both backends conform to `SolarEdgeAPIProtocol` (`api.py`). Layout and lifetime energy cached; parallel optimizer data for full refresh; locale/language from HA. |
+| **API client** | **Dual API** (`api_dual.py`): when `use_solaredge_one` is True, tries **SolarEdge One** (`solaredge_one_api.py`) first; if One returns no valid measurements or fails (e.g. login), uses **legacy** (`solaredgeoptimizers.py`). When `use_solaredge_one` is False, always uses legacy only. Exposes `_obtained_from` for the site-level sensor. Both backends conform to `SolarEdgeAPIProtocol` (`api.py`). Layout and lifetime energy cached; **One API:** single batch POST for full-refresh optimizer data; **legacy:** parallel per-optimizer; locale/language from HA. |
 
 ---
 
@@ -199,7 +199,7 @@ sequenceDiagram
     C->>API: requestAllData()
     Note over API: Dual API: try One first - if no valid measurements or fail then call legacy
     API->>SE: getLifeTimeEnergy / layout/energy (cached 1h)
-    API->>SE: requestSystemData(opt_id) × N or One batch (parallel)
+    API->>SE: requestSystemDataBatch(all) [One] or requestSystemData(opt_id) × N [legacy]
     SE-->>API: per-optimizer data
     API-->>C: list of SolarEdgeOptimizerData + lifetime, _obtained_from set
     C->>C: _calculate_aggregated_data and store _obtained_from
@@ -213,7 +213,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    subgraph Every 2 min
+    subgraph Every 5 min
         TICK[Coordinator tick]
     end
 
@@ -230,11 +230,11 @@ flowchart LR
     AGG --> LAST[Update last_polled and obtained_from]
 ```
 
-**Note:** A full refresh is also triggered when data is from legacy and at least 30 minutes have passed since the last full refresh (re-try One so the integration can switch back). When the coordinator **reuses** existing data (no full refresh), it still refreshes optimizer temperatures if the API supports it (e.g. SolarEdge One) via `_refresh_temperature_when_no_full_refresh()`, using `get_optimizer_temperatures_cached()` so temperatures stay updated about every 15 minutes.
+**Note:** A full refresh is also triggered when data is from legacy and at least 30 minutes have passed since the last full refresh (re-try One so the integration can switch back). When the coordinator **reuses** existing data (no full refresh), it still refreshes optimizer temperatures if the API supports it (e.g. SolarEdge One) via `_refresh_temperature_when_no_full_refresh()`, using `get_optimizer_temperatures_cached()` so temperatures stay updated when the temperature cache expires (30 min, `TEMPERATURE_CACHE_TTL`).
 
-- **Light check interval**: ~2 minutes when data is recent; ~15 minutes when data is old or missing.  
+- **Light check interval**: About **5 minutes** when data is recent (`LIGHT_CHECK_DESIRED_INTERVAL_FRESH`); about **30 minutes** when data is old or missing (`LIGHT_CHECK_DESIRED_INTERVAL_STALE`). A full refresh is not triggered again within **5 minutes** of the last one (`LIGHT_CHECK_MIN_INTERVAL`).  
 - **Light check strategy**: Which API is used follows the **last full refresh**. When the dual API last used **legacy** for full data, the light check uses a single representative optimizer (`requestSystemData`). When it last used **SolarEdge One**, the light check uses up to `LIGHT_CHECK_BATCH_SIZE` (5) optimizers chosen at random; one batch request (`requestSystemDataBatch`) returns live data for all of them. If any has a newer `lastMeasurement` than the coordinator’s latest, a full refresh is triggered. Random selection avoids always checking the same panel (e.g. one that’s often in shade).  
-- **Full refresh**: Coordinator calls the dual API's `requestAllData()`: dual API tries One first; if no valid measurements or fail, uses legacy; sets `_obtained_from`. All optimizers + lifetime energy (from cache when possible). When data is currently from **legacy** (`_obtained_from` = Legacy API), the coordinator forces a full refresh **every 30 minutes** (`REVERT_TO_ONE_RETRY_INTERVAL` in `const.py`) so One is re-tried and the integration can switch back when One is available.  
+- **Full refresh**: Coordinator calls the dual API's `requestAllData()`: dual API tries One first; if no valid measurements or fail, uses legacy; sets `_obtained_from`. **SolarEdge One** fetches optimizer live data in one batch POST (`requestSystemDataBatch` with all serials); **legacy** uses parallel per-optimizer requests. Lifetime energy from cache when possible. When data is currently from **legacy** (`_obtained_from` = Legacy API), the coordinator forces a full refresh **every 30 minutes** (`REVERT_TO_ONE_RETRY_INTERVAL` in `const.py`) so One is re-tried and the integration can switch back when One is available.  
 - **Lifetime energy**: Dual API's `get_lifetime_energy_cached()` returns the cache from whichever API was last used for full data (One or legacy). TTL 1 hour; aggregations from that cache.  
 - **Sensor setup**: After the coordinator’s first refresh, the sensor platform receives `data_dict` and uses it for optimizer info when creating entities; it only calls the API for optimizers missing from that data, so setup avoids duplicate fetches and is faster.
 
@@ -288,10 +288,10 @@ No YAML configuration is required; all configuration is via the config flow.
 | Voltage | voltage | V | Panel voltage. |
 | Current | current | A | Panel current. |
 | Optimizer voltage | voltage | V | Optimizer output voltage. |
-| Temperature | temperature | °C | Optimizer temperature from SolarEdge One API (layout/energy by-inverter with `include-max-temperature`). Portal may send °C or °F (`temperatureUnit`); integration converts to °C for storage; HA displays in your preferred unit. Only available when using One API; shows “unknown” when missing or when using legacy API. Refreshed about every 15 min via cached API even when the coordinator does not do a full refresh. Not zeroed when stale. |
+| Temperature | temperature | °C | Optimizer temperature from SolarEdge One API (layout/energy by-inverter with `include-max-temperature`). Portal may send °C or °F (`temperatureUnit`); integration converts to °C for storage; HA displays in your preferred unit. Only available when using One API; shows “unknown” when missing or when using legacy API. Refreshed when the temperature cache expires (30 min, `TEMPERATURE_CACHE_TTL`) even when the coordinator does not do a full refresh. Not zeroed when stale. |
 | Lifetime energy | energy | kWh | Total energy (monotonic). Sourced from the API’s `unscaledEnergy` (Wh); the portal’s `units` field applies only to display values `energy` and `moduleEnergy`. At site level, when aggregated optimizer data is unreliable (e.g. very small total while portal has a real total), the site uses the portal’s total (sum of all `unscaledEnergy` from layout/energy) instead of aggregating. |
 | Last measurement | timestamp | — | Time of last measurement from portal. |
-| Status | — | — | Optimizer status from API (e.g. "Active", "Inactive"). Shown in proper case. Icon changes based on status: check-circle for Active, alert-circle for Inactive, help-circle for unknown status. |
+| Status | — | — | Optimizer status from API. **Blank** (empty) is treated as active and displayed as **blank** with the active icon. Shown in proper case: "Active", "Inactive", or raw value for any other status. Icon: check-circle for Active/blank, alert-circle for Inactive, help-circle for unknown. |
 | Azimuth | — | ° | Panel compass direction (0–360°), converted from radians. Only available when API provides module orientation data. Icon: compass. |
 | Tilt | — | ° | Panel angle from horizontal in degrees, converted from radians. Only available when API provides module orientation data. Icon: angle-acute. |
 
@@ -308,8 +308,8 @@ No YAML configuration is required; all configuration is via the config flow.
 | Voltage (average) | Average voltage of optimizers with recent data. |
 | Lifetime energy | Sum of optimizer lifetime energy (from API, by string; uses `unscaledEnergy` in Wh). Site level: when reliable, sum of inverters; when unreliable (aggregated below `RELIABLE_THRESHOLD_KWH` and portal total ≥ that threshold), uses portal total (sum of all `unscaledEnergy` from layout/energy). |
 | Last measurement | Latest last measurement among optimizers in the string. |
-| Optimizer count | Number of optimizers in the string (always an integer). |
-| Status | String status from API (e.g. "Active", "Inactive"). Shown in proper case. Icon changes based on status. |
+| Optimizer count | Number of **active** (status blank or "Active") optimizers in the string (always an integer). |
+| Status | String status from API. Blank → "blank" (active icon); "Inactive" → Inactive (inactive icon); other → raw value (unknown icon). |
 
 ### Per-inverter (aggregated)
 
@@ -319,15 +319,15 @@ No YAML configuration is required; all configuration is via the config flow.
 | Current (average) / Voltage (average) | Averages over strings with recent data. |
 | Lifetime energy | Sum of string lifetime energy. |
 | Last measurement | Latest among strings. |
-| String count | Number of strings under the inverter (always an integer). |
-| Status | Inverter status from API (e.g. "Active", "Inactive"). Shown in proper case. Icon changes based on status. |
+| String count | Number of **active** (status blank or "Active") strings under the inverter (always an integer). |
+| Status | Inverter status from API. Blank → "blank" (active icon); "Inactive" → Inactive (inactive icon); other → raw value (unknown icon). |
 
 ### Per-site (aggregated)
 
 | Sensor | Description |
 |--------|--------------|
 | Same as inverter | But over all inverters. |
-| Inverter count | Number of inverters (always an integer). |
+| Inverter count | Number of **active** (status blank or "Active") inverters (always an integer). |
 | **Last polled** | (Site device only.) When the integration last successfully finished an update. |
 | **Obtained from** | (Site device only.) Which API provided the current data: **"One API"** or **"Legacy API"**. Entity ID: `sensor.[prefix]obtained_from_[site]` or `sensor.[prefix]obtained_from` when site ID is not included in entity IDs. |
 
@@ -350,13 +350,13 @@ Child-count sensors: `inverter_count` at site level, `string_count` at inverter 
 
 | Item | Interval / TTL | Notes |
 |------|----------------|--------|
-| Coordinator tick | 2 minutes | `UPDATE_DELAY` in `const.py`. |
-| Light check | 2 min (recent data) or 15 min (old/none) | When last full data was from **legacy:** single optimizer `requestSystemData`. When from **SolarEdge One:** up to `LIGHT_CHECK_BATCH_SIZE` (5) optimizers at random, one `requestSystemDataBatch`; if any has newer data, full refresh. |
-| Full refresh | When light check sees new data, first boot / no data, or **every 30 min when data is from legacy** (re-try One) | Dual API `requestAllData()`: tries One first; if no valid measurements or fail, uses legacy. Returns all optimizers + lifetime energy; sets `_obtained_from`. `REVERT_TO_ONE_RETRY_INTERVAL` = 30 min in `const.py`. **Timeout:** 30 minutes (`COORDINATOR_REFRESH_TIMEOUT_SEC`, 1800 s) so large sites and slow API connections can complete. **SolarEdge One:** when the lifetime-energy cache is cold, `get_lifetime_energy_cached()` fetches per-optimizer energy in **parallel** (thread pool, up to `MAX_PARALLEL_WORKERS` = 10 concurrent requests) instead of sequentially, so cold-cache refresh is much faster. |
-| Layout (panels) cache | 1 hour | `requestListOfAllPanels()` (dual API prefers One; fallback legacy). |
-| Lifetime energy cache | 1 hour | Dual API `get_lifetime_energy_cached()` returns cache from the API that was last used for full data (One or legacy). **SolarEdge One:** on cache miss, per-optimizer energy-graph requests run in parallel (thread pool). Converted to kWh from `unscaledEnergy` (Wh); `units` applies only to display fields. |
-| Optimizer temperatures cache (One only) | 15 minutes | SolarEdge One `get_optimizer_temperatures_cached()`; layout/energy by-inverter with `include-max-temperature=true`. API may return °C or °F per `temperatureUnit`; integration normalizes to °C. When the coordinator does **not** do a full refresh (e.g. reuses data after a light check), it still calls `_refresh_temperature_when_no_full_refresh()`, which uses this cache so optimizer temperatures are updated about every 15 minutes even when power/voltage are not. Merged into optimizer data on full refresh and on this optional refresh. Debug: when unit is Fahrenheit, logs per-optimizer conversion (raw °F → °C) and summary count. |
-| Full-refresh cooldown | 2 minutes | `LIGHT_CHECK_MIN_INTERVAL` in `const.py`; avoids triggering a full refresh again within 2 minutes of the last full refresh when the light check detects new data. |
+| Coordinator tick | 5 minutes | `UPDATE_DELAY` in `const.py`. |
+| Light check | ~5 min (recent data) or ~30 min (old/none) | Desired interval: `LIGHT_CHECK_DESIRED_INTERVAL_FRESH` (5 min) when data fresh, `LIGHT_CHECK_DESIRED_INTERVAL_STALE` (30 min) when stale/missing. Full refresh not retriggered within `LIGHT_CHECK_MIN_INTERVAL` (5 min). When last full data was from **legacy:** single optimizer `requestSystemData`. When from **SolarEdge One:** up to `LIGHT_CHECK_BATCH_SIZE` (5) optimizers at random, one `requestSystemDataBatch`; if any has newer data, full refresh. |
+| Full refresh | When light check sees new data, first boot / no data, or **every 30 min when data is from legacy** (re-try One) | Dual API `requestAllData()`: tries One first; if no valid measurements or fail, uses legacy. Returns all optimizers + lifetime energy; sets `_obtained_from`. **SolarEdge One:** optimizer live data via **one batch POST** (`requestSystemDataBatch` with all serials); when the lifetime-energy cache is cold, `get_lifetime_energy_cached()` fetches per-optimizer energy in **parallel** (thread pool, up to `MAX_PARALLEL_WORKERS` = 10). **Legacy:** parallel per-optimizer requests for live data. `REVERT_TO_ONE_RETRY_INTERVAL` = 30 min. **Timeout:** 30 minutes (`COORDINATOR_REFRESH_TIMEOUT_SEC`, 1800 s). |
+| Layout (panels) cache | 2 h (One) / 1 h (legacy) | One API: `PANELS_CACHE_TTL_ONE` (2 h). Legacy: `PANELS_CACHE_TTL_LEGACY` (1 h). `requestListOfAllPanels()` (dual API prefers One; fallback legacy). |
+| Lifetime energy cache | 1 hour | `LIFETIME_ENERGY_CACHE_TTL`. Dual API `get_lifetime_energy_cached()` returns cache from the API that was last used for full data (One or legacy). **SolarEdge One:** on cache miss, per-optimizer energy-graph requests run in parallel (thread pool). Converted to kWh from `unscaledEnergy` (Wh); `units` applies only to display fields. |
+| Optimizer temperatures cache (One only) | 30 minutes | `TEMPERATURE_CACHE_TTL`. SolarEdge One `get_optimizer_temperatures_cached()`; layout/energy by-inverter with `include-max-temperature=true`. API may return °C or °F per `temperatureUnit`; integration normalizes to °C. When the coordinator does **not** do a full refresh (e.g. reuses data after a light check), it still calls `_refresh_temperature_when_no_full_refresh()`, which uses this cache so optimizer temperatures are updated when the cache expires (30 min) even when power/voltage are not. Merged into optimizer data on full refresh and on this optional refresh. Debug: when unit is Fahrenheit, logs per-optimizer conversion (raw °F → °C) and summary count. |
+| Full-refresh cooldown | 5 minutes | `LIGHT_CHECK_MIN_INTERVAL` in `const.py`; avoids triggering a full refresh again within 5 minutes of the last full refresh when the light check detects new data. |
 
 Aggregations (string/inverter/site) are computed in the coordinator from optimizer data and cached lifetime energy; they are not separate API calls. **Site lifetime energy** uses aggregated data when reliable; when aggregated is below `RELIABLE_THRESHOLD_KWH` (100 kWh) and the portal total (sum of all `unscaledEnergy` from layout/energy) is at least that threshold, the site uses the portal total so installations with unreliable per-optimizer lifetime data still get a correct site total.
 
@@ -376,15 +376,11 @@ When an optimizer, string, or inverter is marked as **Inactive** in the SolarEdg
 
 ### Aggregation behaviour
 
-**Only active devices are included in aggregations.** When calculating totals and averages for strings, inverters, and the site:
+**Aggregation values** (power, current, voltage, lifetime energy) at string, inverter, and site level include data from **all** devices (any status) that have recent measurements. Averages (current, voltage) use the count of devices that contributed data; totals (power, lifetime energy) sum all contributing devices.
 
-- Only optimizers with status "Active" contribute to string aggregations (current, power, voltage).
-- Only strings with status "Active" contribute to inverter aggregations.
-- Only inverters with status "Active" contribute to site aggregations.
+**Child counts** (Optimizer count per string, String count per inverter, Inverter count per site) count only **active** devices (status **blank** or **"Active"**) and are always integers. This lets you see how many active vs inactive devices exist at each level.
 
-This ensures that stale or zero values from inactive devices do not skew the aggregated values shown at higher levels of the hierarchy.
-
-**Note:** Lifetime energy and last measurement are still tracked for inactive devices and shown in their individual sensors, but they do not contribute to aggregated totals when the device is inactive.
+**Note:** Lifetime energy and last measurement are still tracked for inactive devices and shown in their individual sensors. Inactive devices contribute to aggregated power/current/voltage/lifetime when they have recent data; they are excluded from the child-count sensors.
 
 ---
 
@@ -430,7 +426,7 @@ Supported languages:
 | tr   | Türkçe     |
 | zh   | 中文       |
 
-Translation files: `translations/<code>.json` with **config**, **options**, **entity**, and **device** sections. The config section covers the initial setup and re-auth steps; the options section covers the Reconfigure (Configure) dialog. See [Internationalization (i18n)](Internationalization.md) in the repo for details.
+Translation files: `translations/<code>.json` with **config**, **options**, **entity**, and **device** sections. The config section covers the initial setup and re-auth steps; the options section covers the Reconfigure (Configure) dialog. See [Internationalization (i18n)](internationalization.md) in the repo for details.
 
 ---
 
@@ -456,9 +452,9 @@ The integration uses a **dual API** (`api_dual.py`): it always tries **SolarEdge
 |---------|--------|---------------------|
 | Login | GET/POST | `login.solaredge.com` (OAuth PKCE flow), then `POST .../oauth2/token` for access token |
 | Site structure / layout | GET | `.../services/layout/logical/generic/v2/site/{siteId}?include-optimizers=true` |
-| Per-optimizer live data + basic info | POST | `.../services/layout/information/optimizers` (body: list of optimizer serials). Returns `basicInformationList` (serial, model e.g. P405-4RM4MRM-NA25, optional description/panel type) and `serialToLiveData`. When description is present it is used for the optimizer device model and the **panel_type** sensor attribute. Used for full refresh (parallel per optimizer) and for lightweight check via `requestSystemDataBatch` (one call with up to 5 random serials). **Timeout**: 60 s with **one automatic retry** on read/connect timeout (log: "Timeout requesting optimizer data (retrying once)"). |
+| Per-optimizer live data + basic info | POST | `.../services/layout/information/optimizers` (body: list of optimizer serials). Returns `basicInformationList` (serial, model e.g. P405-4RM4MRM-NA25, optional description/panel type) and `serialToLiveData`. When description is present it is used for the optimizer device model and the **panel_type** sensor attribute. **Full refresh:** One API uses one batch with all serials; legacy uses parallel per-optimizer. **Lightweight check:** one batch with up to 5 random serials (`requestSystemDataBatch`). **Timeout**: 60 s with **one automatic retry** on read/connect timeout (log: "Timeout requesting optimizer data (retrying once)"). |
 | Inverter information | GET | `.../services/layout/information/inverters?inverter-serials=...` (fullModel e.g. SE5000H-RW000BNN4). Fetched at setup to set inverter device model. **403 Forbidden** is non-fatal: integration logs a warning and continues; devices use position-based identity so model names may be missing but all sensors work. |
-| Optimizer temperatures | GET | `.../services/layout/energy/site/{siteId}/by-inverter?start-date=...&end-date=...&inverter-serials=...&include-max-temperature=true`. Returns per-optimizer temperature; may be °C or °F per `temperatureUnit`. Integration normalizes to °C. Cached 15 min; merged into optimizer data when using One API. |
+| Optimizer temperatures | GET | `.../services/layout/energy/site/{siteId}/by-inverter?start-date=...&end-date=...&inverter-serials=...&include-max-temperature=true`. Returns per-optimizer temperature; may be °C or °F per `temperatureUnit`. Integration normalizes to °C. Cached 30 min (`TEMPERATURE_CACHE_TTL`); merged into optimizer data when using One API. |
 | Lifetime energy | GET | `.../services/layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...&start-date=...&end-date=...` (one request per optimizer; when cache is cold, requests run **in parallel** via thread pool; cached 1 h) |
 
 - **Auth**: OAuth/OIDC with PKCE at `login.solaredge.com`; authorization code exchanged for `access_token`; all `/services/` requests use `Authorization: Bearer <access_token>`. On 401, token is cleared and login flow is retried.  
@@ -474,7 +470,7 @@ The layout/energy (legacy) or energy-graph (SolarEdge One) response provides per
 
 - **Layout**: 1 h TTL (in One and legacy clients); dual API prefers One for `requestListOfAllPanels()`; avoids repeated layout calls during setup and polling.  
 - **Lifetime energy**: 1 h TTL in each backend; the dual API's `get_lifetime_energy_cached()` returns the cache from whichever backend was last used for full data (One or legacy). Used by coordinator aggregation.  
-- **Optimizer temperatures** (SolarEdge One only): 15 min TTL; `get_optimizer_temperatures_cached()` calls layout/energy by-inverter with `include-max-temperature=true`; API may return °C or °F (`temperatureUnit`); integration converts F→°C for storage. Result merged into optimizer data in `requestSystemData`, `requestSystemDataBatch`, and `requestAllData`. When the coordinator does not do a full refresh, it still calls `_refresh_temperature_when_no_full_refresh()` so temperatures stay updated about every 15 minutes even when power/voltage are not. Debug logging when Fahrenheit: per-optimizer conversion (raw °F → °C) and summary count.  
+- **Optimizer temperatures** (SolarEdge One only): 30 min TTL (`TEMPERATURE_CACHE_TTL`); `get_optimizer_temperatures_cached()` calls layout/energy by-inverter with `include-max-temperature=true`; API may return °C or °F (`temperatureUnit`); integration converts F→°C for storage. Result merged into optimizer data in `requestSystemData`, `requestSystemDataBatch`, and `requestAllData`. When the coordinator does not do a full refresh, it still calls `_refresh_temperature_when_no_full_refresh()` so temperatures stay updated when the cache expires (30 min) even when power/voltage are not. Debug logging when Fahrenheit: per-optimizer conversion (raw °F → °C) and summary count.  
 - **Panels list**: Same as layout (returned by `requestListOfAllPanels()`; dual API delegates to One first, then legacy on failure).
 
 ### Data models (conceptual)
@@ -493,7 +489,7 @@ The layout/energy (legacy) or energy-graph (SolarEdge One) response provides per
 - **Log namespace**: The integration uses `logging.getLogger(__name__)` per module (e.g. `solaredgeoptimizers.sensor`); the top-level logger name is `solaredgeoptimizers`.  
 - **Levels**: `info` for setup and main steps, `debug` for URLs, responses, timezone, and per-optimizer details, `warning` for missing/zero measurements and server 5xx, `error` for auth/connect/parse failures. All debug calls are guarded with `isEnabledFor(logging.DEBUG)`, so there is no performance cost when the log level is `info` or higher. Debug messages use consistent prefixes (`SolarEdge Optimizers`, `SolarEdge Optimizers coordinator`, `SolarEdge Optimizers sensor`, `SolarEdge Optimizers (legacy)`, `SolarEdge One`, `SolarEdge Dual API`) so you can filter logs by component.
 
-**What debug logging covers:** Config flow (user form, validating input, unique_id check, creating entry with title, reauth form, options/reconfigure form when showing — with current prefix, include_site_id_in_entity_id, use_solaredge_one — or saving, removal and device count); setup (dual API with use_solaredge_one, login check, coordinator with include_site_id_in_entity_id, inverter models fetch, site/inverter/string device creation with model and suffix, platform forward, coordinator stored); unload (unload start, platform result, API session close, registry cleanup when nothing to remove, unload complete); coordinator (panel list request, representative optimizers or random batch with configurable batch size (`LIGHT_CHECK_BATCH_SIZE`), update cycle — do_full_refresh, should_light_check, measurement_age, desired_interval, latest_measurement, obtained_from, revert-to-One retry when data from legacy — adaptive light check and full refresh, refresh strategy determination, full refresh vs reuse item count, lifetime energy entry count, timezone, update complete, inactive device skipping with status, duplicate position resolution with suffix assignment, string/inverter/site aggregated data creation with status and child counts); sensor platform (setup entry, base_name and include_site_id and site_id, adding optimizer with panel_id/serial/model/panel_type/status, duplicate optimizer position resolution with suffixes, inactive device sensor skipping, aggregated sensors with status, obtained_from sensor, entity count, device status summary when inactive devices exist, status value updates, skip on exception); API client (dual API: use_solaredge_one/legacy-only, fallback to legacy when One has no valid measurements or fails; legacy: login, layout, requestAllData with configurable timeouts (`API_TIMEOUT_SHORT`/`API_TIMEOUT_LONG`), get_lifetime_energy_cached; SolarEdge One: OAuth steps, token, get_inverter_models, requestSystemData/requestSystemDataBatch, timeout retry (warning), _build_optimizer_data_from_response, requestAllData, cache, optimizer temperatures with unit and F→°C conversion when portal sends Fahrenheit, errors). Enable with `logger: logs: solaredgeoptimizers: debug` in `configuration.yaml`.
+**What debug logging covers:** Config flow (user form, validating input, unique_id check, creating entry with title, reauth form, options/reconfigure form when showing — with current prefix, include_site_id_in_entity_id, use_solaredge_one — or saving, removal and device count); setup (dual API with use_solaredge_one, login check, coordinator with include_site_id_in_entity_id, inverter models fetch, site/inverter/string device creation with model and suffix, platform forward, coordinator stored); unload (unload start, platform result, API session close, registry cleanup when nothing to remove, unload complete); coordinator (panel list request, representative optimizers or random batch with configurable batch size (`LIGHT_CHECK_BATCH_SIZE`), update cycle — do_full_refresh, should_light_check, measurement_age, desired_interval, latest_measurement, obtained_from, revert-to-One retry when data from legacy — adaptive light check and full refresh, refresh strategy determination, full refresh vs reuse item count, lifetime energy entry count, timezone, update complete, inactive device skipping with status, duplicate position resolution with suffix assignment, string/inverter/site aggregated data creation with status and child counts); sensor platform (setup entry, base_name and include_site_id and site_id, adding optimizer with panel_id/serial/model/panel_type/status, duplicate optimizer position resolution with suffixes, inactive device sensor skipping, aggregated sensors with status, obtained_from sensor, entity count, device status summary when inactive devices exist, status value updates, skip on exception); API client (dual API: use_solaredge_one/legacy-only, fallback to legacy when One has no valid measurements or fails; legacy: login, layout, requestAllData with configurable timeouts (`API_TIMEOUT_SHORT`/`API_TIMEOUT_LONG`), get_lifetime_energy_cached; SolarEdge One: OAuth steps, token, get_inverter_models, requestSystemData/requestSystemDataBatch, requestAllData (single batch for all optimizers; on batch failure, per-optimizer fallback with ThreadPoolExecutor), timeout retry (warning), _build_optimizer_data_from_response, cache, optimizer temperatures with unit and F→°C conversion when portal sends Fahrenheit, errors). Enable with `logger: logs: solaredgeoptimizers: debug` in `configuration.yaml`.
 
 ### Logging
 
@@ -521,7 +517,7 @@ logger:
 | “Failed to connect” | Network, firewall, DNS; outbound HTTPS to monitoring.solaredge.com. |
 | Config entry not loading | Logs for `ConfigEntryNotReady`; first refresh may fail if API is slow or returns errors. |
 | Sensors stay 0 | Last measurement age: 1 h when Obtained from is One API, 2 h when Legacy API. Check “Last measurement”, Last polled, and Obtained from; debug logs for API responses. If using a non-English HA language, ensure you’re on a version that supports locale-aware measurement keys (e.g. “Leistung [W]” for German). |
-| Slow first load | Many optimizers → parallel requests for optimizer data and (when cache is cold) parallel lifetime-energy fetch; layout and lifetime energy cached after first run. Full refresh timeout 30 min (`COORDINATOR_REFRESH_TIMEOUT_SEC`). |
+| Slow first load | **SolarEdge One:** one batch POST for optimizer data; when cache is cold, parallel lifetime-energy fetch. **Legacy:** parallel per-optimizer requests. Layout and lifetime energy cached after first run. Full refresh timeout 30 min (`COORDINATOR_REFRESH_TIMEOUT_SEC`). |
 | Duplicate entity IDs (e.g. sensor.power_2) | Use a unique Entity ID prefix per site, or ensure you’re on a version that uses the new path-based entity IDs (site in path). |
 | Duplicate sensors/devices after optimizer or inverter swap | The integration uses position-based identity; after an update you should see one sensor per position. If you still have duplicates from before that change, **remove the integration** (Settings → Integrations → Delete) and **add it again** so the registry is cleaned and recreated with position-based devices. |
 | Two inverters (one with sensors, one with strings) or “references a non existing via_device” | Aggregated string/inverter sensors must use the same position-based device IDs as the coordinator. If you see this after an update, ensure you are on a version that sets string/inverter device info by position in `_set_aggregated_device_info`. Then **remove the integration** and **add it again** so devices and entities are recreated correctly. |
@@ -548,7 +544,8 @@ solaredgeoptimizers/
 ├── api.py                 # SolarEdgeAPIProtocol: typing protocol for API clients (used by coordinator)
 ├── api_dual.py            # SolarEdgeDualAPI: use_solaredge_one; when True tries One first then legacy, when False legacy only; exposes _obtained_from
 ├── config_flow.py         # Config flow, validation (dual API), translated title, async_remove_entry (calls shared cleanup helper)
-├── const.py               # DOMAIN, intervals, sensor type constants, parse_string_display_name_path, parse_optimizer_display_name_to_indices, make_duplicate_sort_key, resolve_duplicate_indices
+├── const.py               # DOMAIN, intervals, cache TTLs, sensor type constants, status helpers (is_status_active, status_display_value, status_icon), parse_string_display_name_path, parse_optimizer_display_name_to_indices, make_duplicate_sort_key, resolve_duplicate_indices
+├── exceptions.py          # SolarEdgeAPIError: custom exception for API/processing errors (used by legacy client)
 ├── coordinator.py         # DataUpdateCoordinator, adaptive polling, revert-to-One retry (30 min when from legacy), aggregation, _obtained_from, AggregationContext namedtuple, uses resolve_duplicate_indices from const.py
 ├── hacs.json              # HACS metadata
 ├── info.md                # Integration info (e.g. for HACS)
@@ -573,17 +570,19 @@ solaredgeoptimizers/
 | `CONF_USE_SOLAREDGE_ONE` | `"use_solaredge_one"` | Optional; when True (default), dual API (One first, legacy fallback). When False, integration always uses legacy portal only. Setup and Configure (options). Migration sets default True if missing. |
 | `CONF_ENTITY_PREFIX` | `"entity_id_prefix"` | Optional config key for entity ID prefix (e.g. `se_`). |
 | `CONF_INCLUDE_SITE_ID_IN_ENTITY_ID` | `"include_site_id_in_entity_id"` | Optional config key; when true, entity IDs for inverter/string/optimizer include the site ID (default false). Site level always includes site ID. |
-| `UPDATE_DELAY` | 2 minutes | Coordinator update interval. |
+| `UPDATE_DELAY` | 5 minutes | Coordinator update interval. |
 | `CHECK_TIME_DELTA` | 2 hours | Age threshold for zeroing live values (legacy API). |
 | `CHECK_TIME_DELTA_SOLAREDGE_ONE` | 1 hour | Age threshold for zeroing live values when using SolarEdge One API. |
 | `COORDINATOR_REFRESH_TIMEOUT_SEC` | 1800 (30 min) | Max seconds for one coordinator refresh (initial and full refresh). Slow API or many optimizers may need this; increase in `const.py` if timeouts persist. |
 | `REVERT_TO_ONE_RETRY_INTERVAL` | 30 minutes | When data is from legacy API, coordinator forces a full refresh this often to re-try SolarEdge One so the integration can switch back when One is available. |
-| `LIGHT_CHECK_MIN_INTERVAL` | 2 minutes | Minimum time between a light check that detects new data and triggering a full refresh; avoids back-to-back full refreshes. |
+| `LIGHT_CHECK_MIN_INTERVAL` | 5 minutes | Minimum time between a light check that detects new data and triggering a full refresh; avoids back-to-back full refreshes. |
+| `LIGHT_CHECK_DESIRED_INTERVAL_FRESH` | 5 minutes | Desired interval between lightweight checks when data is fresh (within stale delta). |
+| `LIGHT_CHECK_DESIRED_INTERVAL_STALE` | 30 minutes | Desired interval between lightweight checks when data is stale or age unknown. |
 | `RELIABLE_THRESHOLD_KWH` | 100.0 | Site-level lifetime energy: when aggregated optimizer total is below this (kWh) and the portal total (from layout/energy) is ≥ this, the site sensor uses the portal total instead of the aggregated sum. |
 | `API_TIMEOUT_SHORT` | 30 | Timeout in seconds for quick API requests (login check, single optimizer). |
 | `API_TIMEOUT_LONG` | 60 | Timeout in seconds for longer API requests (layout, batch operations). |
 | `LIGHT_CHECK_BATCH_SIZE` | 5 | Number of optimizers to sample in lightweight checks (SolarEdge One). |
-| `MAX_PARALLEL_WORKERS` | 10 | Maximum threads for parallel API requests (lifetime energy, optimizer data). |
+| `MAX_PARALLEL_WORKERS` | 10 | Maximum threads for parallel API requests (lifetime energy when cache cold; legacy optimizer data; One API per-optimizer fallback when batch fails). |
 | `SENSOR_TYPE_*` | e.g. `Current`, `Power`, `Voltage` | Sensor type identifiers for individual and aggregated sensors. |
 | `SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE` | List of sensor types | Sensors not created for inactive optimizers: Azimuth, Current, Optimizer voltage, Power, Temperature, Tilt, Voltage. |
 | `SENSOR_TYPE_INACTIVE_AGGREGATED_EXCLUDE` | List of sensor types | Sensors not created for inactive strings/inverters: Current, Power, Voltage. |
