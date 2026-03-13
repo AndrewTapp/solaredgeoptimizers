@@ -292,7 +292,7 @@ No YAML configuration is required; all configuration is via the config flow.
 | Optimizer voltage | voltage | V | Optimizer output voltage. |
 | Temperature | temperature | °C | Optimizer temperature from SolarEdge One API (layout/energy by-inverter with `include-max-temperature`). Portal may send °C or °F (`temperatureUnit`); integration converts to °C for storage; HA displays in your preferred unit. Only available when using One API; shows “unknown” when missing or when using legacy API. Refreshed when the temperature cache expires (30 min, `TEMPERATURE_CACHE_TTL`) even when the coordinator does not do a full refresh. Not zeroed when stale. |
 | Lifetime energy | energy | kWh | Total energy (monotonic). Sourced from the API’s `unscaledEnergy` (Wh); the portal’s `units` field applies only to display values `energy` and `moduleEnergy`. **Site** lifetime uses the portal's dashboard production (Wh) when > aggregated; **inverter** and **string** use the portal’s layout/energy by-inverter (Wh) when > aggregated; start date = installation date from layout/information/site. |
-| Last measurement | timestamp | — | Time of last measurement from portal. |
+| Last measurement | timestamp | — | Time of last measurement from portal. For **inactive** optimizers the API often omits this; the integration preserves the previous value across refreshes so the sensor shows when the optimizer was last updated (or unknown on first load). |
 | Status | — | — | Optimizer status from API. **Blank** (empty) is treated as active and displayed as **blank** with the active icon. Shown in proper case: "Active", "Inactive", or raw value for any other status. Icon: check-circle for Active/blank, alert-circle for Inactive, help-circle for unknown. |
 | Azimuth | — | ° | Panel compass direction (0–360°), converted from radians. Only available when API provides module orientation data. Icon: compass. |
 | Tilt | — | ° | Panel angle from horizontal in degrees, converted from radians. Only available when API provides module orientation data. Icon: angle-acute. |
@@ -385,7 +385,7 @@ When an optimizer, string, or inverter is marked as **Inactive** in the SolarEdg
 
 **Child counts** (Optimizer count per string, String count per inverter, Inverter count per site) count only **active** devices (status **blank** or **"Active"**) and are always integers. This lets you see how many active vs inactive devices exist at each level.
 
-**Note:** Lifetime energy and last measurement are still tracked for inactive devices and shown in their individual sensors. Inactive devices contribute to aggregated power/current/voltage/lifetime when they have recent data; they are excluded from the child-count sensors.
+**Note:** Lifetime energy and last measurement are still tracked for inactive devices and shown in their individual sensors. When the API omits last measurement for an inactive optimizer, the integration preserves the previous value across refreshes so the Last measurement sensor shows when the optimizer was actually last updated (not the current time). Inactive devices contribute to aggregated power/current/voltage/lifetime when they have recent data; they are excluded from the child-count sensors.
 
 ---
 
@@ -395,7 +395,7 @@ When an optimizer, string, or inverter is marked as **Inactive** in the SolarEdg
 - **Rule**: For each optimizer, if `lastmeasurement` is older than the threshold:
   - **Voltage, Current, Optimizer voltage, Power** → reported as **0** (so dashboards don’t show stale “live” values).
   - **Temperature** (when from SolarEdge One) → not zeroed; shows last known value or unknown if missing.
-  - **Lifetime energy** and **Last measurement** → always last known value (historical view still possible).
+  - **Lifetime energy** and **Last measurement** → always last known value (historical view still possible). For inactive optimizers, when the API omits last measurement, the previous value is preserved so Last measurement reflects when the optimizer was last updated.
 - Aggregated sensors (string/inverter/site) only include optimizers with **recent** measurements in power/current/voltage; lifetime energy and last measurement still aggregate from all.
 
 ---
@@ -487,7 +487,7 @@ The layout/energy (legacy) or energy-graph (SolarEdge One) response provides per
 - **SolarEdgeInverter**: `inverterId`, `serialNumber`, `displayName`, `strings[]`.  
 - **SolarEdgeString**: `stringId`, `displayName`, `optimizers[]`.  
 - **SolarEdgeOptimizer**: `optimizerId`, `serialNumber`, `displayName`.  
-- **SolarEdgeOptimizerData**: `panel_id`, `panel_description` (panel type from API when available, e.g. SunPower SPR-MAX3-400), `voltage`, `current`, `power`, `optimizer_voltage`, `temperature` (°C; from SolarEdge One by-inverter when available; portal may send °F via `temperatureUnit`, we convert to °C), `lifetime_energy` (kWh from API `unscaledEnergy`), `lastmeasurement`, `_has_valid_measurements` (True when the API provided a non-empty measurements dict; used by dual API to decide if One data is valid or to fall back to legacy), etc.  
+- **SolarEdgeOptimizerData**: `panel_id`, `panel_description` (panel type from API when available, e.g. SunPower SPR-MAX3-400), `voltage`, `current`, `power`, `optimizer_voltage`, `temperature` (°C; from SolarEdge One by-inverter when available; portal may send °F via `temperatureUnit`, we convert to °C), `lifetime_energy` (kWh from API `unscaledEnergy`), `lastmeasurement` (timezone-aware UTC datetime, or None when API omits it e.g. inactive—coordinator preserves previous value across refreshes), `_has_valid_measurements` (True when the API provided a non-empty measurements dict; used by dual API to decide if One data is valid or to fall back to legacy), etc.  
 - **SolarEdgeAggregatedData**: `panel_id`, `entity_type` (string/inverter/site), same measurement fields plus `child_count`, etc.
 
 ---
