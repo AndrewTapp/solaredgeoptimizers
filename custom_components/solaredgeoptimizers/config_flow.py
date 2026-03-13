@@ -288,11 +288,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Close API so all sessions/connection pools are released (in case unload did not run or did not close)
         coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         if coordinator is not None and hasattr(coordinator, "my_api"):
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers config: Closing API on config entry removal for entry %s",
+                    entry.entry_id,
+                )
             try:
                 await hass.async_add_executor_job(coordinator.my_api.close)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug(
-                        "SolarEdge Optimizers: Closed API on config entry removal for entry %s",
+                        "SolarEdge Optimizers config: Closed API on config entry removal for entry %s",
                         entry.entry_id,
                     )
             except Exception as e:  # pylint: disable=broad-except
@@ -317,7 +322,9 @@ class SolarEdgeOptimizersOptionsFlowHandler(config_entries.OptionsFlow):
         """Initialize options flow."""
         self._entry = entry
 
-    def async_show_form(self, *, step_id=None, data_schema=None, errors=None, description_placeholders=None, last_step=None, preview=None):
+    def async_show_form(  # pylint: disable=too-many-arguments
+        self, *, step_id=None, data_schema=None, errors=None, description_placeholders=None, last_step=None, preview=None
+    ):
         """Show form and ensure frontend uses this integration's translations (options.step.init.data.*)."""
         result = super().async_show_form(
             step_id=step_id,
