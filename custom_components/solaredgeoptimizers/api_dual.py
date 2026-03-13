@@ -170,6 +170,8 @@ class SolarEdgeDualAPI:
         """Close both API clients and release all file descriptors (sessions, connection pools).
         Idempotent; safe to call multiple times. Both clients are always closed even if one raises.
         """
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Dual API: Closing both API clients (One and Legacy)")
         for name, client in [("One", self._one), ("Legacy", self._legacy)]:
             try:
                 client.close()

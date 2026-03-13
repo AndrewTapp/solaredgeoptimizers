@@ -270,21 +270,27 @@ class MyCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("SolarEdge Optimizers: Could not fetch inverter models: %s", e)
 
     def _build_lifetime_energy_lookup(self, lifetime_energy_data):
-        """Build stringId -> energy_data lookup; derive string total from optimizer sum when needed."""
+        """Build stringId -> energy_data lookup; derive string total from optimizer sum when needed.
+
+        Prefer the sum of this string's optimizer entries over any API string-level key. The legacy
+        layout/energy response can contain a key that matches a stringId but holds a site- or
+        inverter-level total; using that would inflate one string and (with multiple inverters or
+        duplicate layout entries) produce a grossly inflated site total and double-counting.
+        """
         lifetime_energy_lookup = {}
         for inv in self._site_structure.inverters:
             for s in inv.strings:
-                key = str(s.stringId)
-                if key in lifetime_energy_data:
-                    lifetime_energy_lookup[s.stringId] = lifetime_energy_data[key]
+                total_wh = 0.0
+                for opt in s.optimizers:
+                    ent = lifetime_energy_data.get(str(opt.optimizerId)) or lifetime_energy_data.get(opt.optimizerId)
+                    if ent and isinstance(ent.get("unscaledEnergy"), (int, float)):
+                        total_wh += float(ent["unscaledEnergy"])
+                if total_wh > 0:
+                    lifetime_energy_lookup[s.stringId] = {"unscaledEnergy": total_wh}
                 else:
-                    total_wh = 0.0
-                    for opt in s.optimizers:
-                        ent = lifetime_energy_data.get(str(opt.optimizerId)) or lifetime_energy_data.get(opt.optimizerId)
-                        if ent and isinstance(ent.get("unscaledEnergy"), (int, float)):
-                            total_wh += float(ent["unscaledEnergy"])
-                    if total_wh > 0:
-                        lifetime_energy_lookup[s.stringId] = {"unscaledEnergy": total_wh}
+                    key = str(s.stringId)
+                    if key in lifetime_energy_data:
+                        lifetime_energy_lookup[s.stringId] = lifetime_energy_data[key]
         return lifetime_energy_lookup
 
     def _aggregate_optimizers_in_string(self, string, data_dict, timetocheck):
@@ -516,7 +522,11 @@ class MyCoordinator(DataUpdateCoordinator):
                 via_device=(DOMAIN, inv_device_id),
             )
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Created device for string: %s (suffix=%s)", string_name, str_suffix or "(none)")
+                _LOGGER.debug(
+                    "SolarEdge Optimizers: Created device for string: %s (suffix=%s)",
+                    string_name,
+                    str_suffix or "(none)",
+                )
 
     def ensure_devices_registered(self) -> None:
         """Ensure site, inverter, and string devices exist in the device registry.
@@ -842,6 +852,12 @@ class MyCoordinator(DataUpdateCoordinator):
         Child counts (optimizer count, string count, inverter count) count only active (blank or ACTIVE) devices.
         """
         lifetime_energy_lookup = self._build_lifetime_energy_lookup(lifetime_energy_data)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers coordinator: Lifetime energy lookup built with %d string(s) for site %s",
+                len(lifetime_energy_lookup),
+                site_id,
+            )
         site_id_str = str(site_id)
         site = SiteRollupState(
             current=0.0, power=0.0, voltage_sum=0.0, voltage_count=0,
@@ -864,6 +880,13 @@ class MyCoordinator(DataUpdateCoordinator):
             and portal_site_lifetime_kwh >= RELIABLE_THRESHOLD_KWH
             and site.lifetime_energy < RELIABLE_THRESHOLD_KWH
         ):
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers coordinator: Site %s using portal lifetime (aggregated=%.3f kWh < threshold, portal=%.3f kWh)",
+                    site_id,
+                    site.lifetime_energy,
+                    portal_site_lifetime_kwh,
+                )
             site = site._replace(lifetime_energy=portal_site_lifetime_kwh)
 
         site_aggregated = self._create_site_aggregated(site_id, site, current_utc)
@@ -977,7 +1000,7 @@ class MyCoordinator(DataUpdateCoordinator):
             return self._light_check_should_trigger_full_refresh(rep_list, latest_measurement, now_utc)
         except Exception as e:  # pylint: disable=broad-except
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Lightweight update check failed: %s", e)
+                _LOGGER.debug("SolarEdge Optimizers coordinator: Lightweight update check failed: %s", e)
             return False
 
     def _index_optimizers_by_position(self, data_dict: dict) -> None:
