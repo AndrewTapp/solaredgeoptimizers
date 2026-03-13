@@ -23,7 +23,9 @@ Adaptive Polling Strategy:
 Data Aggregation:
 - Power, current, voltage, and lifetime energy aggregate from all devices (any status) with recent data
 - Child counts (optimizer/string/inverter count) count only active devices (status blank or "Active")
-- Lifetime energy uses portal total when aggregated data is unreliable (<100 kWh)
+- Lifetime energy: site uses portal dashboard production (Wh) when > aggregated; inverter/string use
+  portal layout/energy by-inverter (Wh) when > aggregated. Start date for portal calls = installation date.
+- Fetches site info (installation date, peak power) from layout/information/site for site-only sensors
 
 Duplicate Handling:
 - Resolves duplicate positions (same display name) with letter suffixes (a, b, c...)
@@ -56,7 +58,6 @@ from .const import (
     CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
     COORDINATOR_REFRESH_TIMEOUT_SEC,
     REVERT_TO_ONE_RETRY_INTERVAL,
-    RELIABLE_THRESHOLD_KWH,
     LIGHT_CHECK_MIN_INTERVAL,
     LIGHT_CHECK_BATCH_SIZE,
     LIGHT_CHECK_DESIRED_INTERVAL_FRESH,
@@ -125,6 +126,7 @@ InverterRollupResult = namedtuple(
     ],
 )
 # Context for aggregation to reduce parameter count
+# portal_by_inverter: optional dict inv_serial -> {"energy_wh": float, "strings": {order: wh}} from layout/energy by-inverter
 AggregationContext = namedtuple(
     "AggregationContext",
     [
@@ -134,6 +136,7 @@ AggregationContext = namedtuple(
         "current_utc",
         "site_id_str",
         "include_site_id_in_entity_id",
+        "portal_by_inverter",
     ],
 )
 # Inverter aggregation data to reduce parameter count in _create_inverter_aggregated
@@ -420,14 +423,16 @@ class MyCoordinator(DataUpdateCoordinator):
             )
         return inverter_aggregated
 
-    def _create_site_aggregated(self, site_id, site_state: SiteRollupState, current_utc):
+    def _create_site_aggregated(self, site_id, site_state: SiteRollupState, current_utc, site_info=None):
         """Build SolarEdgeAggregatedData for the site.
         
         Args:
             site_id: The site ID
             site_state: SiteRollupState with aggregated values
             current_utc: Current UTC datetime for fallback lastmeasurement
+            site_info: Optional dict from get_site_info_cached (installationDate, peakPower)
         """
+        site_info = site_info or {}
         site_id_str = str(site_id)
         site_entity_path = (site_id_str,)
         site_aggregated = SolarEdgeAggregatedData(
@@ -449,14 +454,20 @@ class MyCoordinator(DataUpdateCoordinator):
         site_aggregated.active_optimizer_count = site_state.active_optimizers
         site_aggregated.serialnumber = f"Site_{site_id}"
         site_aggregated.panel_description = f"Site {site_id}"
+        site_aggregated.installation_date = site_info.get("installationDate")
+        site_aggregated.peak_power = site_info.get("peakPower")
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers: Created site aggregated %s child_count=%d (active inverters) active_optimizers=%d",
-                site_aggregated.panel_id, site_aggregated.child_count, site_aggregated.active_optimizer_count,
+                "SolarEdge Optimizers: Created site aggregated %s child_count=%d (active inverters) active_optimizers=%d installation_date=%s peak_power=%s",
+                site_aggregated.panel_id,
+                site_aggregated.child_count,
+                site_aggregated.active_optimizer_count,
+                site_aggregated.installation_date,
+                site_aggregated.peak_power,
             )
         return site_aggregated
 
-    def _register_inverter_and_string_devices(
+    def _register_inverter_and_string_devices(  # pylint: disable=too-many-arguments
         self, device_registry, site_id: str, inverter, inv_idx: int, inv_suffix: str = ""
     ) -> None:
         """Create device registry entries for one inverter and its strings.
@@ -633,9 +644,10 @@ class MyCoordinator(DataUpdateCoordinator):
                 return round(kWh, 3)
         return 0.0
 
-    def _process_single_string(self, string, str_suffix, str_idx, inv_idx_str, ctx):
+    def _process_single_string(self, string, str_suffix, str_idx, inv_idx_str, inv_serial, ctx):  # pylint: disable=too-many-arguments
         """Process a single string: aggregate optimizers and create aggregated data.
         
+        inv_serial: inverter serial for portal_by_inverter lookup.
         Returns (string_aggregated, string_is_active, agg_data: StringAggData).
         """
         (
@@ -649,6 +661,20 @@ class MyCoordinator(DataUpdateCoordinator):
         ) = self._aggregate_optimizers_in_string(string, ctx.data_dict, ctx.timetocheck)
 
         string_lifetime_energy = self._get_string_lifetime_energy(string, ctx)
+        portal_by_inv = getattr(ctx, "portal_by_inverter", None) or {}
+        portal_strings = portal_by_inv.get(inv_serial, {}).get("strings", {})
+        portal_wh = portal_strings.get(str_idx)  # Portal value in Wh
+        if portal_wh is not None and string_lifetime_energy is not None and portal_wh > (string_lifetime_energy * 1000.0):
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers coordinator: String %s (inv_serial=%s str_idx=%s) using portal lifetime: %.3f kWh (aggregated=%.3f)",
+                    string.stringId,
+                    inv_serial,
+                    str_idx,
+                    round(portal_wh / 1000.0, 3),
+                    string_lifetime_energy,
+                )
+            string_lifetime_energy = round(portal_wh / 1000.0, 3)  # Wh -> kWh
         string_status_raw = getattr(string, "status", "") or ""
         string_is_active = is_status_active(string_status_raw)
 
@@ -724,10 +750,11 @@ class MyCoordinator(DataUpdateCoordinator):
                 str_duplicates, inv_idx_str,
             )
 
+        inv_serial = getattr(inverter, "serialNumber", "") or ""
         for str_idx, string in enumerate(inverter.strings, start=1):
             str_suffix = str_suffix_map.get(str_idx - 1, "")
             string_aggregated, string_is_active, agg_data = self._process_single_string(
-                string, str_suffix, str_idx, inv_idx_str, ctx
+                string, str_suffix, str_idx, inv_idx_str, inv_serial, ctx
             )
             self._accumulate_string_into_inverter(inv_state, string_aggregated, agg_data, string_is_active)
 
@@ -791,6 +818,20 @@ class MyCoordinator(DataUpdateCoordinator):
             inverter_string_count, inverter_lifetime_energy,
         ) = self._process_inverter_strings(inverter, inv_idx, inv_suffix, ctx)
 
+        inv_serial = getattr(inverter, "serialNumber", "") or ""
+        portal_by_inv = getattr(ctx, "portal_by_inverter", None) or {}
+        portal_inv = portal_by_inv.get(inv_serial, {})
+        portal_inv_wh = portal_inv.get("energy_wh")  # Portal value in Wh (e.g. 2.8453492E7)
+        if portal_inv_wh is not None and inverter_lifetime_energy is not None and portal_inv_wh > (inverter_lifetime_energy * 1000.0):
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers coordinator: Inverter %s using portal lifetime: %.3f kWh (aggregated=%.3f)",
+                    inv_serial or inverter.inverterId,
+                    round(portal_inv_wh / 1000.0, 3),
+                    inverter_lifetime_energy,
+                )
+            inverter_lifetime_energy = round(portal_inv_wh / 1000.0, 3)  # Wh -> kWh
+
         inv_data = InverterAggData(
             current=inverter_current, power=inverter_power, voltage_sum=inverter_voltage_sum,
             voltage_count=inverter_voltage_count, last_measurement=inverter_last_measurement,
@@ -827,7 +868,7 @@ class MyCoordinator(DataUpdateCoordinator):
             )
         return inv_suffix_map
 
-    def _calculate_aggregated_data(
+    def _calculate_aggregated_data(  # pylint: disable=too-many-arguments
         self,
         data_dict,
         current_utc,
@@ -836,12 +877,14 @@ class MyCoordinator(DataUpdateCoordinator):
         site_id,
         portal_site_lifetime_kwh=None,
         include_site_id_in_entity_id=False,
+        site_info=None,
+        portal_by_inverter=None,
     ):
         """Calculate aggregated data at site, inverter, and string levels.
 
-        Site lifetime energy uses aggregated optimizer data when reliable. When
-        aggregated is unreliable (e.g. very small while portal has a real total),
-        site-level uses the portal total (sum of unscaledEnergy from layout/energy).
+        Site lifetime energy: use portal total when it is greater than aggregated.
+        site_info: optional dict from get_site_info_cached (installationDate, peakPower) for site-only sensors.
+        portal_by_inverter: optional dict from get_layout_energy_by_inverter_cached for inverter/string portal overrides.
         include_site_id_in_entity_id: when False, entity_id_path omits site_id (shorter entity IDs).
         
         No deduplication - all inverters and strings are shown. When duplicates exist
@@ -869,6 +912,7 @@ class MyCoordinator(DataUpdateCoordinator):
         ctx = AggregationContext(
             data_dict=data_dict, timetocheck=timetocheck, lifetime_energy_lookup=lifetime_energy_lookup,
             current_utc=current_utc, site_id_str=site_id_str, include_site_id_in_entity_id=include_site_id_in_entity_id,
+            portal_by_inverter=portal_by_inverter or {},
         )
 
         for inv_idx, inverter in enumerate(self._site_structure.inverters, start=1):
@@ -877,19 +921,20 @@ class MyCoordinator(DataUpdateCoordinator):
 
         if (
             portal_site_lifetime_kwh is not None
-            and portal_site_lifetime_kwh >= RELIABLE_THRESHOLD_KWH
-            and site.lifetime_energy < RELIABLE_THRESHOLD_KWH
+            and portal_site_lifetime_kwh > site.lifetime_energy
         ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge Optimizers coordinator: Site %s using portal lifetime (aggregated=%.3f kWh < threshold, portal=%.3f kWh)",
+                    "SolarEdge Optimizers coordinator: Site %s using portal lifetime (aggregated=%.3f kWh, portal=%.3f kWh)",
                     site_id,
                     site.lifetime_energy,
                     portal_site_lifetime_kwh,
                 )
             site = site._replace(lifetime_energy=portal_site_lifetime_kwh)
 
-        site_aggregated = self._create_site_aggregated(site_id, site, current_utc)
+        site_aggregated = self._create_site_aggregated(
+            site_id, site, current_utc, site_info=site_info or {}
+        )
         data_dict[site_aggregated.panel_id] = site_aggregated
 
     def _decide_initial_full_refresh(self, is_data_dict, current_data) -> bool:
@@ -1073,7 +1118,7 @@ class MyCoordinator(DataUpdateCoordinator):
                 )
 
     async def _fetch_lifetime_energy_and_aggregate(self, data_dict, current_utc, site_id):
-        """Fetch lifetime energy, then run aggregated data calculation."""
+        """Fetch lifetime energy and site info, then run aggregated data calculation."""
         try:
             lifetime_energy_data = await self.hass.async_add_executor_job(
                 self.my_api.get_lifetime_energy_cached
@@ -1089,7 +1134,51 @@ class MyCoordinator(DataUpdateCoordinator):
                 e,
             )
             lifetime_energy_data = {}
+        site_info = {}
+        get_site_info = getattr(self.my_api, "get_site_info_cached", None)
+        if get_site_info is not None:
+            try:
+                site_info = await self.hass.async_add_executor_job(get_site_info)
+                if _LOGGER.isEnabledFor(logging.DEBUG) and site_info:
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers coordinator: Site info: installation_date=%s peak_power=%s",
+                        site_info.get("installationDate"),
+                        site_info.get("peakPower"),
+                    )
+            except Exception as e:  # pylint: disable=broad-except
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Site info fetch failed: %s", e)
+        installation_date = site_info.get("installationDate")
         portal_site_lifetime_kwh = _site_lifetime_kwh_from_layout_energy(lifetime_energy_data)
+        get_dashboard = getattr(self.my_api, "get_dashboard_site_production_cached", None)
+        if get_dashboard is not None and installation_date:
+            try:
+                prod_wh = await self.hass.async_add_executor_job(get_dashboard, installation_date)
+                if prod_wh is not None:
+                    # Portal returns production in Wh (e.g. 2.7341768E7); convert to kWh for entity state
+                    portal_site_lifetime_kwh = round(prod_wh / 1000.0, 3)
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "SolarEdge Optimizers coordinator: Using dashboard production for site: %.3f kWh (from %.0f Wh)",
+                            portal_site_lifetime_kwh,
+                            prod_wh,
+                        )
+            except Exception as e:  # pylint: disable=broad-except
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Dashboard production fetch failed: %s", e)
+        portal_by_inverter = {}
+        get_by_inv = getattr(self.my_api, "get_layout_energy_by_inverter_cached", None)
+        if get_by_inv is not None and installation_date:
+            try:
+                portal_by_inverter = await self.hass.async_add_executor_job(get_by_inv, installation_date)
+                if _LOGGER.isEnabledFor(logging.DEBUG) and portal_by_inverter:
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers coordinator: Portal by-inverter energy: %d inverter(s)",
+                        len(portal_by_inverter),
+                    )
+            except Exception as e:  # pylint: disable=broad-except
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: By-inverter energy fetch failed: %s", e)
         self._calculate_aggregated_data(
             data_dict,
             current_utc,
@@ -1098,6 +1187,8 @@ class MyCoordinator(DataUpdateCoordinator):
             site_id,
             portal_site_lifetime_kwh=portal_site_lifetime_kwh,
             include_site_id_in_entity_id=self._include_site_id_in_entity,
+            site_info=site_info,
+            portal_by_inverter=portal_by_inverter,
         )
 
     def _log_update_cycle_debug(
