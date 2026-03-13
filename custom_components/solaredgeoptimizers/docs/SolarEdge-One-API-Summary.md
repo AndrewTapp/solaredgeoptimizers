@@ -36,7 +36,7 @@ A site-level sensor **Obtained from** shows whether current data came from **"On
 - **Auth**: Single OAuth flow and Bearer token instead of mixing Basic Auth and session cookies.
 - **Data**: Structured JSON (e.g. `power_W`, `voltage_V`, `optimizerVoltage_V`) instead of locale-dependent labels; layout in a single v2 structure.
 - **Devices**: Optimizer and inverter **model** (and serial) come from the API, so HA devices can show real model names (e.g. P405-4RM4MRM-NA25, SE5000H-RW000BNN4). When the API provides a **panel type** (description, e.g. SunPower SPR-MAX3-400), it is included in the optimizer device model and exposed as a **panel_type** attribute on optimizer sensors.
-- **Polling**: Lightweight “any new data?” check can use a batch request (up to `LIGHT_CHECK_BATCH_SIZE` = 5 optimizers) instead of one panel; 1-hour stale threshold for live values (legacy used 2 hours). **Full refresh** fetches all optimizer live data in **one batch POST** (`requestSystemDataBatch` with all serials), reducing portal load; if that batch fails (e.g. 5xx), the integration falls back to per-optimizer requests.
+- **Polling**: Lightweight “any new data?” check can use a batch request (up to `LIGHT_CHECK_BATCH_SIZE` = 5 optimizers) instead of one panel; 1-hour stale threshold for live values (legacy uses 2 hours). Site layout (panels) is cached for **2 hours** (`PANELS_CACHE_TTL_ONE`) when using SolarEdge One. **Full refresh** fetches all optimizer live data in **one batch POST** (`requestSystemDataBatch` with all serials), reducing portal load; if that batch fails (e.g. 5xx), the integration falls back to per-optimizer requests.
 
 ## In this integration
 
