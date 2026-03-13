@@ -208,9 +208,11 @@ def _safe_float(value, default=0.0):
 
 
 def _parse_last_measurement_date(rawdate, panelid, timezone):
-    """Parse lastMeasurementDate string (ISO or SolarEdge format) to timezone-aware UTC datetime."""
+    """Parse lastMeasurementDate string (ISO or SolarEdge format) to timezone-aware UTC datetime.
+    Returns None when rawdate is empty (e.g. inactive optimizers with no lastMeasurement from API).
+    """
     if not rawdate:
-        return datetime.now(pytz.UTC)
+        return None
     try:
         if "T" in rawdate and ("Z" in rawdate or "+" in rawdate or (len(rawdate) >= 6 and rawdate[-6] in "+-")):
             iso_str = rawdate.strip().replace("Z", "+00:00")
