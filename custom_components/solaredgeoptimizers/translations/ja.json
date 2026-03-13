@@ -99,6 +99,12 @@
       "tilt": {
         "name": "傾斜角"
       },
+      "installation_date": {
+        "name": "設置日"
+      },
+      "peak_power": {
+        "name": "ピーク電力"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "パネルタイプ"

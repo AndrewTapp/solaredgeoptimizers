@@ -99,6 +99,12 @@
       "tilt": {
         "name": "Hellingshoek"
       },
+      "installation_date": {
+        "name": "Installatiedatum"
+      },
+      "peak_power": {
+        "name": "Piekvermogen"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneeltype"

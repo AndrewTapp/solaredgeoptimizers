@@ -99,6 +99,12 @@
       "tilt": {
         "name": "Helning"
       },
+      "installation_date": {
+        "name": "Installasjonsdato"
+      },
+      "peak_power": {
+        "name": "Toppeffekt"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneltype"

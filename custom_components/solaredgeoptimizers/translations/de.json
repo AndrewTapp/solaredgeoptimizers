@@ -99,6 +99,12 @@
       "tilt": {
         "name": "Neigung"
       },
+      "installation_date": {
+        "name": "Installationsdatum"
+      },
+      "peak_power": {
+        "name": "Spitzenleistung"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneltyp"

@@ -99,6 +99,12 @@
       "tilt": {
         "name": "Nachylenie"
       },
+      "installation_date": {
+        "name": "Data instalacji"
+      },
+      "peak_power": {
+        "name": "Moc szczytowa"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Typ panelu"

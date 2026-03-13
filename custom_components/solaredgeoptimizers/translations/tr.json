@@ -99,6 +99,12 @@
       "tilt": {
         "name": "Eğim"
       },
+      "installation_date": {
+        "name": "Kurulum tarihi"
+      },
+      "peak_power": {
+        "name": "Tepe gücü"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Panel tipi"
