@@ -795,7 +795,11 @@ class solaredgeoptimizers:
         }
 
     def _doRequest(self, method, request_url, data=None):
-        """Execute request with thread-local session; return response text or ERROR001 string."""
+        """Execute request with thread-local session; return response text or ERROR001 string.
+
+        Uses 'with session.request(...) as response' so the response body is consumed and the
+        connection is released back to the pool (or closed); no file descriptors are left open.
+        """
         session = self._get_session()
         therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
         thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
@@ -834,13 +838,16 @@ class solaredgeoptimizers:
 
     def close(self):
         """Close all sessions (all threads) to prevent file descriptor leaks.
-        
+
         This should be called when the API client is no longer needed, e.g., during integration unload.
         ThreadPoolExecutor may have created sessions in multiple threads; we track and close all.
         Session.close() releases the connection pool and all underlying file descriptors.
         Idempotent; safe to call multiple times.
         """
         self._closed = True
+        # Clear this thread's reference first so we don't use a session we're about to close
+        if hasattr(self._thread_local, "session"):
+            self._thread_local.session = None
         with self._sessions_lock:
             sessions_to_close = set(self._all_sessions)
             self._all_sessions.clear()
@@ -851,9 +858,6 @@ class solaredgeoptimizers:
                     _LOGGER.debug("SolarEdge Optimizers (legacy): Closed session")
             except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.warning("SolarEdge Optimizers (legacy): Error closing session: %s", e)
-        # Clear current thread's session reference so _get_session would not reuse a closed session
-        if hasattr(self._thread_local, "session"):
-            self._thread_local.session = None
 
     def getAlerts(self, only_open=False):
         # Note: this might require FULL_ACCESS rights in the SE portal, as opposed to DASHBOARD_AND_LAYOUT
