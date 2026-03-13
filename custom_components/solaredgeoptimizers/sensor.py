@@ -1609,7 +1609,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         except (TypeError, ValueError):
             self._attr_native_value = None
 
-    def _update_optimizer_value_from_item(self, item, timetocheck, ts: datetime) -> None:
+    def _update_optimizer_value_from_item(self, item, timetocheck, ts: datetime | None) -> None:
         """Set _attr_native_value from item (energy monotonic, lastmeasurement, status, azimuth, tilt, or mapped value with age check)."""
         if self._sensor_type is SENSOR_TYPE_ENERGY:
             self._set_energy_value_from_item(item)
@@ -1624,7 +1624,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         elif self._sensor_type is SENSOR_TYPE_TILT:
             self._set_tilt_value_from_item(item)
         else:
-            self._set_live_value_from_item(item, ts <= timetocheck, ts, timetocheck)
+            # Live sensors: when lastmeasurement is None (e.g. inactive with no API date), treat as too old
+            if ts is None:
+                self._attr_native_value = 0
+            else:
+                self._set_live_value_from_item(item, ts <= timetocheck, ts, timetocheck)
 
     def _zero_optimizer_when_no_data(self) -> None:
         """Zero native value when coordinator has no data (except energy, lastmeasurement, temperature)."""
