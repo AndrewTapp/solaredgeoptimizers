@@ -1074,6 +1074,15 @@ class MyCoordinator(DataUpdateCoordinator):
                 if item is None:
                     continue
                 data_dict[item.panel_id] = item
+            # For inactive optimizers the API often omits lastMeasurement; preserve previous value
+            if is_data_dict and current_data:
+                for pid, item in data_dict.items():
+                    if getattr(item, "lastmeasurement", None) is None:
+                        prev = current_data.get(pid)
+                        if prev is not None:
+                            prev_lm = getattr(prev, "lastmeasurement", None)
+                            if isinstance(prev_lm, datetime):
+                                item.lastmeasurement = prev_lm
             self._index_optimizers_by_position(data_dict)
             self.first_boot = False
             self._obtained_from = getattr(self.my_api, "_obtained_from", OBTAINED_FROM_ONE)
