@@ -17,6 +17,7 @@ Aggregated Sensors (String, Inverter, Site levels):
 Site-Level Sensors:
 - Last Polled (integration polling timestamp)
 - Obtained From (indicates whether data came from One API or Legacy API)
+- Installation Date, Peak Power (from portal layout/information/site; One API only)
 
 Key features:
 - Entities use CoordinatorEntity for automatic updates from the data coordinator
@@ -42,7 +43,7 @@ from homeassistant.components.sensor import (
 )
 
 from homeassistant.core import callback
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -67,6 +68,8 @@ from .const import (
     SENSOR_TYPE_STATUS,
     SENSOR_TYPE_AZIMUTH,
     SENSOR_TYPE_TILT,
+    SENSOR_TYPE_INSTALLATION_DATE,
+    SENSOR_TYPE_PEAK_POWER,
     CHECK_TIME_DELTA,
     is_status_active,
     parse_string_display_name_path,
@@ -433,7 +436,9 @@ def _create_string_aggregated_data(string, string_entity_path):
     return string_aggregated
 
 
-def _create_string_sensors(coordinator, hass, entry, string, string_aggregated, inverter, base_name, is_active):
+def _create_string_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass, entry, string, string_aggregated, inverter, base_name, is_active
+):
     """Create sensor entities for a string, skipping excluded sensors for inactive strings.
     
     Returns (sensors_list, skipped_count).
@@ -473,7 +478,9 @@ def _create_inverter_aggregated_data(inverter, inv_idx_str, include_site_id, sit
     return inverter_aggregated
 
 
-def _create_inverter_sensors(coordinator, hass, entry, inverter, inverter_aggregated, base_name, is_active):
+def _create_inverter_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass, entry, inverter, inverter_aggregated, base_name, is_active
+):
     """Create sensor entities for an inverter, skipping excluded sensors for inactive inverters.
     
     Returns (sensors_list, skipped_count).
@@ -528,7 +535,7 @@ def _build_string_entity_path_for_sensor(string, str_suffix: str, inv_idx_str: s
     return (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
 
 
-def _build_string_sensors_for_inverter(
+def _build_string_sensors_for_inverter(  # pylint: disable=too-many-arguments
     coordinator, hass: HomeAssistant, entry: ConfigEntry, inverter, inv_idx: int, inv_suffix: str, inv_suffix_map: dict,
     base_name: str, include_site_id: bool, site_id: str
 ) -> tuple[list, int, int, int]:
@@ -583,7 +590,7 @@ def _build_string_sensors_for_inverter(
     return sensors, active_count, inactive_count, skipped_count
 
 
-def _build_all_string_sensors(
+def _build_all_string_sensors(  # pylint: disable=too-many-arguments
     coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, inv_suffix_map: dict, base_name: str, include_site_id: bool, site_id: str
 ) -> tuple[list, int, int, int]:
     """Build string sensors for all inverters. Returns (sensors, active_count, inactive_count, skipped_count)."""
@@ -613,7 +620,7 @@ def _build_all_string_sensors(
     return sensors, active_count, inactive_count, skipped_count
 
 
-def _build_all_inverter_sensors(
+def _build_all_inverter_sensors(  # pylint: disable=too-many-arguments
     coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, inv_suffix_map: dict, base_name: str, include_site_id: bool, site_id: str
 ) -> tuple[list, int, int, int]:
     """Build inverter sensors for all inverters. Returns (sensors, active_count, inactive_count, skipped_count)."""
@@ -656,7 +663,9 @@ def _build_all_inverter_sensors(
     return sensors, active_count, inactive_count, skipped_count
 
 
-def _build_site_sensors(coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, base_name: str, site_id: str) -> list:
+def _build_site_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, base_name: str, site_id: str
+) -> list:
     """Build site-level aggregated sensors. Returns list of sensors."""
     sensors = []
     site_aggregated = SolarEdgeAggregatedData(
@@ -679,7 +688,9 @@ def _build_site_sensors(coordinator, hass: HomeAssistant, entry: ConfigEntry, si
     return sensors
 
 
-def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, include_site_id, site_id):
+def _build_aggregated_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass, entry, site_struct, base_name, include_site_id, site_id
+):
     """Build list of SolarEdgeAggregatedSensor entities for strings, inverters, and site.
     
     No deduplication - all inverters and strings are shown. When duplicates exist
@@ -752,7 +763,9 @@ def _log_setup_info(site, base_name: str, include_site_id: bool, site_id: str) -
         )
 
 
-def _create_site_level_sensors(coordinator, hass: HomeAssistant, entry: ConfigEntry, site_id: str, base_name: str | None, include_site_id: bool) -> list:
+def _create_site_level_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass: HomeAssistant, entry: ConfigEntry, site_id: str, base_name: str | None, include_site_id: bool
+) -> list:
     """Create site-level sensors (Last Polled, Obtained From). Returns list of sensors."""
     return [
         SolarEdgeIntegrationLastPolledSensor(
@@ -1000,6 +1013,8 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_LASTMEASUREMENT: "lastmeasurement",
         SENSOR_TYPE_CHILD_COUNT: "child_count",
         SENSOR_TYPE_STATUS: "status",
+        SENSOR_TYPE_INSTALLATION_DATE: "installation_date",
+        SENSOR_TYPE_PEAK_POWER: "peak_power",
     }
     # Translation keys for entity names (i18n)
     _TRANSLATION_KEYS = {
@@ -1010,6 +1025,8 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_POWER: "power",
         SENSOR_TYPE_STATUS: "status",
+        SENSOR_TYPE_INSTALLATION_DATE: "installation_date",
+        SENSOR_TYPE_PEAK_POWER: "peak_power",
     }
     # (unit, device_class, state_class, suggested_display_precision) per sensor type
     _AGGREGATED_UNITS_MAP = {
@@ -1017,6 +1034,8 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_CURRENT: (UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None),
         SENSOR_TYPE_POWER: (UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
         SENSOR_TYPE_ENERGY: (UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, 3),
+        SENSOR_TYPE_INSTALLATION_DATE: (None, SensorDeviceClass.DATE, None, None),
+        SENSOR_TYPE_PEAK_POWER: (UnitOfPower.KILO_WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
     }
 
     def __init__(
@@ -1208,13 +1227,25 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
         if not attr_name:
             return
-        new_value = getattr(item, attr_name, 0 if self._sensor_type is not SENSOR_TYPE_STATUS else "")
+        default = 0 if self._sensor_type not in (SENSOR_TYPE_STATUS, SENSOR_TYPE_INSTALLATION_DATE, SENSOR_TYPE_PEAK_POWER) else ("" if self._sensor_type is SENSOR_TYPE_STATUS else None)
+        new_value = getattr(item, attr_name, default)
         if self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
             new_value = int(new_value) if new_value is not None else 0
         elif self._sensor_type is SENSOR_TYPE_ENERGY:
             new_value = self._normalize_aggregated_energy_value(new_value, self._attr_native_value)
         elif self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE):
             new_value = self._normalize_aggregated_live_value(new_value, 2)
+        elif self._sensor_type is SENSOR_TYPE_PEAK_POWER and new_value is not None:
+            new_value = self._normalize_aggregated_live_value(new_value, 2)
+        elif self._sensor_type is SENSOR_TYPE_INSTALLATION_DATE and new_value is not None:
+            # Home Assistant date device class expects a date object (has .isoformat()), not a str
+            if isinstance(new_value, str) and new_value.strip():
+                try:
+                    new_value = date.fromisoformat(new_value.strip())
+                except (ValueError, TypeError):
+                    new_value = None
+            elif not isinstance(new_value, date):
+                new_value = None
         elif self._sensor_type is SENSOR_TYPE_STATUS:
             raw = str(new_value).strip() if new_value else ""
             new_value = status_display_value(raw)
