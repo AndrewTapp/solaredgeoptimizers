@@ -24,22 +24,34 @@ API Endpoints (monitoring.solaredge.com/services/...):
    GET .../layout/information/inverters?inverter-serials=...
    Returns fullModel (e.g. SE5000H-RW000BNN4) for device registry
 
-4. Optimizer Temperatures:
+4. Site Information:
+   GET .../layout/information/site/{siteId}
+   Returns installationDate, peakPower (kW), etc. Cached per SITE_INFO_CACHE_TTL (e.g. 2 h).
+
+5. Optimizer Temperatures:
    GET .../layout/energy/site/{siteId}/by-inverter?include-max-temperature=true
    Returns per-optimizer temperature (auto-converts Fahrenheit to Celsius)
    Cached per TEMPERATURE_CACHE_TTL (e.g. 30 min)
 
-5. Lifetime Energy:
+6. Lifetime Energy (per-optimizer):
    GET .../layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...
    Fetches per-optimizer lifetime energy in parallel (thread pool)
    Cached per LIFETIME_ENERGY_CACHE_TTL (e.g. 1 hour)
+
+7. Dashboard Site Production:
+   GET .../dashboard/energy/sites/{siteId}?start-date=...&measurement-types=production,yield
+   Returns summary.production in Wh for site lifetime when > aggregated.
+
+8. Layout Energy by Inverter:
+   GET .../layout/energy/site/{siteId}/by-inverter?start-date=...
+   Returns inverter and string lifetime energy (Wh) for portal-override when > aggregated.
 
 Key Features:
 - Automatic retry on timeout for optimizer data requests
 - Temperature unit normalization (F to C conversion)
 - Duplicate name resolution with letter suffixes for same-position devices
 - Azimuth and tilt extraction from optimizer module data (radians to degrees)
-- Panel cache (PANELS_CACHE_TTL_ONE, e.g. 2 h), temperature (TEMPERATURE_CACHE_TTL), lifetime (LIFETIME_ENERGY_CACHE_TTL)
+- Panel cache (PANELS_CACHE_TTL_ONE), site info (SITE_INFO_CACHE_TTL), temperature (TEMPERATURE_CACHE_TTL), lifetime (LIFETIME_ENERGY_CACHE_TTL)
 """
 import math
 import base64
@@ -70,6 +82,7 @@ from .const import (
     MFE_AUTH_CALLBACK_PATH,
     TOKEN_PATH,
     PANELS_CACHE_TTL_ONE,
+    SITE_INFO_CACHE_TTL,
     LIFETIME_ENERGY_CACHE_TTL,
     TEMPERATURE_CACHE_TTL,
     is_status_active,
@@ -535,6 +548,9 @@ class solaredge_one:
         self._panels_cache = None
         self._panels_cache_time = None
         self._panels_cache_ttl = PANELS_CACHE_TTL_ONE
+        self._site_info_cache = None
+        self._site_info_cache_time = None
+        self._site_info_cache_ttl = SITE_INFO_CACHE_TTL
         self._lifetime_energy_cache = None
         self._lifetime_energy_cache_time = None
         self._lifetime_energy_cache_ttl = LIFETIME_ENERGY_CACHE_TTL
@@ -608,6 +624,164 @@ class solaredge_one:
                 r.raise_for_status()
             r.raise_for_status()
             return r.json()
+
+    def get_site_info_cached(self) -> dict:
+        """
+        Fetch site information (installation date, peak power) from layout/information/site.
+        Returns dict with keys installationDate (str "YYYY-MM-DD"), peakPower (float kW).
+        Cached per SITE_INFO_CACHE_TTL (same as layout cache).
+        """
+        now = datetime.now()
+        if (
+            self._site_info_cache is not None
+            and self._site_info_cache_time is not None
+            and (now - self._site_info_cache_time) <= self._site_info_cache_ttl
+        ):
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge One: Using cached site info (age=%s)",
+                    now - self._site_info_cache_time,
+                )
+            return self._site_info_cache
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: Site info cache miss (TTL=%s), fetching", self._site_info_cache_ttl)
+        try:
+            path = f"/services/layout/information/site/{self.siteid}"
+            data = self._get(path, timeout=API_TIMEOUT_SHORT)
+            result = {}
+            if data.get("installationDate") is not None:
+                result["installationDate"] = str(data["installationDate"])
+            if data.get("peakPower") is not None:
+                try:
+                    result["peakPower"] = float(data["peakPower"])
+                except (TypeError, ValueError):
+                    pass
+            self._site_info_cache = result
+            self._site_info_cache_time = now
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One: Fetched site info: %s", result)
+            return result
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.warning("SolarEdge One: Site info fetch failed: %s. Using previous cache.", e)
+            return self._site_info_cache if self._site_info_cache is not None else {}
+
+    def get_dashboard_site_production_cached(self, installation_date: str | None) -> float | None:
+        """
+        Fetch site lifetime production (Wh) from dashboard/energy summary.production.
+        start-date=installation_date, end-date=today. Cached per LIFETIME_ENERGY_CACHE_TTL.
+        Returns production in watt-hours or None on failure/missing.
+        """
+        if not installation_date:
+            return None
+        now = datetime.now()
+        cache_key = (installation_date, now.strftime("%Y-%m-%d"))
+        if getattr(self, "_dashboard_production_cache_key", None) == cache_key and getattr(self, "_dashboard_production_cache", None) is not None:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One: Using cached dashboard production")
+            return self._dashboard_production_cache
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge One: Dashboard production cache miss (start=%s), fetching",
+                installation_date,
+            )
+        try:
+            end_date = now.strftime("%Y-%m-%d")
+            path = f"/services/dashboard/energy/sites/{self.siteid}"
+            params = {
+                "start-date": installation_date,
+                "end-date": end_date,
+                "chart-time-unit": "years",
+                "measurement-types": "production,yield",
+            }
+            data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
+            summary = data.get("summary") or {}
+            prod = summary.get("production")
+            if prod is not None:
+                # Portal returns production in watt-hours (Wh), e.g. 2.7341768E7
+                val = float(prod)
+                self._dashboard_production_cache = val
+                self._dashboard_production_cache_key = cache_key
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge One: Dashboard production (Wh): %s", val)
+                return val
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.warning("SolarEdge One: Dashboard production fetch failed: %s", e)
+        return getattr(self, "_dashboard_production_cache", None)
+
+    def get_layout_energy_by_inverter_cached(self, installation_date: str | None) -> dict:
+        """
+        Fetch inverter and string lifetime energy (Wh) from layout/energy by-inverter.
+        start-date=installation_date. Returns dict: inv_serial -> {"energy_wh": float, "strings": {string_relative_order: float}}.
+        Cached per LIFETIME_ENERGY_CACHE_TTL.
+        """
+        if not installation_date:
+            return {}
+        now = datetime.now()
+        cache_key = (installation_date, now.strftime("%Y-%m-%d"))
+        if getattr(self, "_by_inverter_energy_cache_key", None) == cache_key and getattr(self, "_by_inverter_energy_cache", None) is not None:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One: Using cached by-inverter energy")
+            return self._by_inverter_energy_cache
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge One: By-inverter energy cache miss (start=%s), fetching",
+                installation_date,
+            )
+        try:
+            site = self.requestListOfAllPanels()
+            inverter_serials = [inv.serialNumber for inv in site.inverters if getattr(inv, "serialNumber", None)]
+            if not inverter_serials:
+                return {}
+            end_date = now.strftime("%Y-%m-%d")
+            path = f"/services/layout/energy/site/{self.siteid}/by-inverter"
+            params = {
+                "start-date": installation_date,
+                "end-date": end_date,
+                "inverter-serials": ",".join(inverter_serials),
+                "include-max-temperature": "false",
+            }
+            data = self._get(path, params=params, timeout=API_TIMEOUT_LONG)
+            # Portal returns energy values in watt-hours (Wh), e.g. 2.8453492E7
+            result = {}
+            for inv_block in data.get("inverters") or []:
+                serial = (inv_block.get("serial") or "").strip()
+                if not serial:
+                    continue
+                inv_energy = inv_block.get("energy")
+                energy_wh = None
+                if isinstance(inv_energy, dict):
+                    v = inv_energy.get("value")
+                    if v is not None:
+                        try:
+                            energy_wh = float(v)  # Wh
+                        except (TypeError, ValueError):
+                            pass
+                strings_map = {}
+                for s in inv_block.get("strings") or []:
+                    order = s.get("stringRelativeOrder")
+                    if order is None:
+                        continue
+                    try:
+                        order = int(order)
+                    except (TypeError, ValueError):
+                        continue
+                    e = s.get("energy")
+                    if isinstance(e, dict):
+                        v = e.get("value")
+                        if v is not None:
+                            try:
+                                strings_map[order] = float(v)  # Wh
+                            except (TypeError, ValueError):
+                                pass
+                result[serial] = {"energy_wh": energy_wh, "strings": strings_map}
+            self._by_inverter_energy_cache = result
+            self._by_inverter_energy_cache_key = cache_key
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One: By-inverter energy cache refreshed: %d inverters", len(result))
+            return result
+        except Exception as e:  # pylint: disable=broad-except
+            _LOGGER.warning("SolarEdge One: By-inverter energy fetch failed: %s", e)
+        return getattr(self, "_by_inverter_energy_cache", {})
 
     def get_inverter_models(self, serials: list) -> dict[str, str]:
         """
@@ -1128,12 +1302,14 @@ class solaredge_one:
 
     def close(self):
         """Clear tokens and release resources. Idempotent; safe to call multiple times.
-        
+
         One API uses requests.get/post with context managers (no persistent Session),
         so no file descriptors are held. Clearing tokens ensures no reuse after close.
         """
+        if self._closed:
+            return
+        self._closed = True
         if self._access_token and _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: close() clearing access token")
         self._access_token = None
         self._refresh_token = None
-        self._closed = True
