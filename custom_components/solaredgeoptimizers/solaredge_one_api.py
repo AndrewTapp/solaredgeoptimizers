@@ -51,7 +51,9 @@ Key Features:
 - Temperature unit normalization (F to C conversion)
 - Duplicate name resolution with letter suffixes for same-position devices
 - Azimuth and tilt extraction from optimizer module data (radians to degrees)
+- Inverter nodes include maxActivePower (API watts → stored as kW) from layout for inverter-level sensor
 - Panel cache (PANELS_CACHE_TTL_ONE), site info (SITE_INFO_CACHE_TTL), temperature (TEMPERATURE_CACHE_TTL), lifetime (LIFETIME_ENERGY_CACHE_TTL)
+- No persistent sessions; requests use context managers so no file descriptors are held; close() clears tokens.
 """
 import math
 import base64
@@ -476,25 +478,31 @@ def _v2_build_inverter_logical_node(inv_node: dict, resolved_name: str = None) -
     status = status_raw.capitalize() if status_raw else ""
     manufacturer = inv_props.get("manufacturer") or "SolarEdge"
     model = inv_props.get("model") or inv_props.get("partNumber") or ""
+    # maxActivePower from API is in watts; store as kW for display (same as site peak_power)
+    max_active_w = inv_props.get("maxActivePower")
+    max_active_kw = (float(max_active_w) / 1000.0) if max_active_w is not None else None
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug(
-            "SolarEdge One: Building inverter node serial=%s name=%s status=%s manufacturer=%s model=%s",
-            inv_serial, inv_name, status or "(none)", manufacturer, model or "(none)",
+            "SolarEdge One: Building inverter node serial=%s name=%s status=%s manufacturer=%s model=%s maxActivePower=%s kW",
+            inv_serial, inv_name, status or "(none)", manufacturer, model or "(none)", max_active_kw,
         )
     string_children = _v2_build_inverter_logical_children(inv_node)
+    data = {
+        "id": inv_identifier,
+        "serialNumber": inv_serial,
+        "name": inv_name,
+        "displayName": inv_display,
+        "relativeOrder": inv_order,
+        "type": "INVERTER",
+        "operationsKey": inv_node.get("uuid") or "",
+        "status": status,
+        "manufacturer": manufacturer,
+        "model": model,
+    }
+    if max_active_kw is not None:
+        data["maxActivePower"] = max_active_kw
     return {
-        "data": {
-            "id": inv_identifier,
-            "serialNumber": inv_serial,
-            "name": inv_name,
-            "displayName": inv_display,
-            "relativeOrder": inv_order,
-            "type": "INVERTER",
-            "operationsKey": inv_node.get("uuid") or "",
-            "status": status,
-            "manufacturer": manufacturer,
-            "model": model,
-        },
+        "data": data,
         "children": string_children,
     }
 
