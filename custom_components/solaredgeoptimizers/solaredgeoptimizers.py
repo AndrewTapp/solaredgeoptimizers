@@ -34,16 +34,18 @@ API Endpoints (monitoring.solaredge.com/solaredge-apigw/api/...):
 
 Data Classes Defined:
 - SolarEdgeSite: Root container with site ID and list of inverters
-- SolarEdgeInverter: Inverter with serial, name, status, and list of strings
+- SolarEdgeInverter: Inverter with serial, name, status, maxActivePower (kW when from One API), and list of strings
 - SolarEdgeString: String with ID, name, status, and list of optimizers
 - SolarlEdgeOptimizer: Optimizer with ID, serial, name, display name, status
 - SolarEdgeOptimizerData: Live measurement data (power, voltage, current, energy, etc.)
-- SolarEdgeAggregatedData: Aggregated data for string/inverter/site levels; site level also
-  has installation_date and peak_power when provided by One API (layout/information/site).
+- SolarEdgeAggregatedData: Aggregated data for string/inverter/site levels; site level has
+  installation_date and peak_power when provided by One API (layout/information/site);
+  inverter level has max_active_power (kW) when provided by One API (layout logical v2).
 
 Key Features:
 - Locale-aware measurement key parsing (supports EN, DE, FR, ES, IT, NL, etc.)
-- Thread-local session reuse for efficient parallel requests
+- Thread-local session reuse for efficient parallel requests; close() closes all tracked
+  sessions to avoid leaking file descriptors when the integration is unloaded or removed.
 - Caching for panels (PANELS_CACHE_TTL_LEGACY) and lifetime energy (LIFETIME_ENERGY_CACHE_TTL)
 - Unicode normalization for measurement keys (handles various dash/space variants)
 - Timezone-aware date parsing for lastMeasurementDate
@@ -1015,6 +1017,7 @@ class SolarEdgeInverter:
             self.status = data.get("status", "")
             self.manufacturer = data.get("manufacturer", "SolarEdge")
             self.model = data.get("model", "")
+            self.maxActivePower = data.get("maxActivePower")  # kW (One API) or None
 
             self.strings = self.__GetStringInformation(json_obj["logicalTree"]["children"][index]["children"][index2]["children"], index2)
         else:
@@ -1029,6 +1032,7 @@ class SolarEdgeInverter:
             self.status = data.get("status", "")
             self.manufacturer = data.get("manufacturer", "SolarEdge")
             self.model = data.get("model", "")
+            self.maxActivePower = data.get("maxActivePower")  # kW (One API) or None
 
             self.strings = self.__GetStringInformation(json_obj["logicalTree"]["children"][index]["children"], index)
 
@@ -1088,7 +1092,7 @@ class SolarEdgeAggregatedData:
         'panel_id', 'entity_type', 'entity_id_path', 'serialnumber', 'panel_description',
         'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage', 'power',
         'voltage', 'lifetime_energy', 'child_count', 'active_optimizer_count', 'status',
-        'installation_date', 'peak_power',
+        'installation_date', 'peak_power', 'max_active_power',
     )
 
     def __init__(self, entity_id, entity_type, lifetime_energy=None, entity_id_path=None):
@@ -1118,6 +1122,8 @@ class SolarEdgeAggregatedData:
         # Site-only: from portal layout/information/site (installation date, peak power kW)
         self.installation_date = None  # "YYYY-MM-DD" or None
         self.peak_power = None  # float kW or None
+        # Inverter-only: from portal layout logical v2 (maxActivePower in watts, stored as kW)
+        self.max_active_power = None  # float kW or None
 
 
 class SolarEdgeOptimizerData:
