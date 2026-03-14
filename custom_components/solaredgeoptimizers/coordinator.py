@@ -26,6 +26,7 @@ Data Aggregation:
 - Lifetime energy: site uses portal dashboard production (Wh) when > aggregated; inverter/string use
   portal layout/energy by-inverter (Wh) when > aggregated. Start date for portal calls = installation date.
 - Fetches site info (installation date, peak power) from layout/information/site for site-only sensors
+- Inverter aggregated data includes max_active_power (kW) from layout logical v2 when available (One API)
 
 Duplicate Handling:
 - Resolves duplicate positions (same display name) with letter suffixes (a, b, c...)
@@ -415,11 +416,13 @@ class MyCoordinator(DataUpdateCoordinator):
         inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
         inverter_aggregated.panel_description = inverter.displayName
         inverter_aggregated.status = getattr(inverter, "status", "") or ""
+        inverter_aggregated.max_active_power = getattr(inverter, "maxActivePower", None)
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers: Created inverter aggregated %s status=%s child_count=%d (active strings) active_optimizers=%d",
+                "SolarEdge Optimizers: Created inverter aggregated %s status=%s child_count=%d (active strings) active_optimizers=%d max_active_power=%s kW",
                 inverter_aggregated.panel_id, inverter_aggregated.status or "(none)",
                 inverter_aggregated.child_count, inverter_aggregated.active_optimizer_count,
+                inverter_aggregated.max_active_power,
             )
         return inverter_aggregated
 
