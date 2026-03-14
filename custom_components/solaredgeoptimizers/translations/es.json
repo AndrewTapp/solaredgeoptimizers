@@ -105,6 +105,9 @@
       "peak_power": {
         "name": "Potencia pico"
       },
+      "max_active_power": {
+        "name": "Potencia activa máx."
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Tipo de panel"

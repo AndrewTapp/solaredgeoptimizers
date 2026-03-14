@@ -105,6 +105,9 @@
       "peak_power": {
         "name": "Moc szczytowa"
       },
+      "max_active_power": {
+        "name": "Maks. moc czynna"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Typ panelu"

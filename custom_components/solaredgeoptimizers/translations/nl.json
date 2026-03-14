@@ -105,6 +105,9 @@
       "peak_power": {
         "name": "Piekvermogen"
       },
+      "max_active_power": {
+        "name": "Max. actief vermogen"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneeltype"

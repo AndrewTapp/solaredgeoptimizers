@@ -105,6 +105,9 @@
       "peak_power": {
         "name": "Tepe gücü"
       },
+      "max_active_power": {
+        "name": "Maks. aktif güç"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Panel tipi"

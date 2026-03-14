@@ -105,6 +105,9 @@
       "peak_power": {
         "name": "Toppeffekt"
       },
+      "max_active_power": {
+        "name": "Maks. aktiv effekt"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneltype"
