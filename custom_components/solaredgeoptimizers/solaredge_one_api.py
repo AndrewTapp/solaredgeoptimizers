@@ -716,6 +716,39 @@ class solaredge_one:
             _LOGGER.warning("SolarEdge One: Dashboard production fetch failed: %s", e)
         return getattr(self, "_dashboard_production_cache", None)
 
+    def _parse_inverter_energy_block(self, inv_block: dict) -> tuple[str, float | None, dict] | None:
+        """Parse one inverter block from layout/energy by-inverter response. Returns (serial, energy_wh, strings_map) or None."""
+        serial = (inv_block.get("serial") or "").strip()
+        if not serial:
+            return None
+        inv_energy = inv_block.get("energy")
+        energy_wh = None
+        if isinstance(inv_energy, dict):
+            v = inv_energy.get("value")
+            if v is not None:
+                try:
+                    energy_wh = float(v)
+                except (TypeError, ValueError):
+                    pass
+        strings_map = {}
+        for s in inv_block.get("strings") or []:
+            order = s.get("stringRelativeOrder")
+            if order is None:
+                continue
+            try:
+                order = int(order)
+            except (TypeError, ValueError):
+                continue
+            e = s.get("energy")
+            if isinstance(e, dict):
+                v = e.get("value")
+                if v is not None:
+                    try:
+                        strings_map[order] = float(v)
+                    except (TypeError, ValueError):
+                        pass
+        return (serial, energy_wh, strings_map)
+
     def get_layout_energy_by_inverter_cached(self, installation_date: str | None) -> dict:
         """
         Fetch inverter and string lifetime energy (Wh) from layout/energy by-inverter.
@@ -749,39 +782,12 @@ class solaredge_one:
                 "include-max-temperature": "false",
             }
             data = self._get(path, params=params, timeout=API_TIMEOUT_LONG)
-            # Portal returns energy values in watt-hours (Wh), e.g. 2.8453492E7
             result = {}
             for inv_block in data.get("inverters") or []:
-                serial = (inv_block.get("serial") or "").strip()
-                if not serial:
-                    continue
-                inv_energy = inv_block.get("energy")
-                energy_wh = None
-                if isinstance(inv_energy, dict):
-                    v = inv_energy.get("value")
-                    if v is not None:
-                        try:
-                            energy_wh = float(v)  # Wh
-                        except (TypeError, ValueError):
-                            pass
-                strings_map = {}
-                for s in inv_block.get("strings") or []:
-                    order = s.get("stringRelativeOrder")
-                    if order is None:
-                        continue
-                    try:
-                        order = int(order)
-                    except (TypeError, ValueError):
-                        continue
-                    e = s.get("energy")
-                    if isinstance(e, dict):
-                        v = e.get("value")
-                        if v is not None:
-                            try:
-                                strings_map[order] = float(v)  # Wh
-                            except (TypeError, ValueError):
-                                pass
-                result[serial] = {"energy_wh": energy_wh, "strings": strings_map}
+                parsed = self._parse_inverter_energy_block(inv_block)
+                if parsed:
+                    serial, energy_wh, strings_map = parsed
+                    result[serial] = {"energy_wh": energy_wh, "strings": strings_map}
             self._by_inverter_energy_cache = result
             self._by_inverter_energy_cache_key = cache_key
             if _LOGGER.isEnabledFor(logging.DEBUG):
