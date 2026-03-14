@@ -76,6 +76,7 @@ Each constant is documented below with a full description of what it is used for
 === SENSOR TYPE STRINGS & LISTS ===
 - SENSOR_TYPE_*: Sensor type identifiers and lists (individual, aggregated, exclude lists).
   SENSOR_TYPE_INSTALLATION_DATE, SENSOR_TYPE_PEAK_POWER: site-only (from portal layout/information/site).
+  SENSOR_TYPE_MAX_ACTIVE_POWER: inverter-only (from portal layout logical v2 maxActivePower, displayed in kW).
   See in-code comments for which entities get which sensor types.
 
 Utility Functions:
@@ -229,6 +230,7 @@ SENSOR_TYPE_AZIMUTH = "Azimuth"
 SENSOR_TYPE_TILT = "Tilt"
 SENSOR_TYPE_INSTALLATION_DATE = "Installation_date"
 SENSOR_TYPE_PEAK_POWER = "Peak_power"
+SENSOR_TYPE_MAX_ACTIVE_POWER = "Max_active_power"
 
 # Sensors for individual optimizers
 SENSOR_TYPE_INDIVIDUAL = [
@@ -281,6 +283,7 @@ SENSOR_TYPE_AGGREGATED_STRING = SENSOR_TYPE_AGGREGATED_COMMON + [
 SENSOR_TYPE_AGGREGATED_INVERTER = SENSOR_TYPE_AGGREGATED_COMMON + [
     SENSOR_TYPE_CHILD_COUNT,  # For inverters: string count
     SENSOR_TYPE_STATUS,
+    SENSOR_TYPE_MAX_ACTIVE_POWER,  # Inverter max active power (kW) from layout logical v2
 ]
 
 SENSOR_TYPE_AGGREGATED_SITE = SENSOR_TYPE_AGGREGATED_COMMON + [
