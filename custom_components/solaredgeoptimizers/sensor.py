@@ -13,6 +13,7 @@ Aggregated Sensors (String, Inverter, Site levels):
 - Lifetime Energy (summed from children), Last Measurement
 - Child Count (optimizers per string, strings per inverter, inverters per site)
 - Status (Active/Inactive)
+- Inverter-level: Max active power (kW, from portal layout logical v2; One API only)
 
 Site-Level Sensors:
 - Last Polled (integration polling timestamp)
@@ -70,6 +71,7 @@ from .const import (
     SENSOR_TYPE_TILT,
     SENSOR_TYPE_INSTALLATION_DATE,
     SENSOR_TYPE_PEAK_POWER,
+    SENSOR_TYPE_MAX_ACTIVE_POWER,
     CHECK_TIME_DELTA,
     is_status_active,
     parse_string_display_name_path,
@@ -1015,6 +1017,7 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_STATUS: "status",
         SENSOR_TYPE_INSTALLATION_DATE: "installation_date",
         SENSOR_TYPE_PEAK_POWER: "peak_power",
+        SENSOR_TYPE_MAX_ACTIVE_POWER: "max_active_power",
     }
     # Translation keys for entity names (i18n)
     _TRANSLATION_KEYS = {
@@ -1027,6 +1030,7 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_STATUS: "status",
         SENSOR_TYPE_INSTALLATION_DATE: "installation_date",
         SENSOR_TYPE_PEAK_POWER: "peak_power",
+        SENSOR_TYPE_MAX_ACTIVE_POWER: "max_active_power",
     }
     # (unit, device_class, state_class, suggested_display_precision) per sensor type
     _AGGREGATED_UNITS_MAP = {
@@ -1036,6 +1040,7 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_ENERGY: (UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, 3),
         SENSOR_TYPE_INSTALLATION_DATE: (None, SensorDeviceClass.DATE, None, None),
         SENSOR_TYPE_PEAK_POWER: (UnitOfPower.KILO_WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
+        SENSOR_TYPE_MAX_ACTIVE_POWER: (UnitOfPower.KILO_WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
     }
 
     def __init__(
@@ -1227,7 +1232,7 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
         if not attr_name:
             return
-        default = 0 if self._sensor_type not in (SENSOR_TYPE_STATUS, SENSOR_TYPE_INSTALLATION_DATE, SENSOR_TYPE_PEAK_POWER) else ("" if self._sensor_type is SENSOR_TYPE_STATUS else None)
+        default = 0 if self._sensor_type not in (SENSOR_TYPE_STATUS, SENSOR_TYPE_INSTALLATION_DATE, SENSOR_TYPE_PEAK_POWER, SENSOR_TYPE_MAX_ACTIVE_POWER) else ("" if self._sensor_type is SENSOR_TYPE_STATUS else None)
         new_value = getattr(item, attr_name, default)
         if self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
             new_value = int(new_value) if new_value is not None else 0
@@ -1236,6 +1241,8 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         elif self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE):
             new_value = self._normalize_aggregated_live_value(new_value, 2)
         elif self._sensor_type is SENSOR_TYPE_PEAK_POWER and new_value is not None:
+            new_value = self._normalize_aggregated_live_value(new_value, 2)
+        elif self._sensor_type is SENSOR_TYPE_MAX_ACTIVE_POWER and new_value is not None:
             new_value = self._normalize_aggregated_live_value(new_value, 2)
         elif self._sensor_type is SENSOR_TYPE_INSTALLATION_DATE and new_value is not None:
             # Home Assistant date device class expects a date object (has .isoformat()), not a str
