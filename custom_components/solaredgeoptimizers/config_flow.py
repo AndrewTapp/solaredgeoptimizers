@@ -27,7 +27,7 @@ Error Handling:
 - InvalidAuth: HTTP 401 authentication failure
 
 Cleanup:
-- async_remove_entry: Removes all entities and devices when integration is deleted
+- async_remove_entry: Closes API (releases file descriptors), then removes entities and devices
 """
 from __future__ import annotations
 
