@@ -14,8 +14,9 @@ This module serves as the main entry point for the Home Assistant integration. I
 The integration authenticates with the SolarEdge Monitoring Portal using site credentials,
 retrieves the site layout (inverters, strings, optimizers), and creates sensor entities
 for power, voltage, current, temperature, energy, and status at optimizer, string,
-inverter, and site levels; site level also includes installation date and peak power
-when using the SolarEdge One API.
+inverter, and site levels. Site level includes installation date and peak power when
+using the SolarEdge One API; inverter level includes max active power (kW) from the
+layout. On unload or removal, the API client is closed to release file descriptors.
 """
 import logging
 from typing import Any
