@@ -1,0 +1,13 @@
+[MASTER]
+# Design limits relaxed for coordinator/sensor and HA callback signatures
+# (e.g. CodeFactor / Pylint)
+
+[MESSAGES CONTROL]
+# Inline # pylint: disable=too-many-arguments used where design requires more params
+
+[DESIGN]
+max-args=10
+max-module-lines=2000
+
+[FORMAT]
+max-line-length=159
