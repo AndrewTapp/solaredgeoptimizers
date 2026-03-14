@@ -1227,41 +1227,80 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
             return round(float(raw_value), decimals) if not isinstance(raw_value, float) else round(raw_value, decimals)
         return 0.0
 
+    def _get_aggregated_default_value(self):
+        """Default value for aggregated sensor by type (for getattr fallback)."""
+        if self._sensor_type is SENSOR_TYPE_STATUS:
+            return ""
+        if self._sensor_type in (
+            SENSOR_TYPE_INSTALLATION_DATE,
+            SENSOR_TYPE_PEAK_POWER,
+            SENSOR_TYPE_MAX_ACTIVE_POWER,
+        ):
+            return None
+        return 0
+
+    def _norm_aggregated_child_count(self, value):
+        """Normalize child count to int."""
+        return int(value) if value is not None else 0
+
+    def _norm_aggregated_energy(self, value):
+        """Normalize energy with monotonic enforcement."""
+        return self._normalize_aggregated_energy_value(value, self._attr_native_value)
+
+    def _norm_aggregated_power_voltage(self, value):
+        """Normalize power/voltage to 2 decimals."""
+        return self._normalize_aggregated_live_value(value, 2)
+
+    def _norm_aggregated_peak_power(self, value):
+        """Normalize peak power to 2 decimals; None if missing."""
+        return self._normalize_aggregated_live_value(value, 2) if value is not None else None
+
+    def _norm_aggregated_max_active_power(self, value):
+        """Normalize max active power to 2 decimals; None if missing."""
+        return self._normalize_aggregated_live_value(value, 2) if value is not None else None
+
+    def _norm_aggregated_installation_date(self, value):
+        """Parse installation date to date object for device class."""
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip():
+            try:
+                return date.fromisoformat(value.strip())
+            except (ValueError, TypeError):
+                return None
+        return value if isinstance(value, date) else None
+
+    def _norm_aggregated_status(self, value):
+        """Normalize status to display value and log debug."""
+        raw = str(value).strip() if value else ""
+        display = status_display_value(raw)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers sensor: %s aggregated status updated to '%s'",
+                self._log_name,
+                display or "(empty)",
+            )
+        return display
+
     def _compute_aggregated_native_value(self, item) -> None:
         """Update _attr_native_value from aggregated item (child_count, energy monotonic, status, or mapped attribute)."""
         attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
         if not attr_name:
             return
-        default = 0 if self._sensor_type not in (SENSOR_TYPE_STATUS, SENSOR_TYPE_INSTALLATION_DATE, SENSOR_TYPE_PEAK_POWER, SENSOR_TYPE_MAX_ACTIVE_POWER) else ("" if self._sensor_type is SENSOR_TYPE_STATUS else None)
-        new_value = getattr(item, attr_name, default)
-        if self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
-            new_value = int(new_value) if new_value is not None else 0
-        elif self._sensor_type is SENSOR_TYPE_ENERGY:
-            new_value = self._normalize_aggregated_energy_value(new_value, self._attr_native_value)
-        elif self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE):
-            new_value = self._normalize_aggregated_live_value(new_value, 2)
-        elif self._sensor_type is SENSOR_TYPE_PEAK_POWER and new_value is not None:
-            new_value = self._normalize_aggregated_live_value(new_value, 2)
-        elif self._sensor_type is SENSOR_TYPE_MAX_ACTIVE_POWER and new_value is not None:
-            new_value = self._normalize_aggregated_live_value(new_value, 2)
-        elif self._sensor_type is SENSOR_TYPE_INSTALLATION_DATE and new_value is not None:
-            # Home Assistant date device class expects a date object (has .isoformat()), not a str
-            if isinstance(new_value, str) and new_value.strip():
-                try:
-                    new_value = date.fromisoformat(new_value.strip())
-                except (ValueError, TypeError):
-                    new_value = None
-            elif not isinstance(new_value, date):
-                new_value = None
-        elif self._sensor_type is SENSOR_TYPE_STATUS:
-            raw = str(new_value).strip() if new_value else ""
-            new_value = status_display_value(raw)
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers sensor: %s aggregated status updated to '%s'",
-                    self._log_name, new_value or "(empty)",
-                )
-        self._attr_native_value = new_value
+        default = self._get_aggregated_default_value()
+        raw_value = getattr(item, attr_name, default)
+        normalizers = {
+            SENSOR_TYPE_CHILD_COUNT: self._norm_aggregated_child_count,
+            SENSOR_TYPE_ENERGY: self._norm_aggregated_energy,
+            SENSOR_TYPE_POWER: self._norm_aggregated_power_voltage,
+            SENSOR_TYPE_VOLTAGE: self._norm_aggregated_power_voltage,
+            SENSOR_TYPE_PEAK_POWER: self._norm_aggregated_peak_power,
+            SENSOR_TYPE_MAX_ACTIVE_POWER: self._norm_aggregated_max_active_power,
+            SENSOR_TYPE_INSTALLATION_DATE: self._norm_aggregated_installation_date,
+            SENSOR_TYPE_STATUS: self._norm_aggregated_status,
+        }
+        normalizer = normalizers.get(self._sensor_type)
+        self._attr_native_value = normalizer(raw_value) if normalizer else raw_value
 
     def _normalize_aggregated_display_value(self) -> None:
         """Convert comma decimals to float and ensure child_count is int. Apply decimal places for display."""
