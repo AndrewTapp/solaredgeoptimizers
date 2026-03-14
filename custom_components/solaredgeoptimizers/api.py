@@ -10,11 +10,14 @@ Required Methods:
 - requestListOfAllPanels() -> Any: Return site structure with inverters/strings/optimizers
 - requestAllData() -> list[Any]: Fetch live data for all optimizers
 - get_lifetime_energy_cached() -> dict[str, Any]: Return cached lifetime energy data
-- close() -> None: Release resources and close sessions
+- close() -> None: Release resources, close sessions, and release file descriptors
 
 Optional Methods (detected via getattr in coordinator):
 - requestSystemDataBatch(item_ids: list) -> list[Any]: Batch query for multiple optimizers
 - get_inverter_models(serials: list) -> dict[str, str]: Fetch inverter model names
+- get_site_info_cached() -> dict: Site info (installationDate, peakPower); One API only
+- get_dashboard_site_production_cached(installation_date: str) -> float | None: Site production (Wh); One API only
+- get_layout_energy_by_inverter_cached(installation_date: str) -> dict: Inverter/string energy (Wh); One API only
 
 This Protocol enables type checking and IDE support while allowing the coordinator
 to work with either API implementation or the dual API wrapper interchangeably.

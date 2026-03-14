@@ -99,6 +99,15 @@
       "tilt": {
         "name": "倾斜角"
       },
+      "installation_date": {
+        "name": "安装日期"
+      },
+      "peak_power": {
+        "name": "峰值功率"
+      },
+      "max_active_power": {
+        "name": "最大有功功率"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "面板类型"

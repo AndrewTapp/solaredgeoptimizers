@@ -13,10 +13,12 @@ Aggregated Sensors (String, Inverter, Site levels):
 - Lifetime Energy (summed from children), Last Measurement
 - Child Count (optimizers per string, strings per inverter, inverters per site)
 - Status (Active/Inactive)
+- Inverter-level: Max active power (kW, from portal layout logical v2; One API only)
 
 Site-Level Sensors:
 - Last Polled (integration polling timestamp)
 - Obtained From (indicates whether data came from One API or Legacy API)
+- Installation Date, Peak Power (from portal layout/information/site; One API only)
 
 Key features:
 - Entities use CoordinatorEntity for automatic updates from the data coordinator
@@ -42,7 +44,7 @@ from homeassistant.components.sensor import (
 )
 
 from homeassistant.core import callback
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
@@ -67,6 +69,9 @@ from .const import (
     SENSOR_TYPE_STATUS,
     SENSOR_TYPE_AZIMUTH,
     SENSOR_TYPE_TILT,
+    SENSOR_TYPE_INSTALLATION_DATE,
+    SENSOR_TYPE_PEAK_POWER,
+    SENSOR_TYPE_MAX_ACTIVE_POWER,
     CHECK_TIME_DELTA,
     is_status_active,
     parse_string_display_name_path,
@@ -433,7 +438,9 @@ def _create_string_aggregated_data(string, string_entity_path):
     return string_aggregated
 
 
-def _create_string_sensors(coordinator, hass, entry, string, string_aggregated, inverter, base_name, is_active):
+def _create_string_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass, entry, string, string_aggregated, inverter, base_name, is_active
+):
     """Create sensor entities for a string, skipping excluded sensors for inactive strings.
     
     Returns (sensors_list, skipped_count).
@@ -473,7 +480,9 @@ def _create_inverter_aggregated_data(inverter, inv_idx_str, include_site_id, sit
     return inverter_aggregated
 
 
-def _create_inverter_sensors(coordinator, hass, entry, inverter, inverter_aggregated, base_name, is_active):
+def _create_inverter_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass, entry, inverter, inverter_aggregated, base_name, is_active
+):
     """Create sensor entities for an inverter, skipping excluded sensors for inactive inverters.
     
     Returns (sensors_list, skipped_count).
@@ -528,7 +537,7 @@ def _build_string_entity_path_for_sensor(string, str_suffix: str, inv_idx_str: s
     return (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
 
 
-def _build_string_sensors_for_inverter(
+def _build_string_sensors_for_inverter(  # pylint: disable=too-many-arguments
     coordinator, hass: HomeAssistant, entry: ConfigEntry, inverter, inv_idx: int, inv_suffix: str, inv_suffix_map: dict,
     base_name: str, include_site_id: bool, site_id: str
 ) -> tuple[list, int, int, int]:
@@ -583,7 +592,7 @@ def _build_string_sensors_for_inverter(
     return sensors, active_count, inactive_count, skipped_count
 
 
-def _build_all_string_sensors(
+def _build_all_string_sensors(  # pylint: disable=too-many-arguments
     coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, inv_suffix_map: dict, base_name: str, include_site_id: bool, site_id: str
 ) -> tuple[list, int, int, int]:
     """Build string sensors for all inverters. Returns (sensors, active_count, inactive_count, skipped_count)."""
@@ -613,7 +622,7 @@ def _build_all_string_sensors(
     return sensors, active_count, inactive_count, skipped_count
 
 
-def _build_all_inverter_sensors(
+def _build_all_inverter_sensors(  # pylint: disable=too-many-arguments
     coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, inv_suffix_map: dict, base_name: str, include_site_id: bool, site_id: str
 ) -> tuple[list, int, int, int]:
     """Build inverter sensors for all inverters. Returns (sensors, active_count, inactive_count, skipped_count)."""
@@ -656,7 +665,9 @@ def _build_all_inverter_sensors(
     return sensors, active_count, inactive_count, skipped_count
 
 
-def _build_site_sensors(coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, base_name: str, site_id: str) -> list:
+def _build_site_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass: HomeAssistant, entry: ConfigEntry, site_struct, base_name: str, site_id: str
+) -> list:
     """Build site-level aggregated sensors. Returns list of sensors."""
     sensors = []
     site_aggregated = SolarEdgeAggregatedData(
@@ -679,7 +690,9 @@ def _build_site_sensors(coordinator, hass: HomeAssistant, entry: ConfigEntry, si
     return sensors
 
 
-def _build_aggregated_sensors(coordinator, hass, entry, site_struct, base_name, include_site_id, site_id):
+def _build_aggregated_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass, entry, site_struct, base_name, include_site_id, site_id
+):
     """Build list of SolarEdgeAggregatedSensor entities for strings, inverters, and site.
     
     No deduplication - all inverters and strings are shown. When duplicates exist
@@ -752,7 +765,9 @@ def _log_setup_info(site, base_name: str, include_site_id: bool, site_id: str) -
         )
 
 
-def _create_site_level_sensors(coordinator, hass: HomeAssistant, entry: ConfigEntry, site_id: str, base_name: str | None, include_site_id: bool) -> list:
+def _create_site_level_sensors(  # pylint: disable=too-many-arguments
+    coordinator, hass: HomeAssistant, entry: ConfigEntry, site_id: str, base_name: str | None, include_site_id: bool
+) -> list:
     """Create site-level sensors (Last Polled, Obtained From). Returns list of sensors."""
     return [
         SolarEdgeIntegrationLastPolledSensor(
@@ -1000,6 +1015,9 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_LASTMEASUREMENT: "lastmeasurement",
         SENSOR_TYPE_CHILD_COUNT: "child_count",
         SENSOR_TYPE_STATUS: "status",
+        SENSOR_TYPE_INSTALLATION_DATE: "installation_date",
+        SENSOR_TYPE_PEAK_POWER: "peak_power",
+        SENSOR_TYPE_MAX_ACTIVE_POWER: "max_active_power",
     }
     # Translation keys for entity names (i18n)
     _TRANSLATION_KEYS = {
@@ -1010,6 +1028,9 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_ENERGY: "lifetime_energy",
         SENSOR_TYPE_POWER: "power",
         SENSOR_TYPE_STATUS: "status",
+        SENSOR_TYPE_INSTALLATION_DATE: "installation_date",
+        SENSOR_TYPE_PEAK_POWER: "peak_power",
+        SENSOR_TYPE_MAX_ACTIVE_POWER: "max_active_power",
     }
     # (unit, device_class, state_class, suggested_display_precision) per sensor type
     _AGGREGATED_UNITS_MAP = {
@@ -1017,6 +1038,9 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
         SENSOR_TYPE_CURRENT: (UnitOfElectricCurrent.AMPERE, SensorDeviceClass.CURRENT, SensorStateClass.MEASUREMENT, None),
         SENSOR_TYPE_POWER: (UnitOfPower.WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
         SENSOR_TYPE_ENERGY: (UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL_INCREASING, 3),
+        SENSOR_TYPE_INSTALLATION_DATE: (None, SensorDeviceClass.DATE, None, None),
+        SENSOR_TYPE_PEAK_POWER: (UnitOfPower.KILO_WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
+        SENSOR_TYPE_MAX_ACTIVE_POWER: (UnitOfPower.KILO_WATT, SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT, 2),
     }
 
     def __init__(
@@ -1203,27 +1227,80 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
             return round(float(raw_value), decimals) if not isinstance(raw_value, float) else round(raw_value, decimals)
         return 0.0
 
+    def _get_aggregated_default_value(self):
+        """Default value for aggregated sensor by type (for getattr fallback)."""
+        if self._sensor_type is SENSOR_TYPE_STATUS:
+            return ""
+        if self._sensor_type in (
+            SENSOR_TYPE_INSTALLATION_DATE,
+            SENSOR_TYPE_PEAK_POWER,
+            SENSOR_TYPE_MAX_ACTIVE_POWER,
+        ):
+            return None
+        return 0
+
+    def _norm_aggregated_child_count(self, value):
+        """Normalize child count to int."""
+        return int(value) if value is not None else 0
+
+    def _norm_aggregated_energy(self, value):
+        """Normalize energy with monotonic enforcement."""
+        return self._normalize_aggregated_energy_value(value, self._attr_native_value)
+
+    def _norm_aggregated_power_voltage(self, value):
+        """Normalize power/voltage to 2 decimals."""
+        return self._normalize_aggregated_live_value(value, 2)
+
+    def _norm_aggregated_peak_power(self, value):
+        """Normalize peak power to 2 decimals; None if missing."""
+        return self._normalize_aggregated_live_value(value, 2) if value is not None else None
+
+    def _norm_aggregated_max_active_power(self, value):
+        """Normalize max active power to 2 decimals; None if missing."""
+        return self._normalize_aggregated_live_value(value, 2) if value is not None else None
+
+    def _norm_aggregated_installation_date(self, value):
+        """Parse installation date to date object for device class."""
+        if value is None:
+            return None
+        if isinstance(value, str) and value.strip():
+            try:
+                return date.fromisoformat(value.strip())
+            except (ValueError, TypeError):
+                return None
+        return value if isinstance(value, date) else None
+
+    def _norm_aggregated_status(self, value):
+        """Normalize status to display value and log debug."""
+        raw = str(value).strip() if value else ""
+        display = status_display_value(raw)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers sensor: %s aggregated status updated to '%s'",
+                self._log_name,
+                display or "(empty)",
+            )
+        return display
+
     def _compute_aggregated_native_value(self, item) -> None:
         """Update _attr_native_value from aggregated item (child_count, energy monotonic, status, or mapped attribute)."""
         attr_name = self._SENSOR_ATTR_MAP.get(self._sensor_type)
         if not attr_name:
             return
-        new_value = getattr(item, attr_name, 0 if self._sensor_type is not SENSOR_TYPE_STATUS else "")
-        if self._sensor_type is SENSOR_TYPE_CHILD_COUNT:
-            new_value = int(new_value) if new_value is not None else 0
-        elif self._sensor_type is SENSOR_TYPE_ENERGY:
-            new_value = self._normalize_aggregated_energy_value(new_value, self._attr_native_value)
-        elif self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE):
-            new_value = self._normalize_aggregated_live_value(new_value, 2)
-        elif self._sensor_type is SENSOR_TYPE_STATUS:
-            raw = str(new_value).strip() if new_value else ""
-            new_value = status_display_value(raw)
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers sensor: %s aggregated status updated to '%s'",
-                    self._log_name, new_value or "(empty)",
-                )
-        self._attr_native_value = new_value
+        default = self._get_aggregated_default_value()
+        raw_value = getattr(item, attr_name, default)
+        normalizers = {
+            SENSOR_TYPE_CHILD_COUNT: self._norm_aggregated_child_count,
+            SENSOR_TYPE_ENERGY: self._norm_aggregated_energy,
+            SENSOR_TYPE_POWER: self._norm_aggregated_power_voltage,
+            SENSOR_TYPE_VOLTAGE: self._norm_aggregated_power_voltage,
+            SENSOR_TYPE_PEAK_POWER: self._norm_aggregated_peak_power,
+            SENSOR_TYPE_MAX_ACTIVE_POWER: self._norm_aggregated_max_active_power,
+            SENSOR_TYPE_INSTALLATION_DATE: self._norm_aggregated_installation_date,
+            SENSOR_TYPE_STATUS: self._norm_aggregated_status,
+        }
+        normalizer = normalizers.get(self._sensor_type)
+        self._attr_native_value = normalizer(raw_value) if normalizer else raw_value
 
     def _normalize_aggregated_display_value(self) -> None:
         """Convert comma decimals to float and ensure child_count is int. Apply decimal places for display."""
@@ -1578,7 +1655,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         except (TypeError, ValueError):
             self._attr_native_value = None
 
-    def _update_optimizer_value_from_item(self, item, timetocheck, ts: datetime) -> None:
+    def _update_optimizer_value_from_item(self, item, timetocheck, ts: datetime | None) -> None:
         """Set _attr_native_value from item (energy monotonic, lastmeasurement, status, azimuth, tilt, or mapped value with age check)."""
         if self._sensor_type is SENSOR_TYPE_ENERGY:
             self._set_energy_value_from_item(item)
@@ -1593,7 +1670,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         elif self._sensor_type is SENSOR_TYPE_TILT:
             self._set_tilt_value_from_item(item)
         else:
-            self._set_live_value_from_item(item, ts <= timetocheck, ts, timetocheck)
+            # Live sensors: when lastmeasurement is None (e.g. inactive with no API date), treat as too old
+            if ts is None:
+                self._attr_native_value = 0
+            else:
+                self._set_live_value_from_item(item, ts <= timetocheck, ts, timetocheck)
 
     def _zero_optimizer_when_no_data(self) -> None:
         """Zero native value when coordinator has no data (except energy, lastmeasurement, temperature)."""

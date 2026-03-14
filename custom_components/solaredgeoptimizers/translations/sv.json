@@ -99,6 +99,15 @@
       "tilt": {
         "name": "Lutning"
       },
+      "installation_date": {
+        "name": "Installationsdatum"
+      },
+      "peak_power": {
+        "name": "Toppeffekt"
+      },
+      "max_active_power": {
+        "name": "Max. aktiv effekt"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneltyp"

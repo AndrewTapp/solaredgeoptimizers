@@ -99,6 +99,15 @@
       "tilt": {
         "name": "Kallistus"
       },
+      "installation_date": {
+        "name": "Asennuspäivä"
+      },
+      "peak_power": {
+        "name": "Huipputeho"
+      },
+      "max_active_power": {
+        "name": "Maks. pätöteho"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneelityyppi"

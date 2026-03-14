@@ -99,6 +99,15 @@
       "tilt": {
         "name": "Hældning"
       },
+      "installation_date": {
+        "name": "Installationsdato"
+      },
+      "peak_power": {
+        "name": "Spidsbelastning"
+      },
+      "max_active_power": {
+        "name": "Max. aktiv effekt"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneltype"

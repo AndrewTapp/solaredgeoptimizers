@@ -99,6 +99,15 @@
       "tilt": {
         "name": "Inclinazione"
       },
+      "installation_date": {
+        "name": "Data di installazione"
+      },
+      "peak_power": {
+        "name": "Potenza di picco"
+      },
+      "max_active_power": {
+        "name": "Potenza attiva max"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Tipo di pannello"

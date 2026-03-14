@@ -99,6 +99,15 @@
       "tilt": {
         "name": "Наклон"
       },
+      "installation_date": {
+        "name": "Дата установки"
+      },
+      "peak_power": {
+        "name": "Пиковая мощность"
+      },
+      "max_active_power": {
+        "name": "Макс. активная мощность"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Тип панели"

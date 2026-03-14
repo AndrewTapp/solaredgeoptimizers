@@ -99,6 +99,15 @@
       "tilt": {
         "name": "Dőlésszög"
       },
+      "installation_date": {
+        "name": "Telepítés dátuma"
+      },
+      "peak_power": {
+        "name": "Csúcsteljesítmény"
+      },
+      "max_active_power": {
+        "name": "Max. hatásos teljesítmény"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Paneltípus"

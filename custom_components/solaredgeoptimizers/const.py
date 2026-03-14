@@ -34,16 +34,14 @@ Each constant is documented below with a full description of what it is used for
 === CACHE TTLs (SolarEdge One API) ===
 - PANELS_CACHE_TTL_ONE: How long to cache site structure (layout) from One API before
   refetching; reduces portal calls when coordinator repeatedly needs panel list.
+- SITE_INFO_CACHE_TTL: How long to cache site information (installation date, peak power)
+  from layout/information/site; same duration as layout (e.g. 2 h).
 - LIFETIME_ENERGY_CACHE_TTL: How long to cache lifetime energy data (One and legacy);
   changes slowly so 1 hour is typical.
 - TEMPERATURE_CACHE_TTL: How long to cache optimizer temperatures from One API (e.g. 30 min).
 
 === CACHE TTLs (Legacy API) ===
-- PANELS_CACHE_TTL_LEGACY: How long to cache site structure from legacy API (e.g. 1 hour).
-
-=== SITE & AGGREGATION ===
-- RELIABLE_THRESHOLD_KWH: Site lifetime energy (kWh) below which aggregated optimizer
-  data is considered unreliable; above this, portal total can be used for site-level.
+- PANELS_CACHE_TTL_LEGACY: How long to cache site structure from legacy API (e.g. 2 h).
 
 === API REQUEST SETTINGS ===
 - API_TIMEOUT_SHORT: Timeout in seconds for quick requests (login check, single optimizer).
@@ -77,6 +75,8 @@ Each constant is documented below with a full description of what it is used for
 
 === SENSOR TYPE STRINGS & LISTS ===
 - SENSOR_TYPE_*: Sensor type identifiers and lists (individual, aggregated, exclude lists).
+  SENSOR_TYPE_INSTALLATION_DATE, SENSOR_TYPE_PEAK_POWER: site-only (from portal layout/information/site).
+  SENSOR_TYPE_MAX_ACTIVE_POWER: inverter-only (from portal layout logical v2 maxActivePower, displayed in kW).
   See in-code comments for which entities get which sensor types.
 
 Utility Functions:
@@ -118,15 +118,14 @@ LIGHT_CHECK_MIN_INTERVAL = timedelta(minutes=5)
 LIGHT_CHECK_DESIRED_INTERVAL_FRESH = timedelta(minutes=5)
 # Desired interval between lightweight checks when data is stale or age unknown
 LIGHT_CHECK_DESIRED_INTERVAL_STALE = timedelta(minutes=30)
-# Site lifetime: use portal total when aggregated optimizer data is below this (kWh)
-RELIABLE_THRESHOLD_KWH = 100.0
 
 # --- Cache TTLs: SolarEdge One API ---
 PANELS_CACHE_TTL_ONE = timedelta(hours=2)       # Site structure (layout) cache
+SITE_INFO_CACHE_TTL = timedelta(hours=2)        # Site information (installation date, peak power) - same as layout
 LIFETIME_ENERGY_CACHE_TTL = timedelta(hours=1)  # Lifetime energy cache (One and legacy)
 TEMPERATURE_CACHE_TTL = timedelta(minutes=30)   # Optimizer temperatures cache (One API)
 # --- Cache TTLs: Legacy API ---
-PANELS_CACHE_TTL_LEGACY = timedelta(hours=1)    # Site structure cache for legacy API
+PANELS_CACHE_TTL_LEGACY = timedelta(hours=2)    # Site structure cache for legacy API
 
 # API request timeouts (seconds)
 API_TIMEOUT_SHORT = 30  # For quick requests (login check, single optimizer)
@@ -229,6 +228,9 @@ SENSOR_TYPE_TEMPERATURE = "Temperature"
 SENSOR_TYPE_STATUS = "Status"
 SENSOR_TYPE_AZIMUTH = "Azimuth"
 SENSOR_TYPE_TILT = "Tilt"
+SENSOR_TYPE_INSTALLATION_DATE = "Installation_date"
+SENSOR_TYPE_PEAK_POWER = "Peak_power"
+SENSOR_TYPE_MAX_ACTIVE_POWER = "Max_active_power"
 
 # Sensors for individual optimizers
 SENSOR_TYPE_INDIVIDUAL = [
@@ -281,10 +283,13 @@ SENSOR_TYPE_AGGREGATED_STRING = SENSOR_TYPE_AGGREGATED_COMMON + [
 SENSOR_TYPE_AGGREGATED_INVERTER = SENSOR_TYPE_AGGREGATED_COMMON + [
     SENSOR_TYPE_CHILD_COUNT,  # For inverters: string count
     SENSOR_TYPE_STATUS,
+    SENSOR_TYPE_MAX_ACTIVE_POWER,  # Inverter max active power (kW) from layout logical v2
 ]
 
 SENSOR_TYPE_AGGREGATED_SITE = SENSOR_TYPE_AGGREGATED_COMMON + [
     SENSOR_TYPE_CHILD_COUNT,  # For sites: inverter count
+    SENSOR_TYPE_INSTALLATION_DATE,  # Site installation date from portal layout/information/site
+    SENSOR_TYPE_PEAK_POWER,  # Site peak power (kW) from portal layout/information/site
 ]
 
 SENSOR_TYPE = SENSOR_TYPE_INDIVIDUAL  # For backwards compatibility

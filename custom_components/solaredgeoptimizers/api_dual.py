@@ -17,6 +17,9 @@ Methods Implemented:
 - requestSystemData(): Delegates to last-used API for single optimizer queries
 - requestSystemDataBatch(): One API only (batch queries for lightweight checks)
 - get_inverter_models(): One API only (legacy doesn't provide inverter models)
+- get_site_info_cached(): One API only; returns installationDate, peakPower (kW) from layout/information/site
+- get_dashboard_site_production_cached(installation_date): One API only; returns site production (Wh) from dashboard/energy
+- get_layout_energy_by_inverter_cached(installation_date): One API only; returns inverter/string energy (Wh) from layout/energy by-inverter
 - close(): Closes both API sessions
 
 Tracking:
@@ -46,7 +49,9 @@ class SolarEdgeDualAPI:
     _obtained_from for the site-level "Obtained from" sensor.
     """
 
-    def __init__(self, siteid: str, username: str, password: str, timezone: str | None = None, language: str | None = None, use_solaredge_one: bool = True):
+    def __init__(  # pylint: disable=too-many-arguments
+        self, siteid: str, username: str, password: str, timezone: str | None = None, language: str | None = None, use_solaredge_one: bool = True
+    ):
         self._use_solaredge_one = bool(use_solaredge_one)
         self._one = solaredge_one(siteid, username, password, timezone, language)
         self._legacy = solaredgeoptimizers(siteid, username, password, timezone, language)
@@ -166,20 +171,45 @@ class SolarEdgeDualAPI:
             return {}
         return self._one.get_inverter_models(serials)
 
+    def get_site_info_cached(self) -> dict:
+        """Site info (installation date, peak power) from One API; when legacy-only return empty."""
+        if not self._use_solaredge_one:
+            return {}
+        return self._one.get_site_info_cached()
+
+    def get_dashboard_site_production_cached(self, installation_date: str | None) -> float | None:
+        """Site lifetime production (Wh) from dashboard/energy; when legacy-only return None."""
+        if not self._use_solaredge_one:
+            return None
+        return self._one.get_dashboard_site_production_cached(installation_date)
+
+    def get_layout_energy_by_inverter_cached(self, installation_date: str | None) -> dict:
+        """Inverter/string lifetime energy from layout/energy by-inverter; when legacy-only return empty."""
+        if not self._use_solaredge_one:
+            return {}
+        return self._one.get_layout_energy_by_inverter_cached(installation_date)
+
     def close(self) -> None:
         """Close both API clients and release all file descriptors (sessions, connection pools).
-        Idempotent; safe to call multiple times. Both clients are always closed even if one raises.
+        Idempotent; safe to call multiple times. Both clients are always closed even if one raises;
+        the second client is still closed after the first raises to avoid leaking its descriptors.
         """
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Dual API: Closing both API clients (One and Legacy)")
+        last_error = None
         for name, client in [("One", self._one), ("Legacy", self._legacy)]:
             try:
                 client.close()
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("SolarEdge Dual API: Closed %s API client", name)
             except Exception as e:  # pylint: disable=broad-except
+                last_error = e
                 _LOGGER.warning(
                     "SolarEdge Dual API: Error closing %s API (file descriptors may leak): %s",
                     name,
                     e,
                 )
+        if last_error is not None and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Dual API: At least one client failed to close; the other was still closed"
+            )

@@ -34,16 +34,19 @@ API Endpoints (monitoring.solaredge.com/solaredge-apigw/api/...):
 
 Data Classes Defined:
 - SolarEdgeSite: Root container with site ID and list of inverters
-- SolarEdgeInverter: Inverter with serial, name, status, and list of strings
+- SolarEdgeInverter: Inverter with serial, name, status, maxActivePower (kW when from One API), and list of strings
 - SolarEdgeString: String with ID, name, status, and list of optimizers
 - SolarlEdgeOptimizer: Optimizer with ID, serial, name, display name, status
 - SolarEdgeOptimizerData: Live measurement data (power, voltage, current, energy, etc.)
-- SolarEdgeAggregatedData: Aggregated data for string/inverter/site levels
+- SolarEdgeAggregatedData: Aggregated data for string/inverter/site levels; site level has
+  installation_date and peak_power when provided by One API (layout/information/site);
+  inverter level has max_active_power (kW) when provided by One API (layout logical v2).
 
 Key Features:
 - Locale-aware measurement key parsing (supports EN, DE, FR, ES, IT, NL, etc.)
-- Thread-local session reuse for efficient parallel requests
-- Caching for panels (1 hour) and lifetime energy (1 hour)
+- Thread-local session reuse for efficient parallel requests; close() closes all tracked
+  sessions to avoid leaking file descriptors when the integration is unloaded or removed.
+- Caching for panels (PANELS_CACHE_TTL_LEGACY) and lifetime energy (LIFETIME_ENERGY_CACHE_TTL)
 - Unicode normalization for measurement keys (handles various dash/space variants)
 - Timezone-aware date parsing for lastMeasurementDate
 """
@@ -207,9 +210,11 @@ def _safe_float(value, default=0.0):
 
 
 def _parse_last_measurement_date(rawdate, panelid, timezone):
-    """Parse lastMeasurementDate string (ISO or SolarEdge format) to timezone-aware UTC datetime."""
+    """Parse lastMeasurementDate string (ISO or SolarEdge format) to timezone-aware UTC datetime.
+    Returns None when rawdate is empty (e.g. inactive optimizers with no lastMeasurement from API).
+    """
     if not rawdate:
-        return datetime.now(pytz.UTC)
+        return None
     try:
         if "T" in rawdate and ("Z" in rawdate or "+" in rawdate or (len(rawdate) >= 6 and rawdate[-6] in "+-")):
             iso_str = rawdate.strip().replace("Z", "+00:00")
@@ -839,13 +844,14 @@ class solaredgeoptimizers:
     def close(self):
         """Close all sessions (all threads) to prevent file descriptor leaks.
 
-        This should be called when the API client is no longer needed, e.g., during integration unload.
-        ThreadPoolExecutor may have created sessions in multiple threads; we track and close all.
-        Session.close() releases the connection pool and all underlying file descriptors.
-        Idempotent; safe to call multiple times.
+        Call when the API client is no longer needed (e.g. integration unload/removal).
+        No requests should be in progress when close() is called. Sets _closed so any
+        subsequent _get_session() raises. Closes every tracked Session so connection
+        pools and file descriptors are released. Idempotent; safe to call multiple times.
         """
+        if self._closed:
+            return
         self._closed = True
-        # Clear this thread's reference first so we don't use a session we're about to close
         if hasattr(self._thread_local, "session"):
             self._thread_local.session = None
         with self._sessions_lock:
@@ -1011,6 +1017,7 @@ class SolarEdgeInverter:
             self.status = data.get("status", "")
             self.manufacturer = data.get("manufacturer", "SolarEdge")
             self.model = data.get("model", "")
+            self.maxActivePower = data.get("maxActivePower")  # kW (One API) or None
 
             self.strings = self.__GetStringInformation(json_obj["logicalTree"]["children"][index]["children"][index2]["children"], index2)
         else:
@@ -1025,6 +1032,7 @@ class SolarEdgeInverter:
             self.status = data.get("status", "")
             self.manufacturer = data.get("manufacturer", "SolarEdge")
             self.model = data.get("model", "")
+            self.maxActivePower = data.get("maxActivePower")  # kW (One API) or None
 
             self.strings = self.__GetStringInformation(json_obj["logicalTree"]["children"][index]["children"], index)
 
@@ -1078,12 +1086,13 @@ class SolarlEdgeOptimizer:
 
 
 class SolarEdgeAggregatedData:
-    """Data class for aggregated SolarEdge measurements at string/inverter level."""
+    """Data class for aggregated SolarEdge measurements at string/inverter/site level."""
 
     __slots__ = (
         'panel_id', 'entity_type', 'entity_id_path', 'serialnumber', 'panel_description',
         'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage', 'power',
-        'voltage', 'lifetime_energy', 'child_count', 'active_optimizer_count', 'status'
+        'voltage', 'lifetime_energy', 'child_count', 'active_optimizer_count', 'status',
+        'installation_date', 'peak_power', 'max_active_power',
     )
 
     def __init__(self, entity_id, entity_type, lifetime_energy=None, entity_id_path=None):
@@ -1109,6 +1118,12 @@ class SolarEdgeAggregatedData:
         self.child_count = 0  # Number of optimizers in string, or strings in inverter
         self.active_optimizer_count = 0  # Number of optimizers with recent data
         self.status = ""  # Status from API (Active, Inactive, etc.)
+
+        # Site-only: from portal layout/information/site (installation date, peak power kW)
+        self.installation_date = None  # "YYYY-MM-DD" or None
+        self.peak_power = None  # float kW or None
+        # Inverter-only: from portal layout logical v2 (maxActivePower in watts, stored as kW)
+        self.max_active_power = None  # float kW or None
 
 
 class SolarEdgeOptimizerData:

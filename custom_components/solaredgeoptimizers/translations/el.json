@@ -99,6 +99,15 @@
       "tilt": {
         "name": "Κλίση"
       },
+      "installation_date": {
+        "name": "Ημερομηνία εγκατάστασης"
+      },
+      "peak_power": {
+        "name": "Μέγιστη ισχύς"
+      },
+      "max_active_power": {
+        "name": "Μέγ. ενεργή ισχύς"
+      },
       "state_attributes": {
         "panel_type": {
           "name": "Τύπος πάνελ"

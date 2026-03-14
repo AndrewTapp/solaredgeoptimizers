@@ -14,7 +14,9 @@ This module serves as the main entry point for the Home Assistant integration. I
 The integration authenticates with the SolarEdge Monitoring Portal using site credentials,
 retrieves the site layout (inverters, strings, optimizers), and creates sensor entities
 for power, voltage, current, temperature, energy, and status at optimizer, string,
-inverter, and site levels.
+inverter, and site levels. Site level includes installation date and peak power when
+using the SolarEdge One API; inverter level includes max active power (kW) from the
+layout. On unload or removal, the API client is closed to release file descriptors.
 """
 import logging
 from typing import Any
@@ -272,14 +274,15 @@ def remove_entities_and_devices_for_entry(hass: HomeAssistant, entry: ConfigEntr
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload a config entry."""
+    """Unload a config entry. Always closes API (releases file descriptors) and pops coordinator."""
     if LOGGER.isEnabledFor(logging.DEBUG):
         LOGGER.debug("SolarEdge Optimizers: Unloading config entry %s", entry.entry_id)
-    if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        # Pop coordinator first so we always close its API (release file descriptors) even if cleanup fails
-        coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
-        try:
-            # Remove from entity and device registries so no leftovers after delete
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+    # Always pop coordinator and close API so file descriptors are released even if platform unload failed
+    coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    try:
+        if unload_ok:
             try:
                 remove_entities_and_devices_for_entry(hass, entry)
             except Exception as e:  # pylint: disable=broad-except
@@ -287,30 +290,28 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     "SolarEdge Optimizers: Error cleaning registries during unload: %s",
                     e,
                 )
-        finally:
-            # Always close API sessions to release all file descriptors (legacy Session pool, etc.)
-            if coordinator is not None and hasattr(coordinator, "my_api"):
+    finally:
+        if coordinator is not None and hasattr(coordinator, "my_api"):
+            if LOGGER.isEnabledFor(logging.DEBUG):
+                LOGGER.debug(
+                    "SolarEdge Optimizers: Unload finally: closing API sessions for entry %s",
+                    entry.entry_id,
+                )
+            try:
+                await hass.async_add_executor_job(coordinator.my_api.close)
                 if LOGGER.isEnabledFor(logging.DEBUG):
                     LOGGER.debug(
-                        "SolarEdge Optimizers: Unload finally: closing API sessions for entry %s",
+                        "SolarEdge Optimizers: Closed API session for entry %s during unload",
                         entry.entry_id,
                     )
-                try:
-                    await hass.async_add_executor_job(coordinator.my_api.close)
-                    if LOGGER.isEnabledFor(logging.DEBUG):
-                        LOGGER.debug(
-                            "SolarEdge Optimizers: Closed API session for entry %s during unload",
-                            entry.entry_id,
-                        )
-                except Exception as e:  # pylint: disable=broad-except
-                    LOGGER.warning("SolarEdge Optimizers: Error closing API sessions: %s", e)
-    else:
-        if LOGGER.isEnabledFor(logging.DEBUG):
-            LOGGER.debug(
-                "SolarEdge Optimizers: Platform unload failed or skipped for entry %s",
-                entry.entry_id,
-            )
+            except Exception as e:  # pylint: disable=broad-except
+                LOGGER.warning("SolarEdge Optimizers: Error closing API sessions: %s", e)
 
+    if not unload_ok and LOGGER.isEnabledFor(logging.DEBUG):
+        LOGGER.debug(
+            "SolarEdge Optimizers: Platform unload failed or skipped for entry %s",
+            entry.entry_id,
+        )
     if LOGGER.isEnabledFor(logging.DEBUG):
         LOGGER.debug(
             "SolarEdge Optimizers: Unload complete for entry %s (unload_ok=%s)",
