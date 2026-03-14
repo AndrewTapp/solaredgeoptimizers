@@ -1129,68 +1129,90 @@ class MyCoordinator(DataUpdateCoordinator):
                     e,
                 )
 
-    async def _fetch_lifetime_energy_and_aggregate(self, data_dict, current_utc, site_id):
-        """Fetch lifetime energy and site info, then run aggregated data calculation."""
+    async def _fetch_lifetime_energy_safe(self):
+        """Fetch lifetime energy; return dict or empty on error."""
         try:
-            lifetime_energy_data = await self.hass.async_add_executor_job(
-                self.my_api.get_lifetime_energy_cached
-            )
+            data = await self.hass.async_add_executor_job(self.my_api.get_lifetime_energy_cached)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
                     "SolarEdge Optimizers: Lifetime energy data has %d entries for aggregation",
-                    len(lifetime_energy_data) if isinstance(lifetime_energy_data, dict) else 0,
+                    len(data) if isinstance(data, dict) else 0,
                 )
+            return data
         except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
             _LOGGER.warning(
                 "SolarEdge API unreachable when fetching lifetime energy: %s. Using empty data for this update.",
                 e,
             )
-            lifetime_energy_data = {}
-        site_info = {}
+            return {}
+
+    async def _fetch_site_info_safe(self):
+        """Fetch site info; return dict or empty on error."""
         get_site_info = getattr(self.my_api, "get_site_info_cached", None)
-        if get_site_info is not None:
-            try:
-                site_info = await self.hass.async_add_executor_job(get_site_info)
-                if _LOGGER.isEnabledFor(logging.DEBUG) and site_info:
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers coordinator: Site info: installation_date=%s peak_power=%s",
-                        site_info.get("installationDate"),
-                        site_info.get("peakPower"),
-                    )
-            except Exception as e:  # pylint: disable=broad-except
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers: Site info fetch failed: %s", e)
-        installation_date = site_info.get("installationDate")
+        if get_site_info is None:
+            return {}
+        try:
+            site_info = await self.hass.async_add_executor_job(get_site_info)
+            if _LOGGER.isEnabledFor(logging.DEBUG) and site_info:
+                _LOGGER.debug(
+                    "SolarEdge Optimizers coordinator: Site info: installation_date=%s peak_power=%s",
+                    site_info.get("installationDate"),
+                    site_info.get("peakPower"),
+                )
+            return site_info
+        except Exception as e:  # pylint: disable=broad-except
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: Site info fetch failed: %s", e)
+            return {}
+
+    async def _fetch_portal_site_lifetime_kwh(self, installation_date, lifetime_energy_data):
+        """Get site lifetime kWh from layout, optionally override with dashboard production."""
         portal_site_lifetime_kwh = _site_lifetime_kwh_from_layout_energy(lifetime_energy_data)
         get_dashboard = getattr(self.my_api, "get_dashboard_site_production_cached", None)
-        if get_dashboard is not None and installation_date:
-            try:
-                prod_wh = await self.hass.async_add_executor_job(get_dashboard, installation_date)
-                if prod_wh is not None:
-                    # Portal returns production in Wh (e.g. 2.7341768E7); convert to kWh for entity state
-                    portal_site_lifetime_kwh = round(prod_wh / 1000.0, 3)
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "SolarEdge Optimizers coordinator: Using dashboard production for site: %.3f kWh (from %.0f Wh)",
-                            portal_site_lifetime_kwh,
-                            prod_wh,
-                        )
-            except Exception as e:  # pylint: disable=broad-except
+        if get_dashboard is None or not installation_date:
+            return portal_site_lifetime_kwh
+        try:
+            prod_wh = await self.hass.async_add_executor_job(get_dashboard, installation_date)
+            if prod_wh is not None:
+                portal_site_lifetime_kwh = round(prod_wh / 1000.0, 3)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers: Dashboard production fetch failed: %s", e)
-        portal_by_inverter = {}
-        get_by_inv = getattr(self.my_api, "get_layout_energy_by_inverter_cached", None)
-        if get_by_inv is not None and installation_date:
-            try:
-                portal_by_inverter = await self.hass.async_add_executor_job(get_by_inv, installation_date)
-                if _LOGGER.isEnabledFor(logging.DEBUG) and portal_by_inverter:
                     _LOGGER.debug(
-                        "SolarEdge Optimizers coordinator: Portal by-inverter energy: %d inverter(s)",
-                        len(portal_by_inverter),
+                        "SolarEdge Optimizers coordinator: Using dashboard production for site: %.3f kWh (from %.0f Wh)",
+                        portal_site_lifetime_kwh,
+                        prod_wh,
                     )
-            except Exception as e:  # pylint: disable=broad-except
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers: By-inverter energy fetch failed: %s", e)
+        except Exception as e:  # pylint: disable=broad-except
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: Dashboard production fetch failed: %s", e)
+        return portal_site_lifetime_kwh
+
+    async def _fetch_portal_by_inverter_safe(self, installation_date):
+        """Fetch by-inverter energy; return dict or empty on error."""
+        get_by_inv = getattr(self.my_api, "get_layout_energy_by_inverter_cached", None)
+        if get_by_inv is None or not installation_date:
+            return {}
+        try:
+            portal_by_inverter = await self.hass.async_add_executor_job(get_by_inv, installation_date)
+            if _LOGGER.isEnabledFor(logging.DEBUG) and portal_by_inverter:
+                _LOGGER.debug(
+                    "SolarEdge Optimizers coordinator: Portal by-inverter energy: %d inverter(s)",
+                    len(portal_by_inverter),
+                )
+            return portal_by_inverter
+        except Exception as e:  # pylint: disable=broad-except
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: By-inverter energy fetch failed: %s", e)
+            return {}
+
+    async def _fetch_lifetime_energy_and_aggregate(self, data_dict, current_utc, site_id):
+        """Fetch lifetime energy and site info, then run aggregated data calculation."""
+        lifetime_energy_data = await self._fetch_lifetime_energy_safe()
+        site_info = await self._fetch_site_info_safe()
+        installation_date = site_info.get("installationDate")
+        portal_site_lifetime_kwh = await self._fetch_portal_site_lifetime_kwh(
+            installation_date, lifetime_energy_data
+        )
+        portal_by_inverter = await self._fetch_portal_by_inverter_safe(installation_date)
         self._calculate_aggregated_data(
             data_dict,
             current_utc,
