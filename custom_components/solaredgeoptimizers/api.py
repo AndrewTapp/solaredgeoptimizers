@@ -10,7 +10,7 @@ Required Methods:
 - requestListOfAllPanels() -> Any: Return site structure with inverters/strings/optimizers
 - requestAllData() -> list[Any]: Fetch live data for all optimizers
 - get_lifetime_energy_cached() -> dict[str, Any]: Return cached lifetime energy data
-- close() -> None: Release resources, close sessions, and release file descriptors
+- close() -> None: Release resources (legacy: all thread-local sessions; One: tokens)—call on unload/removal
 
 Optional Methods (detected via getattr in coordinator):
 - requestSystemDataBatch(item_ids: list) -> list[Any]: Batch query for multiple optimizers
