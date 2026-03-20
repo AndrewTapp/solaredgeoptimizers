@@ -22,9 +22,13 @@ Adaptive Polling Strategy:
 
 Data Aggregation:
 - Power, current, voltage, and lifetime energy aggregate from all devices (any status) with recent data
+- Last measurement: string = latest among active optimizers; inverter = latest among active strings;
+  site = latest among active inverters (optimizer entity uses portal lastMeasurement, may be absent)
 - Child counts (optimizer/string/inverter count) count only active devices (status blank or "Active")
 - Lifetime energy: site uses portal dashboard production (Wh) when > aggregated; inverter/string use
-  portal layout/energy by-inverter (Wh) when > aggregated. Start date for portal calls = installation date.
+  portal layout/energy by-inverter (Wh) when > aggregated (strings aligned by layout relativeOrder vs
+  portal keys; string override skipped if portal Wh exceeds optimizer sum by STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO).
+  Start date for portal calls = installation date.
 - Fetches site info (installation date, peak power) from layout/information/site for site-only sensors
 - Inverter aggregated data includes max_active_power (kW) from layout logical v2 when available (One API)
 
@@ -65,6 +69,7 @@ from .const import (
     LIGHT_CHECK_DESIRED_INTERVAL_STALE,
     OBTAINED_FROM_LEGACY,
     OBTAINED_FROM_ONE,
+    STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO,
     is_status_active,
     parse_string_display_name_path,
     resolve_duplicate_indices,
@@ -301,8 +306,9 @@ class MyCoordinator(DataUpdateCoordinator):
         """Aggregate optimizer data for one string.
         
         Returns (current, power, voltage_sum, voltage_count, last_measurement, active_optimizers, optimizer_count).
-        Power, current, voltage, and last_measurement include ALL optimizers with recent data (all statuses).
-        active_optimizers is the count of active (blank or ACTIVE) optimizers, used for child_count only.
+        Power, current, and voltage include optimizers with recent data (all statuses).
+        last_measurement is the latest lastmeasurement among active (blank or ACTIVE) optimizers only.
+        active_optimizers is the count of active optimizers, used for child_count only.
         optimizer_count is the count of optimizers with recent data, used for average divisor.
         """
         string_current = 0.0
@@ -326,7 +332,14 @@ class MyCoordinator(DataUpdateCoordinator):
                     )
                 last_measurement = optimizer_data.lastmeasurement
                 is_datetime = isinstance(last_measurement, datetime)
-                if is_datetime and (string_last_measurement is None or last_measurement > string_last_measurement):
+                if (
+                    is_datetime
+                    and is_status_active(optimizer_status_raw)
+                    and (
+                        string_last_measurement is None
+                        or last_measurement > string_last_measurement
+                    )
+                ):
                     string_last_measurement = last_measurement
                 if is_datetime and last_measurement > timetocheck:
                     opt_current = optimizer_data.current
@@ -350,7 +363,7 @@ class MyCoordinator(DataUpdateCoordinator):
             string_optimizer_count,
         )
 
-    def _create_string_aggregated(self, string, agg_data: StringAggData, current_utc, string_entity_path):
+    def _create_string_aggregated(self, string, agg_data: StringAggData, string_entity_path):
         """Build SolarEdgeAggregatedData for a string.
         
         agg_data: StringAggData namedtuple with aggregated values.
@@ -371,7 +384,7 @@ class MyCoordinator(DataUpdateCoordinator):
         string_aggregated.voltage = (
             round(agg_data.voltage_sum / agg_data.voltage_count, 2) if agg_data.voltage_count > 0 else 0.0
         )
-        string_aggregated.lastmeasurement = agg_data.last_measurement if agg_data.last_measurement is not None else current_utc
+        string_aggregated.lastmeasurement = agg_data.last_measurement
         # Child count = only active (and blank-status) optimizers in this string
         string_aggregated.child_count = int(agg_data.active_optimizers)
         string_aggregated.active_optimizer_count = agg_data.active_optimizers
@@ -409,7 +422,7 @@ class MyCoordinator(DataUpdateCoordinator):
             inverter_aggregated.current = 0.0
             inverter_aggregated.power = 0.0
         inverter_aggregated.voltage = round((inv_data.voltage_sum / inv_data.voltage_count), 2) if inv_data.voltage_count > 0 else 0.0
-        inverter_aggregated.lastmeasurement = inv_data.last_measurement if inv_data.last_measurement is not None else ctx.current_utc
+        inverter_aggregated.lastmeasurement = inv_data.last_measurement
         # Child count = only active (and blank-status) strings in this inverter
         inverter_aggregated.child_count = int(inv_data.active_strings)
         inverter_aggregated.active_optimizer_count = inv_data.active_optimizers
@@ -426,13 +439,12 @@ class MyCoordinator(DataUpdateCoordinator):
             )
         return inverter_aggregated
 
-    def _create_site_aggregated(self, site_id, site_state: SiteRollupState, current_utc, site_info=None):
+    def _create_site_aggregated(self, site_id, site_state: SiteRollupState, site_info=None):
         """Build SolarEdgeAggregatedData for the site.
         
         Args:
             site_id: The site ID
             site_state: SiteRollupState with aggregated values
-            current_utc: Current UTC datetime for fallback lastmeasurement
             site_info: Optional dict from get_site_info_cached (installationDate, peakPower)
         """
         site_info = site_info or {}
@@ -451,7 +463,7 @@ class MyCoordinator(DataUpdateCoordinator):
             site_aggregated.current = 0.0
             site_aggregated.power = 0.0
         site_aggregated.voltage = round((site_state.voltage_sum / site_state.voltage_count), 2) if site_state.voltage_count > 0 else 0.0
-        site_aggregated.lastmeasurement = site_state.last_measurement if site_state.last_measurement is not None else current_utc
+        site_aggregated.lastmeasurement = site_state.last_measurement
         # Child count = only active (and blank-status) inverters at site
         site_aggregated.child_count = int(site_state.active_inverters)
         site_aggregated.active_optimizer_count = site_state.active_optimizers
@@ -638,6 +650,32 @@ class MyCoordinator(DataUpdateCoordinator):
         str_idx_str = f"{str_idx}{str_suffix}"
         return (ctx.site_id_str, inv_idx_str, str_idx_str) if ctx.include_site_id_in_entity_id else (inv_idx_str, str_idx_str)
 
+    def _portal_string_wh_by_string_id(self, inverter, portal_strings: dict) -> dict:
+        """Map each layout string to portal Wh by pairing sorted relativeOrder with sorted portal keys.
+
+        `inverter.strings` iteration order can differ from `stringRelativeOrder` in layout/energy
+        by-inverter; using enumerate(..., start=1) alone can apply the wrong bucket. Sorting both
+        sides aligns the first layout string (by relativeOrder) with the lowest portal key, etc.
+        """
+        if not portal_strings:
+            return {}
+        sorted_keys = sorted(portal_strings.keys())
+
+        def _sort_tuple(idx: int, s) -> tuple:
+            ro = getattr(s, "relativeOrder", None)
+            try:
+                ro_int = int(ro) if ro is not None else 10**9 + idx
+            except (TypeError, ValueError):
+                ro_int = 10**9 + idx
+            return (ro_int, idx)
+
+        indexed = sorted(enumerate(inverter.strings), key=lambda x: _sort_tuple(x[0], x[1]))
+        out: dict = {}
+        for i, (_, string) in enumerate(indexed):
+            if i < len(sorted_keys):
+                out[string.stringId] = portal_strings[sorted_keys[i]]
+        return out
+
     def _get_string_lifetime_energy(self, string, ctx):
         """Get lifetime energy for a string from the lookup cache."""
         energy_data = ctx.lifetime_energy_lookup.get(string.stringId)
@@ -647,10 +685,20 @@ class MyCoordinator(DataUpdateCoordinator):
                 return round(kWh, 3)
         return 0.0
 
-    def _process_single_string(self, string, str_suffix, str_idx, inv_idx_str, inv_serial, ctx):  # pylint: disable=too-many-arguments
+    def _process_single_string(
+        self,
+        string,
+        str_suffix,
+        str_idx,
+        inv_idx_str,
+        inv_serial,
+        ctx,
+        portal_string_wh_by_id=None,
+    ):  # pylint: disable=too-many-arguments
         """Process a single string: aggregate optimizers and create aggregated data.
         
         inv_serial: inverter serial for portal_by_inverter lookup.
+        portal_string_wh_by_id: optional stringId -> Wh from aligned portal keys (see _portal_string_wh_by_string_id).
         Returns (string_aggregated, string_is_active, agg_data: StringAggData).
         """
         (
@@ -666,18 +714,37 @@ class MyCoordinator(DataUpdateCoordinator):
         string_lifetime_energy = self._get_string_lifetime_energy(string, ctx)
         portal_by_inv = getattr(ctx, "portal_by_inverter", None) or {}
         portal_strings = portal_by_inv.get(inv_serial, {}).get("strings", {})
-        portal_wh = portal_strings.get(str_idx)  # Portal value in Wh
-        if portal_wh is not None and string_lifetime_energy is not None and portal_wh > (string_lifetime_energy * 1000.0):
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers coordinator: String %s (inv_serial=%s str_idx=%s) using portal lifetime: %.3f kWh (aggregated=%.3f)",
-                    string.stringId,
-                    inv_serial,
-                    str_idx,
-                    round(portal_wh / 1000.0, 3),
-                    string_lifetime_energy,
-                )
-            string_lifetime_energy = round(portal_wh / 1000.0, 3)  # Wh -> kWh
+        portal_wh = None
+        if portal_string_wh_by_id:
+            portal_wh = portal_string_wh_by_id.get(string.stringId)
+        if portal_wh is None:
+            portal_wh = portal_strings.get(str_idx)  # Legacy fallback: 1-based list position
+        agg_wh = (string_lifetime_energy * 1000.0) if string_lifetime_energy is not None else 0.0
+        if portal_wh is not None and string_lifetime_energy is not None and portal_wh > agg_wh:
+            if (
+                string_lifetime_energy > 0
+                and portal_wh > agg_wh * STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO
+            ):
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers coordinator: Skipping string %s portal lifetime "
+                        "(portal Wh=%s vs aggregated Wh=%s exceeds ratio %s); keeping optimizer sum",
+                        string.stringId,
+                        portal_wh,
+                        agg_wh,
+                        STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO,
+                    )
+            else:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers coordinator: String %s (inv_serial=%s str_idx=%s) using portal lifetime: %.3f kWh (aggregated=%.3f)",
+                        string.stringId,
+                        inv_serial,
+                        str_idx,
+                        round(portal_wh / 1000.0, 3),
+                        string_lifetime_energy,
+                    )
+                string_lifetime_energy = round(portal_wh / 1000.0, 3)  # Wh -> kWh
         string_status_raw = getattr(string, "status", "") or ""
         string_is_active = is_status_active(string_status_raw)
 
@@ -692,7 +759,7 @@ class MyCoordinator(DataUpdateCoordinator):
             lifetime_energy=string_lifetime_energy,
         )
         string_entity_path = self._build_string_entity_path(string, str_suffix, str_idx, inv_idx_str, ctx)
-        string_aggregated = self._create_string_aggregated(string, agg_data, ctx.current_utc, string_entity_path)
+        string_aggregated = self._create_string_aggregated(string, agg_data, string_entity_path)
         ctx.data_dict[string_aggregated.panel_id] = string_aggregated
 
         return (string_aggregated, string_is_active, agg_data)
@@ -701,7 +768,7 @@ class MyCoordinator(DataUpdateCoordinator):
         """Accumulate a string's values into inverter totals (all strings included for power/current/voltage/lifetime).
         
         inv_state is a dict with current inverter accumulation values.
-        string_is_active: if True, this string counts toward active_strings (child_count).
+        string_is_active: if True, this string counts toward active_strings (child_count) and last_measurement rollup.
         """
         if agg_data.optimizer_count > 0:
             inv_state["current"] += string_aggregated.current
@@ -713,11 +780,11 @@ class MyCoordinator(DataUpdateCoordinator):
         if string_is_active:
             inv_state["active_strings"] += 1
             inv_state["active_optimizers"] += agg_data.active_optimizers
+            if inv_state["last_measurement"] is None or (
+                agg_data.last_measurement and agg_data.last_measurement > inv_state["last_measurement"]
+            ):
+                inv_state["last_measurement"] = agg_data.last_measurement
         inv_state["lifetime_energy"] = round(inv_state["lifetime_energy"] + agg_data.lifetime_energy, 3)
-        if inv_state["last_measurement"] is None or (
-            agg_data.last_measurement and agg_data.last_measurement > inv_state["last_measurement"]
-        ):
-            inv_state["last_measurement"] = agg_data.last_measurement
 
     def _process_inverter_strings(self, inverter, inv_idx, inv_suffix, ctx):
         """Process all strings for one inverter; write string aggregates into ctx.data_dict.
@@ -730,6 +797,7 @@ class MyCoordinator(DataUpdateCoordinator):
         ctx is an AggregationContext namedtuple with shared aggregation parameters.
         
         Power, current, voltage, and lifetime include ALL strings; child_count uses active_strings only.
+        Inverter last_measurement is the latest among active strings only.
         """
         inv_state = {
             "current": 0.0, "power": 0.0, "voltage_sum": 0.0, "voltage_count": 0,
@@ -754,10 +822,24 @@ class MyCoordinator(DataUpdateCoordinator):
             )
 
         inv_serial = getattr(inverter, "serialNumber", "") or ""
+        portal_by_inv = getattr(ctx, "portal_by_inverter", None) or {}
+        portal_strings = portal_by_inv.get(inv_serial, {}).get("strings", {})
+        portal_string_wh_by_id = self._portal_string_wh_by_string_id(inverter, portal_strings)
+        if _LOGGER.isEnabledFor(logging.DEBUG) and portal_strings:
+            n_keys = len(portal_strings)
+            n_str = len(inverter.strings)
+            if n_keys != n_str:
+                _LOGGER.debug(
+                    "SolarEdge Optimizers coordinator: Portal by-inverter has %d string energy key(s) "
+                    "but layout has %d string(s) for inverter %s; pairing sorted keys to sorted relativeOrder",
+                    n_keys,
+                    n_str,
+                    inv_serial or inv_idx_str,
+                )
         for str_idx, string in enumerate(inverter.strings, start=1):
             str_suffix = str_suffix_map.get(str_idx - 1, "")
             string_aggregated, string_is_active, agg_data = self._process_single_string(
-                string, str_suffix, str_idx, inv_idx_str, inv_serial, ctx
+                string, str_suffix, str_idx, inv_idx_str, inv_serial, ctx, portal_string_wh_by_id
             )
             self._accumulate_string_into_inverter(inv_state, string_aggregated, agg_data, string_is_active)
 
@@ -771,16 +853,18 @@ class MyCoordinator(DataUpdateCoordinator):
         self, site: SiteRollupState, inv_result: InverterRollupResult, inverter_is_active: bool
     ) -> SiteRollupState:
         """Update site rollup state with one inverter's aggregated data (all inverters included).
-        inverter_is_active: if True, this inverter counts toward active_inverters (child_count).
+        inverter_is_active: if True, this inverter counts toward active_inverters (child_count)
+        and contributes to site last_measurement rollup.
         """
         lifetime_energy = round(site.lifetime_energy + inv_result.aggregated.lifetime_energy, 3)
         active_optimizers = site.active_optimizers + (inv_result.active_optimizers if inverter_is_active else 0)
         active_strings = site.active_strings + (inv_result.active_strings if inverter_is_active else 0)
         last_measurement = site.last_measurement
-        if last_measurement is None or (
-            inv_result.last_measurement and inv_result.last_measurement > last_measurement
-        ):
-            last_measurement = inv_result.last_measurement
+        if inverter_is_active:
+            if last_measurement is None or (
+                inv_result.last_measurement and inv_result.last_measurement > last_measurement
+            ):
+                last_measurement = inv_result.last_measurement
 
         current = site.current
         power = site.power
@@ -896,6 +980,8 @@ class MyCoordinator(DataUpdateCoordinator):
         
         Power, current, voltage, and lifetime energy aggregate ALL devices (all statuses).
         Child counts (optimizer count, string count, inverter count) count only active (blank or ACTIVE) devices.
+        Last measurement rollups: string from active optimizers only; inverter from active strings only;
+        site from active inverters only.
         """
         lifetime_energy_lookup = self._build_lifetime_energy_lookup(lifetime_energy_data)
         if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -935,9 +1021,7 @@ class MyCoordinator(DataUpdateCoordinator):
                 )
             site = site._replace(lifetime_energy=portal_site_lifetime_kwh)
 
-        site_aggregated = self._create_site_aggregated(
-            site_id, site, current_utc, site_info=site_info or {}
-        )
+        site_aggregated = self._create_site_aggregated(site_id, site, site_info=site_info or {})
         data_dict[site_aggregated.panel_id] = site_aggregated
 
     def _decide_initial_full_refresh(self, is_data_dict, current_data) -> bool:
