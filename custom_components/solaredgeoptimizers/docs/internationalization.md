@@ -40,6 +40,10 @@ The integration sets `translation_domain` to the integration domain so the front
 
 - **Locale**: The integration passes the Home Assistant language to the API client (both SolarEdge One and legacy backends). The **legacy** API uses it to set `locale` and `Accept-Language` (and cookie `SolarEdge_Locale`) on requests, so portal responses can follow the user's language. When the legacy API returns localized measurement keys (e.g. "Leistung [W]" in German), the integration recognises multiple locale variants and normalises decimal separators so power/current/voltage work in all supported languages. The SolarEdge One API returns structured keys (e.g. `power_W`, `voltage_V`) so parsing is locale-independent; the language is still passed for consistency.
 
+## Behaviour vs translations
+
+Sensor **translation keys** are unchanged when aggregation rules change (e.g. last measurement rollups, lifetime portal guards): entity names still come from `entity.sensor.*.name` in each locale file. New behaviour is documented in English in the wiki and README.
+
 ## What is not translated (by design)
 
 - **Log messages**: All log text is in English for consistency and debugging.
