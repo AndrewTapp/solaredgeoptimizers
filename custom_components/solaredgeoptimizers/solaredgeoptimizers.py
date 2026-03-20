@@ -44,7 +44,8 @@ Data Classes Defined:
 
 Key Features:
 - Locale-aware measurement key parsing (supports EN, DE, FR, ES, IT, NL, etc.)
-- Thread-local session reuse for efficient parallel requests; close() closes all tracked
+- Thread-local session reuse for efficient parallel requests; each HTTP call uses
+  ``with session.request(...)`` so the response is closed; close() closes all tracked
   sessions to avoid leaking file descriptors when the integration is unloaded or removed.
 - Caching for panels (PANELS_CACHE_TTL_LEGACY) and lifetime energy (LIFETIME_ENERGY_CACHE_TTL)
 - Unicode normalization for measurement keys (handles various dash/space variants)
