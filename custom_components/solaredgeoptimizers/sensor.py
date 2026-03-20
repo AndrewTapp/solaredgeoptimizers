@@ -10,7 +10,10 @@ Individual Optimizer Sensors:
 
 Aggregated Sensors (String, Inverter, Site levels):
 - Average Current, Total Power, Average Voltage
-- Lifetime Energy (summed from children), Last Measurement
+- Lifetime Energy (summed from children; string portal override aligned by layout relativeOrder,
+  skipped if portal Wh exceeds optimizer sum by STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO)
+- Last Measurement (string: latest among active optimizers; inverter: among active strings;
+  site: among active inverters; unknown/None if no qualifying timestamp—no fake “now”)
 - Child Count (optimizers per string, strings per inverter, inverters per site)
 - Status (Active/Inactive)
 - Inverter-level: Max active power (kW, from portal layout logical v2; One API only)
@@ -1235,6 +1238,7 @@ class SolarEdgeAggregatedSensor(CoordinatorEntity, SensorEntity):
             SENSOR_TYPE_INSTALLATION_DATE,
             SENSOR_TYPE_PEAK_POWER,
             SENSOR_TYPE_MAX_ACTIVE_POWER,
+            SENSOR_TYPE_LASTMEASUREMENT,
         ):
             return None
         return 0

@@ -27,7 +27,8 @@ Error Handling:
 - InvalidAuth: HTTP 401 authentication failure
 
 Cleanup:
-- async_remove_entry: Closes API (releases file descriptors), then removes entities and devices
+- async_remove_entry: Pops coordinator if present, awaits executor `api.close()` (releases legacy
+  sessions and One tokens), then removes entities and devices from registries
 """
 from __future__ import annotations
 

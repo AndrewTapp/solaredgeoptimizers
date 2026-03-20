@@ -20,7 +20,7 @@ Methods Implemented:
 - get_site_info_cached(): One API only; returns installationDate, peakPower (kW) from layout/information/site
 - get_dashboard_site_production_cached(installation_date): One API only; returns site production (Wh) from dashboard/energy
 - get_layout_energy_by_inverter_cached(installation_date): One API only; returns inverter/string energy (Wh) from layout/energy by-inverter
-- close(): Closes both API sessions
+- close(): Closes both API backends (legacy closes all thread-local sessions; One clears tokens)
 
 Tracking:
 - _last_used_api: Tracks which API ("one" or "legacy") provided the last data

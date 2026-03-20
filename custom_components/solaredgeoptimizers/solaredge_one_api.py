@@ -53,7 +53,10 @@ Key Features:
 - Azimuth and tilt extraction from optimizer module data (radians to degrees)
 - Inverter nodes include maxActivePower (API watts → stored as kW) from layout for inverter-level sensor
 - Panel cache (PANELS_CACHE_TTL_ONE), site info (SITE_INFO_CACHE_TTL), temperature (TEMPERATURE_CACHE_TTL), lifetime (LIFETIME_ENERGY_CACHE_TTL)
-- No persistent sessions; requests use context managers so no file descriptors are held; close() clears tokens.
+- No persistent HTTP session for /services/ calls: `requests.get`/`post` use response context managers
+  so connections are released; OAuth uses a short-lived `Session()` inside `with` during token fetch only.
+- Parallel lifetime-energy fetches use `with ThreadPoolExecutor(...) as executor` so workers shut down cleanly.
+- `close()` clears OAuth tokens and sets `_closed` (idempotent); call on integration unload/removal.
 """
 import math
 import base64
@@ -1315,10 +1318,14 @@ class solaredge_one:
         return self._lifetime_energy_cache or {}
 
     def close(self):
-        """Clear tokens and release resources. Idempotent; safe to call multiple times.
+        """Clear OAuth tokens and mark client closed. Idempotent; safe to call multiple times.
 
-        One API uses requests.get/post with context managers (no persistent Session),
-        so no file descriptors are held. Clearing tokens ensures no reuse after close.
+        Routine GET/POST use ``with requests.get/post(...)`` so responses and pooled connections
+        are released after each call. The PKCE login uses ``with Session() as session`` so that
+        session is closed before normal API traffic. Parallel energy-graph fetches use
+        ``with ThreadPoolExecutor(...)`` so executor threads finish and shutdown. This method
+        prevents token reuse after unload; pair with dual API ``close()`` so legacy sessions
+        are also closed.
         """
         if self._closed:
             return
