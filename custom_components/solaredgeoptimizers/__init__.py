@@ -16,7 +16,11 @@ retrieves the site layout (inverters, strings, optimizers), and creates sensor e
 for power, voltage, current, temperature, energy, and status at optimizer, string,
 inverter, and site levels. Site level includes installation date and peak power when
 using the SolarEdge One API; inverter level includes max active power (kW) from the
-layout. On unload or removal, the API client is closed to release file descriptors.
+layout. The coordinator aggregates lifetime energy with portal overrides (dashboard /
+by-inverter) and guards string-level overrides when portal Wh far exceeds optimizer sums;
+last-measurement rollups at string/inverter/site use active devices only. On unload or
+config entry removal, ``async_unload_entry`` / ``async_remove_entry`` call ``api.close()``
+so legacy thread-local sessions and dual API clients release connections (file descriptors).
 """
 import logging
 from typing import Any
