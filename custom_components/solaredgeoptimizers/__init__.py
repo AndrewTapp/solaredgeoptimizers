@@ -21,6 +21,11 @@ by-inverter) and guards string-level overrides when portal Wh far exceeds optimi
 last-measurement rollups at string/inverter/site use active devices only. On unload or
 config entry removal, ``async_unload_entry`` / ``async_remove_entry`` call ``api.close()``
 so legacy thread-local sessions and dual API clients release connections (file descriptors).
+
+The sensor platform registers per-optimizer entities with ``has_entity_name`` disabled so
+``entity_id`` matches the path-based ``suggested_object_id`` (e.g. ``sensor.power_1_1_1``)
+without Home Assistant prepending the optimizer device slug; friendly names use short
+translated sensor labels only (device name shows optimizer position).
 """
 import logging
 from typing import Any
