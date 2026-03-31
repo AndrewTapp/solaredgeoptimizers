@@ -29,13 +29,16 @@ Key features:
 - Inactive devices have certain sensors excluded (power, current, voltage, etc.)
 - Duplicate optimizer/string/inverter positions get letter suffixes (a, b, c...)
 - Supports optional entity ID prefix and site ID inclusion in entity names
-- Translations (i18n) for entity names via translation_key
+- Translations (i18n): per-optimizer sensors use short translated labels only (e.g. "Azimuth", "Power");
+  has_entity_name=False so entity_id stays e.g. power_1_1_1 without device slug duplication; the
+  optimizer device name carries site/string/optimizer context.
 """
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.translation import async_get_translations
 
 import asyncio
 import logging
@@ -1363,7 +1366,10 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
     """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_has_entity_name = True
+    # False: entity_id stays e.g. sensor.power_1_1_1 (full suggested_object_id) without HA
+    # prepending the device slug (optimizer_1_1_1_power_1_1_1). Friendly name is set in
+    # async_added_to_hass from translations + optimizer position.
+    _attr_has_entity_name = False
 
     # Class-level constant for sensor attribute mapping to avoid recreating on every update
     _SENSOR_ATTR_MAP = {
@@ -1430,11 +1436,32 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         self._set_optimizer_device_info(entry, panel, string)
         self._set_optimizer_units_and_state_class()
 
+    async def async_added_to_hass(self) -> None:
+        """Set short translated friendly name (sensor type only); device shows optimizer position."""
+        await super().async_added_to_hass()
+        translations = await async_get_translations(
+            self.hass, self.hass.config.language, "entity", [DOMAIN]
+        )
+        slug = self._sensor_translation_slug
+        sensor_full = f"component.{DOMAIN}.entity.sensor.{slug}.name"
+        sensor_label = translations.get(sensor_full) or translations.get(
+            f"entity.sensor.{slug}.name", slug.replace("_", " ").title()
+        )
+        self._attr_name = sensor_label
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers sensor: Optimizer entity name=%r slug=%s suggested_object_id=%s",
+                self._attr_name,
+                slug,
+                getattr(self, "internal_integration_suggested_object_id", None),
+            )
+        self.async_write_ha_state()
+
     def _set_optimizer_identity(
         self, entry: ConfigEntry, panel: SolarEdgeOptimizerData, sensortype,
         optimizer: SolarlEdgeOptimizer, site_id: str, entity_id_path: tuple,
     ) -> None:
-        """Set unique_id, translation_key, suggested_object_id and display names for this optimizer sensor."""
+        """Set unique_id, suggested_object_id, translation slug, and display names for this optimizer sensor."""
         path_str = "_".join(map(str, entity_id_path)) if entity_id_path else ""
         slug = self._TRANSLATION_KEYS.get(sensortype, sensortype.lower().replace(" ", "_"))
         _uid_parts = [entry.entry_id]
@@ -1445,9 +1472,11 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         else:
             _uid_parts.extend([panel.serialnumber, sensortype])
         self._attr_unique_id = "_".join(_uid_parts)
-        self._attr_translation_key = self._TRANSLATION_KEYS.get(
+        # Short friendly name is set in async_added_to_hass (translated entity.sensor.<slug>.name only).
+        self._sensor_translation_slug = self._TRANSLATION_KEYS.get(
             self._sensor_type, self._sensor_type.lower().replace(" ", "_")
         )
+        self._attr_translation_key = None
         self._log_name = f"{self._sensor_type} {optimizer.displayName}"
         # Use position-based display name so devices with duplicate API display names stay distinct
         self._optimizer_display_name = (
