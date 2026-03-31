@@ -35,6 +35,9 @@ Data Aggregation:
 Duplicate Handling:
 - Resolves duplicate positions (same display name) with letter suffixes (a, b, c...)
 - Active devices sort first, then alphabetically by serial number
+
+Note: Per-optimizer entity IDs and friendly names are finalized in the sensor platform
+(SolarEdgeOptimizersSensor.async_added_to_hass); see sensor.py for has_entity_name and translations.
 """
 from __future__ import annotations
 
