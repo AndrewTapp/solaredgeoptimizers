@@ -40,7 +40,7 @@ Each constant is documented below with a full description of what it is used for
   changes slowly so 1 hour is typical.
 - STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO: Skip string-level portal lifetime override when
   by-inverter string Wh exceeds this multiple of the optimizer-sum aggregate (bad portal buckets).
-- TEMPERATURE_CACHE_TTL: How long to cache optimizer temperatures from One API (e.g. 30 min).
+- TEMPERATURE_CACHE_TTL: How long to cache optimizer maximum daily temperatures from One API (e.g. 30 min).
 
 === CACHE TTLs (Legacy API) ===
 - PANELS_CACHE_TTL_LEGACY: How long to cache site structure from legacy API (e.g. 2 h).
