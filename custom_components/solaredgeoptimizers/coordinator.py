@@ -36,6 +36,11 @@ Duplicate Handling:
 - Resolves duplicate positions (same display name) with letter suffixes (a, b, c...)
 - Active devices sort first, then alphabetically by serial number
 
+Device registry: site, inverter, and string devices are created here (and via
+ensure_devices_registered()) before the sensor platform adds entities. Identifiers are built
+with device_ids.py helpers. Entity device_info uses identifiers-only links so Home Assistant
+does not re-validate via_device during async_add_entities.
+
 Note: Per-optimizer entity IDs and friendly names are finalized in the sensor platform
 (SolarEdgeOptimizersSensor.async_added_to_hass); see sensor.py for has_entity_name and translations.
 """
@@ -76,6 +81,11 @@ from .const import (
     is_status_active,
     parse_string_display_name_path,
     resolve_duplicate_indices,
+)
+from .device_ids import (
+    inverter_device_identifier,
+    site_device_identifier,
+    string_device_identifier,
 )
 from .solaredgeoptimizers import (
     SolarEdgeAggregatedData,
@@ -493,7 +503,8 @@ class MyCoordinator(DataUpdateCoordinator):
         inv_suffix is empty for first inverter at position, 'a', 'b', etc. for duplicates.
         """
         inv_idx_str = f"{inv_idx}{inv_suffix}"
-        _LOGGER.info("Adding all optimizers from inverter: %s", inv_idx_str)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Registering devices for inverter %s", inv_idx_str)
         inverter_name = f"Inverter {site_id}.{inv_idx_str}"
         inv_model = self._inverter_models.get(inverter.serialNumber) if self._inverter_models else None
         model = (inv_model or f"{inverter.type} {inverter.displayName}").strip() or inverter.serialNumber
@@ -502,7 +513,7 @@ class MyCoordinator(DataUpdateCoordinator):
                 "SolarEdge Optimizers: Creating inverter device serial=%s model=%r (from_api=%s) suffix=%s",
                 inverter.serialNumber, model, inv_model is not None, inv_suffix or "(none)",
             )
-        inv_device_id = f"{self.config_entry.entry_id}_inv_{inv_idx_str}"
+        inv_device_id = inverter_device_identifier(self.config_entry.entry_id, inv_idx_str)
         device_registry.async_get_or_create(
             config_entry_id=self.config_entry.entry_id,
             identifiers={(DOMAIN, inv_device_id)},
@@ -510,7 +521,7 @@ class MyCoordinator(DataUpdateCoordinator):
             model=model,
             name=inverter_name,
             hw_version=inverter.serialNumber,
-            via_device=(DOMAIN, f"site_{self._site_structure.siteId}"),
+            via_device=(DOMAIN, site_device_identifier(self._site_structure.siteId)),
         )
         
         # Resolve duplicate strings within this inverter
@@ -537,11 +548,15 @@ class MyCoordinator(DataUpdateCoordinator):
                 inv_num, str_num = parsed
                 str_num_str = f"{str_num}{str_suffix}"
                 string_name = f"String {site_id}.{inv_num}.{str_num_str}"
-                str_device_id = f"{self.config_entry.entry_id}_str_{inv_num}_{str_num_str}"
+                str_device_id = string_device_identifier(
+                    self.config_entry.entry_id, inv_num, str_num_str
+                )
             else:
                 str_idx_str = f"{str_idx}{str_suffix}"
                 string_name = f"String {site_id}.{inv_idx_str}.{str_idx_str}"
-                str_device_id = f"{self.config_entry.entry_id}_str_{inv_idx_str}_{str_idx_str}"
+                str_device_id = string_device_identifier(
+                    self.config_entry.entry_id, inv_idx_str, str_idx_str
+                )
             device_registry.async_get_or_create(
                 config_entry_id=self.config_entry.entry_id,
                 identifiers={(DOMAIN, str_device_id)},
@@ -557,14 +572,17 @@ class MyCoordinator(DataUpdateCoordinator):
                     str_suffix or "(none)",
                 )
 
-    def ensure_devices_registered(self) -> None:
+    def ensure_devices_registered(self) -> bool:
         """Ensure site, inverter, and string devices exist in the device registry.
 
-        Call from the sensor platform before adding entities so via_device references
-        resolve (avoids 'references a non existing via_device' when setup order differs).
+        Called from __init__.py before platform forward and from the sensor platform before
+        adding entities. Full device records (name, model, via_device) are created here;
+        entities link by identifier only (see device_ids.link_device_info).
         """
-        if self._site_structure is not None:
-            self._register_site_and_inverter_devices(self._site_structure)
+        if self._site_structure is None:
+            return False
+        self._register_site_and_inverter_devices(self._site_structure)
+        return True
 
     def _register_site_and_inverter_devices(self, site) -> None:
         """Create device registry entries for site, inverters, and strings.
@@ -585,7 +603,7 @@ class MyCoordinator(DataUpdateCoordinator):
         
         device_registry.async_get_or_create(
             config_entry_id=self.config_entry.entry_id,
-            identifiers={(DOMAIN, f"site_{site.siteId}")},
+            identifiers={(DOMAIN, site_device_identifier(site.siteId))},
             manufacturer="SolarEdge",
             model=f"SITE {site.siteId}",
             name=f"Site {site_id}",
@@ -616,24 +634,30 @@ class MyCoordinator(DataUpdateCoordinator):
                 device_registry, site_id, inverter, inv_idx, inv_suffix
             )
 
+        total_strings = sum(len(inv.strings) for inv in site.inverters)
+        _LOGGER.info(
+            "SolarEdge Optimizers: Registered device hierarchy for site %s "
+            "(%d inverters, %d strings)",
+            site_id,
+            len(site.inverters),
+            total_strings,
+        )
+
     async def _async_setup(self) -> None:
         """Set up the coordinator.
 
         Can be overwritten by integrations to load data or resources
         only once during the first refresh.
         """
-        _LOGGER.info("SolarEdge Optimizers: Starting coordinator setup")
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: About to request list of all panels")
         try:
             site = await self.hass.async_add_executor_job(self.my_api.requestListOfAllPanels)
             self._site_structure = site
             self._pick_light_check_optimizers(site)
-            _LOGGER.info("SolarEdge Optimizers: Successfully retrieved panel list")
-            _LOGGER.info("Found all information for site: %s", site.siteId)
-            _LOGGER.info("Site has %s inverters", len(site.inverters))
             _LOGGER.info(
-                "Setting up Home Assistant devices and sensors for %s optimizers across %s inverters",
+                "SolarEdge Optimizers: Coordinator setup loaded site %s with %s optimizers across %s inverters",
+                site.siteId,
                 site.returnNumberOfOptimizers(),
                 len(site.inverters),
             )
@@ -1193,7 +1217,8 @@ class MyCoordinator(DataUpdateCoordinator):
 
     async def _refresh_temperature_when_no_full_refresh(self, data_dict) -> None:
         """
-        When we did not do a full refresh, still refresh optimizer temperatures if the API
+        When we did not do a full refresh, still refresh optimizer maximum daily
+        temperatures if the API
         supports it (e.g. SolarEdge One). get_optimizer_temperatures_cached() only hits the
         API when its temperature cache (TEMPERATURE_CACHE_TTL) is expired, so this keeps
         temperature updated periodically even when power/voltage etc. are not updating.
