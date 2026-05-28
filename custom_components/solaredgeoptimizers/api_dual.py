@@ -20,7 +20,8 @@ Methods Implemented:
 - get_site_info_cached(): One API only; returns installationDate, peakPower (kW) from layout/information/site
 - get_dashboard_site_production_cached(installation_date): One API only; returns site production (Wh) from dashboard/energy
 - get_layout_energy_by_inverter_cached(installation_date): One API only; returns inverter/string energy (Wh) from layout/energy by-inverter
-- close(): Closes both API backends (legacy closes all thread-local sessions; One clears tokens)
+- close(): Closes both API backends (legacy closes all thread-local sessions; One clears tokens);
+  idempotent via _closed flag; both backends closed even if one raises
 
 Tracking:
 - _last_used_api: Tracks which API ("one" or "legacy") provided the last data
@@ -57,6 +58,7 @@ class SolarEdgeDualAPI:
         self._legacy = solaredgeoptimizers(siteid, username, password, timezone, language)
         self._last_used_api: str | None = "legacy" if not self._use_solaredge_one else None  # "one" or "legacy"
         self._obtained_from: str = OBTAINED_FROM_LEGACY if not self._use_solaredge_one else OBTAINED_FROM_ONE
+        self._closed = False
         # When legacy-only, hide batch API so coordinator uses single-optimizer light check and 2h stale threshold
         if not self._use_solaredge_one:
             self.requestSystemDataBatch = None  # type: ignore[assignment]
@@ -207,6 +209,9 @@ class SolarEdgeDualAPI:
         Idempotent; safe to call multiple times. Both clients are always closed even if one raises;
         the second client is still closed after the first raises to avoid leaking its descriptors.
         """
+        if self._closed:
+            return
+        self._closed = True
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Dual API: Closing both API clients (One and Legacy)")
         last_error = None
