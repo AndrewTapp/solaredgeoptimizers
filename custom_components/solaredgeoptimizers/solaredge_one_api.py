@@ -1341,6 +1341,6 @@ class solaredge_one:
         """Best-effort cleanup if GC collects an unclosed client."""
         try:
             self.close()
-        except Exception:  # pylint: disable=broad-except
-            # Never raise from destructor.
-            pass
+        except Exception as exc:  # pylint: disable=broad-except
+            # Never raise from destructor, but leave a debug breadcrumb.
+            _LOGGER.debug("SolarEdge One API: Ignoring close error in __del__: %s", exc)
