@@ -20,13 +20,16 @@ Reauth Flow (async_step_reauth, async_step_reauth_confirm):
 Options Flow (SolarEdgeOptimizersOptionsFlowHandler):
 - Accessible via Configure button on the integration card
 - Allows changing entity ID prefix, site ID inclusion, and One API toggle
-- Triggers integration reload after saving to apply new entity IDs
+- Triggers integration reload after saving; marks entity-registry rebuild only when
+  entity-id-shaping options changed (prefix/site-id inclusion)
 
 Error Handling:
 - CannotConnect: Network/timeout errors during credential validation
 - InvalidAuth: HTTP 401 authentication failure
 
 Cleanup:
+- Credential validation: `api.close()` in a finally block after check_login so temporary
+  sessions are not left open when the user cancels or validation fails
 - async_remove_entry: Pops coordinator if present, awaits executor `api.close()` (releases legacy
   sessions and One tokens), then removes entities and devices from registries
 """
@@ -49,6 +52,22 @@ from .const import CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, DOMAIN
 from . import remove_entities_and_devices_for_entry
 
 _LOGGER = logging.getLogger(__name__)
+
+def _normalized_prefix(value: str | None) -> str:
+    """Normalize entity_id_prefix consistently with sensor setup."""
+    return (value or "").strip().lower().replace(" ", "_")
+
+
+def _entity_id_shape_changed(entry: ConfigEntry, options_data: dict[str, Any]) -> bool:
+    """Return True when options change entity-id shaping (prefix/site-id inclusion)."""
+    old_prefix_raw = entry.options.get("entity_id_prefix", entry.data.get("entity_id_prefix", ""))
+    old_include = bool(
+        entry.options.get("include_site_id_in_entity_id", entry.data.get("include_site_id_in_entity_id", False))
+    )
+    new_prefix = _normalized_prefix(options_data.get("entity_id_prefix", ""))
+    new_include = bool(options_data.get("include_site_id_in_entity_id", False))
+    return _normalized_prefix(old_prefix_raw) != new_prefix or old_include != new_include
+
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
@@ -132,12 +151,13 @@ async def validate_input(
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge Optimizers config: Closed API after validation (site %s)", siteid)
         except Exception as e:  # pylint: disable=broad-except
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Optimizers config: Error closing API after validation: %s", e)
+            _LOGGER.warning("SolarEdge Optimizers config: Error closing API after validation: %s", e)
 
     if code == 200:
         return {"title": translated_title % {"siteid": siteid}}
-    raise InvalidAuth
+    if code == 401:
+        raise InvalidAuth
+    raise CannotConnect
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -254,6 +274,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await validate_input(self.hass, data, title_template)
         except InvalidAuth:
             errors["base"] = "invalid_auth"
+        except CannotConnect:
+            errors["base"] = "cannot_connect"
         except Exception as e:  # pylint: disable=broad-except
             _LOGGER.exception("Unexpected exception during reauth: %s", e)
             errors["base"] = "unknown"
@@ -348,18 +370,24 @@ class SolarEdgeOptimizersOptionsFlowHandler(config_entries.OptionsFlow):
                 "include_site_id_in_entity_id": bool(user_input.get("include_site_id_in_entity_id", False)),
                 CONF_USE_SOLAREDGE_ONE: bool(user_input.get(CONF_USE_SOLAREDGE_ONE, True)),
             }
+            should_rebuild_entities = _entity_id_shape_changed(self._entry, options_data)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge Optimizers options flow: Saving options for entry %s (entity_id_prefix=%r, include_site_id_in_entity_id=%s, use_solaredge_one=%s)",
+                    "SolarEdge Optimizers options flow: Saving options for entry %s "
+                    "(entity_id_prefix=%r, include_site_id_in_entity_id=%s, use_solaredge_one=%s, rebuild_entities=%s)",
                     self._entry.entry_id,
                     options_data["entity_id_prefix"],
                     options_data["include_site_id_in_entity_id"],
                     options_data[CONF_USE_SOLAREDGE_ONE],
+                    should_rebuild_entities,
                 )
             # Update options; options override data when reading in sensor/coordinator
             result = self.async_create_entry(title="", data=options_data)
             # Reload after pending work (e.g. config entry save) so setup sees new options and entity_id prefix updates
             entry_id = self._entry.entry_id
+            if should_rebuild_entities:
+                rebuild_set = self.hass.data.setdefault(DOMAIN, {}).setdefault("_rebuild_entity_registry", set())
+                rebuild_set.add(entry_id)
             async def _reload_after_save() -> None:
                 await self.hass.async_block_till_done()
                 await self.hass.config_entries.async_reload(entry_id)

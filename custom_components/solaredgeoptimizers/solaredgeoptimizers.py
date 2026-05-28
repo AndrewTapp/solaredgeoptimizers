@@ -7,6 +7,11 @@ as a fallback when the SolarEdge One API is unavailable or returns no valid data
 Authentication:
 - Uses HTTP Basic Authentication with site credentials
 - Session-based with CSRF token handling for subsequent requests
+- Legacy session bootstrap falls back to ``/solaredge-web/p/logout/slo`` then
+  ``/solaredge-web/p/login`` when SolarEdge stops issuing ``CSRF-TOKEN`` from
+  the login page alone
+- Logs legacy HTTP ``498`` responses explicitly as likely rejected/missing/expired
+  CSRF token or legacy web-session failures
 - Thread-local sessions for safe concurrent access in ThreadPoolExecutor
 
 API Endpoints (monitoring.solaredge.com/solaredge-apigw/api/...):
@@ -389,32 +394,26 @@ class solaredgeoptimizers:
         return self._lifetime_energy_cache or {}
 
     def check_login(self):
-        # Add detailed debugging for initial setup issues
-        _LOGGER.info("SolarEdge Optimizers: Starting login check for site %s", self.siteid)
-
-        # Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers: Login check URL: %s", url)
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Login check URL: %s", url)
 
         kwargs = {}
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
         kwargs["headers"] = {"user-agent": USER_AGENT}
-        # Add timeout to prevent hanging and log request attempt
         kwargs["timeout"] = API_TIMEOUT_SHORT
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers: Making login check request (timeout=%ss)",
+                "SolarEdge Optimizers (legacy): Making login check request (timeout=%ss)",
                 API_TIMEOUT_SHORT,
             )
 
         try:
-            # Use context manager to ensure response is properly closed
             with requests.get(url, **kwargs) as r:
-                _LOGGER.info("SolarEdge Optimizers: Login check completed - Status: %s", r.status_code)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers: Login check response headers: %s", dict(r.headers))
-                    _LOGGER.debug("SolarEdge Optimizers: Login check response body length: %s bytes", len(r.text))
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Login check status: %s", r.status_code)
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response headers: %s", dict(r.headers))
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response body length: %s bytes", len(r.text))
                 return r.status_code
         except requests.exceptions.Timeout as e:
             _LOGGER.error(
@@ -436,16 +435,12 @@ class solaredgeoptimizers:
     def _fetch_logical_layout(self, url: str, kwargs: dict) -> str:
         """Perform GET for logical layout; return response text. Caller handles exceptions."""
         with requests.get(url, **kwargs) as r:
-            _LOGGER.info(
-                "SolarEdge Optimizers: Logical layout request completed - Status: %s, Content length: %s",
-                r.status_code,
-                len(r.text),
-            )
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Endpoint (logical layout): %s", url)
-                _LOGGER.debug("SolarEdge Optimizers: Logical layout response headers: %s", dict(r.headers))
+                _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout URL: %s", url)
+                _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout status: %s", r.status_code)
+                _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout response headers: %s", dict(r.headers))
                 _LOGGER.debug(
-                    "Response from requestLogicalLayout (status %s): %s",
+                    "SolarEdge Optimizers (legacy): requestLogicalLayout response (status %s): %s",
                     r.status_code,
                     r.text[:2000] if len(r.text) > 2000 else r.text,
                 )
@@ -468,12 +463,11 @@ class solaredgeoptimizers:
 
     def requestLogicalLayout(self):
         """Request logical layout JSON for the site. Returns raw response text."""
-        _LOGGER.info("SolarEdge Optimizers: Requesting logical layout for site %s", self.siteid)
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers: Logical layout URL: %s", url)
+            _LOGGER.debug("SolarEdge Optimizers (legacy): requestLogicalLayout URL: %s", url)
             _LOGGER.debug(
-                "SolarEdge Optimizers: Making logical layout request (timeout=%ss)",
+                "SolarEdge Optimizers (legacy): Making logical layout request (timeout=%ss)",
                 API_TIMEOUT_LONG,
             )
         kwargs = {
@@ -489,22 +483,22 @@ class solaredgeoptimizers:
     def _parse_and_cache_layout(self, raw_layout: str, now: datetime):
         """Parse layout JSON, update cache, return SolarEdgeSite. Raises on parse error."""
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers: Received raw layout data, parsing JSON")
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Received raw layout data, parsing JSON")
         json_obj = json.loads(raw_layout)
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Parsed logical layout JSON: %s", json_obj)
-            _LOGGER.debug("SolarEdge Optimizers: Creating SolarEdgeSite object")
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Parsed logical layout JSON: %s", json_obj)
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Creating SolarEdgeSite object")
         self._panels_cache = SolarEdgeSite(json_obj)
         self._panels_cache_time = now
-        _LOGGER.info(
-            "SolarEdge Optimizers: Refreshed panels cache with %s optimizers",
-            self._panels_cache.returnNumberOfOptimizers(),
-        )
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Refreshed panels cache with %s optimizers",
+                self._panels_cache.returnNumberOfOptimizers(),
+            )
         return self._panels_cache
 
     def requestListOfAllPanels(self):
         """Return site layout (SolarEdgeSite). Uses cache when valid."""
-        _LOGGER.info("SolarEdge Optimizers: Requesting list of all panels")
         now = datetime.now()
         if (
             self._panels_cache is None
@@ -746,6 +740,47 @@ class solaredgeoptimizers:
                 raise
         raise last_error
 
+    def _prime_session_cookies(self, session: Session):
+        """Prime legacy session cookies and recover when CSRF moves off /p/login.
+
+        SolarEdge changed the monitoring portal in May 2026 so some accounts no
+        longer receive ``CSRF-TOKEN`` from ``/solaredge-web/p/login``. Keep the
+        historical bootstrap for compatibility, then fall back to the reported
+        ``/solaredge-web/p/logout/slo`` -> ``/solaredge-web/p/login`` sequence
+        when the CSRF cookie is still missing.
+        """
+        with session.head(
+            f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy",
+            headers={"user-agent": USER_AGENT},
+            timeout=API_TIMEOUT_SHORT,
+        ) as response:
+            pass  # Response automatically closed by context manager
+
+        session.auth = (self.username, self.password)
+        login_url = "https://monitoring.solaredge.com/solaredge-web/p/login"
+        logout_slo_url = "https://monitoring.solaredge.com/solaredge-web/p/logout/slo"
+
+        with session.get(login_url, timeout=API_TIMEOUT_SHORT) as response:
+            if response.status_code != 200:
+                _LOGGER.warning("Login request returned status %d", response.status_code)
+
+        if self.GetThecsrfToken(session.cookies.get_dict()) is not None:
+            return
+
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): CSRF cookie missing after /p/login; "
+                "trying logout/login bootstrap"
+            )
+        with session.get(logout_slo_url, timeout=API_TIMEOUT_SHORT) as response:
+            if response.status_code != 200:
+                _LOGGER.warning("Logout SLO request returned status %d", response.status_code)
+        with session.get(login_url, timeout=API_TIMEOUT_SHORT) as response:
+            if response.status_code != 200:
+                _LOGGER.warning("Login request after logout bootstrap returned status %d", response.status_code)
+        if self.GetThecsrfToken(session.cookies.get_dict()) is None:
+            _LOGGER.warning("CSRF token still not found in cookies after logout/login bootstrap")
+
     def _get_session(self):
         """Get or create a thread-local session for reuse.
         
@@ -756,25 +791,15 @@ class solaredgeoptimizers:
         if self._closed:
             raise RuntimeError("SolarEdge legacy API client is closed")
         if not hasattr(self._thread_local, 'session') or self._thread_local.session is None:
-            # Create new session for this thread
             session = Session()
+            try:
+                self._prime_session_cookies(session)
+            except Exception:
+                session.close()
+                raise
             with self._sessions_lock:
                 self._all_sessions.add(session)
             self._thread_local.session = session
-            # Perform initial login setup
-            # Use f-string instead of .format() for better performance
-            # Use context manager to ensure response is closed
-            with self._thread_local.session.head(
-                f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy",
-                headers={"user-agent": USER_AGENT},
-            ) as r:
-                pass  # Response automatically closed by context manager
-            url = "https://monitoring.solaredge.com/solaredge-web/p/login"
-            self._thread_local.session.auth = (self.username, self.password)
-            # Use context manager to ensure response is closed
-            with self._thread_local.session.get(url) as r1:
-                if r1.status_code != 200:
-                    _LOGGER.warning("Login request returned status %d", r1.status_code)
         
         return self._thread_local.session
 
@@ -810,8 +835,14 @@ class solaredgeoptimizers:
         therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
         thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
         if thecrsftoken is None:
-            _LOGGER.warning("CSRF token not found in cookies")
-            thecrsftoken = ""
+            _LOGGER.warning("CSRF token not found in cookies; refreshing legacy session bootstrap")
+            self._prime_session_cookies(session)
+            therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
+            thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
+            if thecrsftoken is None:
+                _LOGGER.warning("CSRF token still not found in cookies after refresh")
+                thecrsftoken = ""
+        csrf_token_missing_locally = thecrsftoken == ""
 
         with session.request(
             method=method,
@@ -833,6 +864,21 @@ class solaredgeoptimizers:
 
         if status_code == 200:
             return response_text
+        if status_code == 498:
+            if csrf_token_missing_locally:
+                _LOGGER.warning(
+                    "SolarEdge Optimizers (legacy): HTTP 498 from %s %s; request was sent without a local "
+                    "CSRF token after bootstrap refresh, so SolarEdge likely rejected the legacy session/CSRF bootstrap",
+                    method,
+                    request_url,
+                )
+            else:
+                _LOGGER.warning(
+                    "SolarEdge Optimizers (legacy): HTTP 498 from %s %s; SolarEdge likely rejected an "
+                    "invalid or expired CSRF token / legacy web session",
+                    method,
+                    request_url,
+                )
         return f"ERROR001 - HTTP CODE: {status_code}"
 
     def getLifeTimeEnergy(self):
@@ -865,6 +911,14 @@ class solaredgeoptimizers:
                     _LOGGER.debug("SolarEdge Optimizers (legacy): Closed session")
             except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.warning("SolarEdge Optimizers (legacy): Error closing session: %s", e)
+
+    def __del__(self) -> None:
+        """Best-effort cleanup if GC collects an unclosed client."""
+        try:
+            self.close()
+        except Exception as exc:  # pylint: disable=broad-except
+            # Never raise from destructor, but leave a debug breadcrumb.
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Ignoring close error in __del__: %s", exc)
 
     def getAlerts(self, only_open=False):
         # Note: this might require FULL_ACCESS rights in the SE portal, as opposed to DASHBOARD_AND_LAYOUT

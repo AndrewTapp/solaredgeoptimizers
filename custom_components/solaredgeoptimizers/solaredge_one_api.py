@@ -30,7 +30,7 @@ API Endpoints (monitoring.solaredge.com/services/...):
 
 5. Optimizer Temperatures:
    GET .../layout/energy/site/{siteId}/by-inverter?include-max-temperature=true
-   Returns per-optimizer temperature (auto-converts Fahrenheit to Celsius)
+   Returns per-optimizer maximum daily temperature (auto-converts Fahrenheit to Celsius)
    Cached per TEMPERATURE_CACHE_TTL (e.g. 30 min)
 
 6. Lifetime Energy (per-optimizer):
@@ -48,7 +48,7 @@ API Endpoints (monitoring.solaredge.com/services/...):
 
 Key Features:
 - Automatic retry on timeout for optimizer data requests
-- Temperature unit normalization (F to C conversion)
+- Maximum daily temperature unit normalization (F to C conversion)
 - Duplicate name resolution with letter suffixes for same-position devices
 - Azimuth and tilt extraction from optimizer module data (radians to degrees)
 - Inverter nodes include maxActivePower (API watts → stored as kW) from layout for inverter-level sensor
@@ -890,10 +890,11 @@ class solaredge_one:
             )
             self._panels_cache = _site_structure_v2_to_solar_edge_site(self.siteid, raw)
             self._panels_cache_time = now
-            _LOGGER.info(
-                "SolarEdge One: Refreshed panels cache with %s optimizers",
-                self._panels_cache.returnNumberOfOptimizers(),
-            )
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge One: Refreshed panels cache with %s optimizers",
+                    self._panels_cache.returnNumberOfOptimizers(),
+                )
         else:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
@@ -905,7 +906,7 @@ class solaredge_one:
 
     def _parse_temperature_response(self, data: dict) -> tuple[dict[str, float], int]:
         """
-        Parse layout/energy by-inverter API response into optimizer_serial -> temperature (Celsius).
+        Parse layout/energy by-inverter API response into optimizer_serial -> max daily temperature (Celsius).
         Returns (result_dict, fahrenheit_count) for logging.
         """
         result = {}
@@ -939,7 +940,8 @@ class solaredge_one:
 
     def get_optimizer_temperatures_cached(self):
         """
-        Return dict optimizer_serial -> temperature (float, Celsius) from layout/energy/site/.../by-inverter
+        Return dict optimizer_serial -> max daily temperature (float, Celsius) from
+        layout/energy/site/.../by-inverter
         with include-max-temperature=true. Cached per TEMPERATURE_CACHE_TTL.
         """
         now = datetime.now()
@@ -1334,3 +1336,11 @@ class solaredge_one:
             _LOGGER.debug("SolarEdge One: close() clearing access token")
         self._access_token = None
         self._refresh_token = None
+
+    def __del__(self) -> None:
+        """Best-effort cleanup if GC collects an unclosed client."""
+        try:
+            self.close()
+        except Exception as exc:  # pylint: disable=broad-except
+            # Never raise from destructor, but leave a debug breadcrumb.
+            _LOGGER.debug("SolarEdge One API: Ignoring close error in __del__: %s", exc)
