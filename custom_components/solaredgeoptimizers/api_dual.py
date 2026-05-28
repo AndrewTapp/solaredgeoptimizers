@@ -65,6 +65,8 @@ class SolarEdgeDualAPI:
 
     def check_login(self) -> int:
         """Return 200 if either backend authenticates, else best-available status code."""
+        if not self._use_solaredge_one:
+            return self._legacy.check_login()
         code_one = self._one.check_login()
         if code_one == 200:
             code_legacy = self._legacy.check_login()
@@ -227,7 +229,9 @@ class SolarEdgeDualAPI:
                     name,
                     e,
                 )
-        if last_error is not None and _LOGGER.isEnabledFor(logging.DEBUG):
+        if last_error is None:
+            _LOGGER.info("SolarEdge Dual API: Closed One and legacy API clients (file descriptors released)")
+        elif _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Dual API: At least one client failed to close; the other was still closed"
             )
