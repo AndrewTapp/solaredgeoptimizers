@@ -47,6 +47,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.translation import async_get_translations
+from homeassistant.util import dt as dt_util
 
 from .const import CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, DOMAIN
 from . import remove_entities_and_devices_for_entry
@@ -122,9 +123,18 @@ async def validate_input(
     siteid = (data.get("siteid") or "").strip()
     username = data.get("username") or ""
     password = data.get("password") or ""
+    use_solaredge_one = data.get(CONF_USE_SOLAREDGE_ONE, True)
+    ha_timezone = dt_util.get_time_zone(hass.config.time_zone)
 
     from .api_dual import SolarEdgeDualAPI
-    api = SolarEdgeDualAPI(siteid=siteid, username=username, password=password)
+    api = SolarEdgeDualAPI(
+        siteid=siteid,
+        username=username,
+        password=password,
+        timezone=ha_timezone,
+        language=hass.config.language,
+        use_solaredge_one=use_solaredge_one,
+    )
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug("SolarEdge Optimizers config: Validating dual API for site %s", siteid)
     try:
@@ -156,7 +166,18 @@ async def validate_input(
     if code == 200:
         return {"title": translated_title % {"siteid": siteid}}
     if code == 401:
+        _LOGGER.warning(
+            "SolarEdge Optimizers config: Authentication failed for site %s "
+            "(check email/password at monitoring.solaredge.com; legacy-only: disable Use SolarEdge One)",
+            siteid,
+        )
         raise InvalidAuth
+    if code == 0:
+        _LOGGER.warning(
+            "SolarEdge Optimizers config: Login check returned no HTTP status for site %s "
+            "(often SolarEdge One OAuth did not complete; try legacy-only or verify credentials)",
+            siteid,
+        )
     raise CannotConnect
 
 
