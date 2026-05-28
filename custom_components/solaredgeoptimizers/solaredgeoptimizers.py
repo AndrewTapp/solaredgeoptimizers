@@ -916,9 +916,9 @@ class solaredgeoptimizers:
         """Best-effort cleanup if GC collects an unclosed client."""
         try:
             self.close()
-        except Exception:  # pylint: disable=broad-except
-            # Never raise from destructor.
-            pass
+        except Exception as exc:  # pylint: disable=broad-except
+            # Never raise from destructor, but leave a debug breadcrumb.
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Ignoring close error in __del__: %s", exc)
 
     def getAlerts(self, only_open=False):
         # Note: this might require FULL_ACCESS rights in the SE portal, as opposed to DASHBOARD_AND_LAYOUT
