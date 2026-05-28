@@ -28,7 +28,9 @@ Key features:
 - Position-based entity IDs ensure hardware swaps don't create duplicate entities
 - Device hierarchy: coordinator registers site/inverter/string devices first; entities use
   link_device_info (identifiers only) from device_ids.py so HA does not re-apply via_device
-- Entities are added in tier order (site → inverter → string → optimizer) before async_add_entities
+- Entities are added in tier order (site → inverter → string → optimizer), then registered in
+  batches of ENTITY_ADD_BATCH_SIZE with event-loop yields between batches (update_before_add=False
+  because the coordinator already completed its first refresh)
 - Inactive devices have certain sensors excluded (power, current, voltage, etc.)
 - Duplicate optimizer/string/inverter positions get letter suffixes (a, b, c...)
 - Supports optional entity ID prefix and site ID inclusion in entity names
@@ -64,6 +66,7 @@ from .const import (
     CONF_INCLUDE_SITE_ID_IN_ENTITY_ID,
     DOMAIN,
     CONF_ENTITY_PREFIX,
+    ENTITY_ADD_BATCH_SIZE,
     SENSOR_TYPE_INDIVIDUAL,
     SENSOR_TYPE_AGGREGATED_STRING,
     SENSOR_TYPE_AGGREGATED_INVERTER,
@@ -810,7 +813,7 @@ def _sensor_entity_device_tier(sensor: SensorEntity) -> int:
     return 50
 
 
-def _finalize_sensor_setup(
+async def _finalize_sensor_setup(
     async_add_entities: AddEntitiesCallback,
     sensors_to_add: list[SensorEntity],
     optimizer_count: int,
@@ -819,14 +822,37 @@ def _finalize_sensor_setup(
     """Add sensors to Home Assistant and log completion."""
     if sensors_to_add:
         sensors_to_add = sorted(sensors_to_add, key=_sensor_entity_device_tier)
+        batch_size = max(1, ENTITY_ADD_BATCH_SIZE)
+        total_entities = len(sensors_to_add)
+        batch_count = (total_entities + batch_size - 1) // batch_size
+        _LOGGER.info(
+            "SolarEdge Optimizers sensor: Registering %d entities in %d batches (batch size %d)",
+            total_entities,
+            batch_count,
+            batch_size,
+        )
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge Optimizers sensor: Adding %d entities (update_before_add=True)", len(sensors_to_add),
+                "SolarEdge Optimizers sensor: Adding %d entities in batches of %d (update_before_add=False)",
+                total_entities,
+                batch_size,
             )
-        async_add_entities(sensors_to_add, update_before_add=True)
+        for start_idx in range(0, total_entities, batch_size):
+            batch = sensors_to_add[start_idx:start_idx + batch_size]
+            async_add_entities(batch, update_before_add=False)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers sensor: Added entity batch %d-%d of %d",
+                    start_idx + 1,
+                    start_idx + len(batch),
+                    total_entities,
+                )
+            if start_idx + len(batch) < total_entities:
+                # Yield to the event loop so HA can process registry/state events between batches.
+                await asyncio.sleep(0)
         _LOGGER.info(
             "Done adding all sensors. Added %d sensors in total (%d optimizer sensors + %d aggregated sensors + 2 site sensors).",
-            len(sensors_to_add), optimizer_count, aggregated_count,
+            total_entities, optimizer_count, aggregated_count,
         )
     else:
         _LOGGER.warning("No sensors were created - check for errors above")
@@ -906,7 +932,7 @@ async def async_setup_entry(
     )
 
     # Finalize setup
-    _finalize_sensor_setup(async_add_entities, sensors_to_add, len(optimizer_sensors), len(aggregated_sensors))
+    await _finalize_sensor_setup(async_add_entities, sensors_to_add, len(optimizer_sensors), len(aggregated_sensors))
 
 
 class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
