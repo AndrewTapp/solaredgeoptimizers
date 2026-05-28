@@ -144,8 +144,9 @@ flowchart TB
   - Exposes `_obtained_from` and uses `SolarEdgeAPIProtocol`.
 - **Sensor platform**
   - Rebuilds registry entities only when entity-id shape options changed.
-  - Creates site/inverter/string/optimizer devices and all sensors.
-  - Keeps device hierarchy aligned with coordinator identifiers.
+  - Registers **optimizer** devices before entities (`_register_optimizer_devices`); site/inverter/string devices come from the coordinator.
+  - Adds sensors in batches (`ENTITY_ADD_BATCH_SIZE`) and notifies coordinator listeners after the last batch.
+  - Parses display-name suffixes (e.g. `1.1.1a`) via `build_optimizer_tasks` / `parse_optimizer_display_name_to_indices`.
   - Uses coordinator cache first and fetches only missing optimizer data.
 - **API client**
   - Dual API (`api_dual.py`) tries One first and falls back to legacy.
@@ -674,6 +675,8 @@ logger:
 | Sensors stay 0 | Last measurement age: 1 h when Obtained from is One API, 2 h when Legacy API. Check “Last measurement”, Last polled, and Obtained from; debug logs for API responses. If using a non-English HA language, ensure you’re on a version that supports locale-aware measurement keys (e.g. “Leistung [W]” for German). |
 | Slow first load | **SolarEdge One:** one batch POST for optimizer data; when cache is cold, parallel lifetime-energy fetch. **Legacy:** parallel per-optimizer requests. Layout and lifetime energy cached after first run. Full refresh timeout 30 min (`COORDINATOR_REFRESH_TIMEOUT_SEC`). Sensor entities are registered in startup batches (`ENTITY_ADD_BATCH_SIZE`, default 50) from v2.4.18. |
 | “Client unable to keep up with pending messages” / hundreds of registry updates at startup | From **v2.4.18**, the sensor platform registers entities in batches with event-loop yields instead of one bulk `async_add_entities` call. Update via HACS and restart. Lower `ENTITY_ADD_BATCH_SIZE` in `const.py` for a gentler load; raise it for faster setup on capable hardware. |
+| Many optimizer sensors show **unknown** right after setup | Often normal until coordinator data is applied: v2.4.18 notifies listeners after batched registration and reapplies data after HA state restore. Wait for the next coordinator cycle (few minutes) or enable debug logging. If values never appear, check **Obtained from** and portal connectivity. |
+| Optimizer devices show as **Unnamed device** | Update to v2.4.18+ so optimizer devices are pre-registered in the sensor platform before entities link by identifier. Reload the integration. |
 | Duplicate entity IDs (e.g. sensor.power_2) | Use a unique Entity ID prefix per site, or ensure you’re on a version that uses the new path-based entity IDs (site in path). |
 | Duplicate sensors/devices after optimizer or inverter swap | The integration uses position-based identity; after an update you should see one sensor per position. If you still have duplicates from before that change, **remove the integration** (Settings → Integrations → Delete) and **add it again** so the registry is cleaned and recreated with position-based devices. |
 | Two inverters (one with sensors, one with strings) | Usually caused by mismatched device IDs from an older release. **Remove the integration** and **add it again** so devices and entities are recreated with position/display-name IDs from the coordinator. |
@@ -702,13 +705,13 @@ solaredgeoptimizers/
 ├── api_dual.py            # SolarEdgeDualAPI: use_solaredge_one; when True tries One first then legacy, when False legacy only; exposes _obtained_from; close() both backends
 ├── config_flow.py         # Config flow, validation (dual API), translated title, async_remove_entry (close API + shared cleanup helper)
 ├── device_ids.py          # Shared device registry identifiers; link_device_info (identifiers-only entity device_info)
-├── const.py               # DOMAIN, intervals, cache TTLs, sensor type constants, status helpers (is_status_active, status_display_value, status_icon), parse_string_display_name_path, parse_optimizer_display_name_to_indices, make_duplicate_sort_key, resolve_duplicate_indices
+├── const.py               # DOMAIN, ENTITY_ADD_BATCH_SIZE, intervals, cache TTLs, sensor types, status helpers, parse_string/optimizer display names (incl. 1.1.1a suffix), build_optimizer_tasks, resolve_duplicate_indices
 ├── exceptions.py          # SolarEdgeAPIError: custom exception for API/processing errors (used by legacy client)
 ├── coordinator.py         # DataUpdateCoordinator, adaptive polling, revert-to-One retry (30 min when from legacy), aggregation, _obtained_from, AggregationContext namedtuple, uses resolve_duplicate_indices from const.py
 ├── hacs.json              # HACS metadata
 ├── info.md                # Integration info (e.g. for HACS)
 ├── manifest.json         # Domain, version, requirements (e.g. jsonfinder)
-├── sensor.py              # Sensor entities (optimizer, aggregated, last polled, obtained_from); batched async_add_entities at setup (ENTITY_ADD_BATCH_SIZE); conditional entity-registry rebuild; uses coordinator.data when available; resolve_duplicate_indices for entity ID duplicate resolution
+├── sensor.py              # Sensor entities; optimizer device registration; batched async_add_entities; listener notify after batches; lookup/restore for optimizer state; build_optimizer_tasks from const.py
 ├── solaredgeoptimizers.py # Legacy API client, data models, SolarEdge legacy API calls
 ├── solaredge_one_api.py   # SolarEdge One API client (OAuth, /services/layout/..., optimizer requests with 60 s timeout and retry)
 ├── strings.json           # Config flow strings (references to common keys)
@@ -750,10 +753,12 @@ solaredgeoptimizers/
 
 | Function | Purpose |
 |----------|---------|
-| `parse_string_display_name_path()` | Parse string displayName (e.g. "1.0") into (inv, str) tuple for device/entity IDs. |
-| `parse_optimizer_display_name_to_indices()` | Parse optimizer displayName (e.g. "1.0.1") into (inv, str, opt) tuple for device/entity IDs. |
-| `make_duplicate_sort_key()` | Create sort key for duplicate resolution: active devices first, then alphabetically by serial number. |
-| `resolve_duplicate_indices()` | Resolve duplicate position keys by adding letter suffixes (a, b, c...). Used by sensor.py and coordinator.py for entity ID duplicate resolution. |
+| `parse_string_display_name_path()` | Parse string displayName (e.g. "1.0", "1.0a") into (inv, str, suffix). |
+| `parse_optimizer_display_name_to_indices()` | Parse optimizer displayName (e.g. "1.0.1", "1.1.1a") into (inv, str, opt, suffix). |
+| `build_optimizer_tasks()` | Build optimizer task list for sensor setup and coordinator position indexing (shared). |
+| `string_position_key_from_display_name()` | (inv, str) key for string duplicate resolution (ignores suffix). |
+| `make_duplicate_sort_key()` | Sort key for duplicate resolution: active first, then by serial. |
+| `resolve_duplicate_indices()` | Letter suffixes (a, b, c...) for duplicate positions. |
 
 ### Device registry helpers (`device_ids.py`)
 
