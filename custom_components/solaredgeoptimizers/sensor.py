@@ -26,11 +26,18 @@ Site-Level Sensors:
 Key features:
 - Entities use CoordinatorEntity for automatic updates from the data coordinator
 - Position-based entity IDs ensure hardware swaps don't create duplicate entities
-- Device hierarchy: coordinator registers site/inverter/string devices first; entities use
-  link_device_info (identifiers only) from device_ids.py so HA does not re-apply via_device
+- Device hierarchy: coordinator registers site/inverter/string devices first; optimizer devices
+  are registered in the sensor platform before entities are added (`_register_optimizer_devices`,
+  `via_device` as a tuple); entities use link_device_info (identifiers only) from device_ids.py
+  so HA does not re-apply via_device or create unnamed stub devices
 - Entities are added in tier order (site → inverter → string → optimizer), then registered in
   batches of ENTITY_ADD_BATCH_SIZE with event-loop yields between batches (update_before_add=False
-  because the coordinator already completed its first refresh)
+  because the coordinator already completed its first refresh); `async_update_listeners()` runs
+  after the last batch so states populate without waiting for the next coordinator tick
+- Per-optimizer coordinator lookup uses panel_id and display-name position keys (including suffixes
+  such as 1.1.1a); `async_restore_last_state` reapplies coordinator data after HA state restore
+- Display names: `build_optimizer_tasks()` / `parse_optimizer_display_name_to_indices()` in const.py
+  parse trailing letter suffixes (e.g. 1.1.1a); duplicate positions also get a/b/c when needed
 - Inactive devices have certain sensors excluded (power, current, voltage, etc.)
 - Duplicate optimizer/string/inverter positions get letter suffixes (a, b, c...)
 - Supports optional entity ID prefix and site ID inclusion in entity names
@@ -41,6 +48,7 @@ Key features:
 """
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import DeviceInfo
@@ -88,7 +96,8 @@ from .const import (
     CHECK_TIME_DELTA,
     is_status_active,
     parse_string_display_name_path,
-    parse_optimizer_display_name_to_indices,
+    build_optimizer_tasks,
+    string_position_key_from_display_name,
     resolve_duplicate_indices,
     status_display_value,
     status_icon,
@@ -243,67 +252,6 @@ def _should_rebuild_entities_this_setup(hass: HomeAssistant, entry: ConfigEntry)
     return False
 
 
-def _build_optimizer_tasks(site):
-    """Build list of (optimizer, inverter, string, inv_idx, str_idx, opt_idx, suffix) for all optimizers.
-
-    Uses display-name-based (inv, str, opt) when optimizer.displayName parses (e.g. '1.0.1'),
-    else position-based from enumerate. No deduplication - all optimizers are shown.
-    When duplicates exist (same position key), active devices come first (sorted by serial),
-    and subsequent duplicates get letter suffixes (a, b, c...).
-    """
-    tasks_with_keys = []
-    for inv_idx, inverter in enumerate(site.inverters, start=1):
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers sensor: Building optimizer tasks for inverter %s", inv_idx)
-        for str_idx, string in enumerate(inverter.strings, start=1):
-            for opt_idx, optimizer in enumerate(string.optimizers, start=1):
-                parsed = parse_optimizer_display_name_to_indices(getattr(optimizer, "displayName", "") or "")
-                if parsed is not None:
-                    inv_num, str_num, opt_num = parsed
-                else:
-                    inv_num, str_num, opt_num = inv_idx, str_idx, opt_idx
-                position_key = (inv_num, str_num, opt_num)
-                tasks_with_keys.append((optimizer, inverter, string, inv_num, str_num, opt_num, position_key))
-    
-    if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug(
-            "SolarEdge Optimizers sensor: Built %d optimizer tasks from site structure",
-            len(tasks_with_keys),
-        )
-    
-    # Resolve duplicates with letter suffixes using shared function
-    suffix_map = resolve_duplicate_indices(
-        tasks_with_keys,
-        get_key=lambda item: item[6],  # position_key is at index 6
-        get_status=lambda item: getattr(item[0], "status", "") or "",
-        get_serial=lambda item: getattr(item[0], "serialNumber", "") or "",
-        logger=_LOGGER,
-    )
-    
-    # Count duplicates for logging
-    duplicates_count = sum(1 for suffix in suffix_map.values() if suffix)
-    if duplicates_count > 0:
-        _LOGGER.info(
-            "SolarEdge Optimizers sensor: Found %d duplicate optimizer positions, assigned suffixes (a, b, c...)",
-            duplicates_count,
-        )
-    
-    # Build final tasks list with suffixes
-    tasks = []
-    for idx, item in enumerate(tasks_with_keys):
-        optimizer, inverter, string, inv_num, str_num, opt_num, _key = item
-        suffix = suffix_map.get(idx, "")
-        tasks.append((optimizer, inverter, string, inv_num, str_num, opt_num, suffix))
-    
-    if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug(
-            "SolarEdge Optimizers sensor: Returning %d optimizer tasks (including %d with duplicate suffixes)",
-            len(tasks), duplicates_count,
-        )
-    
-    return tasks
-
-
 async def _fetch_missing_optimizer_data(hass, coordinator, optimizer_tasks, coordinator_data):
     """Fetch optimizer data from API for optimizers not already in coordinator cache. Returns dict task_idx -> result."""
     optimizers_to_fetch = [
@@ -419,6 +367,64 @@ def _build_individual_optimizer_sensors(
                 )
             )
     return sensors_to_add, active_optimizer_count, inactive_optimizer_count, skipped_sensor_count
+
+
+def _register_optimizer_devices(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator,
+    optimizer_tasks: list,
+    site_id: str,
+    include_site_id: bool,
+) -> None:
+    """Create optimizer device registry entries before entities link by identifier only.
+
+    Without this, Home Assistant auto-creates stub devices (shown as Unnamed device) when
+    entities reference optimizer identifiers that are not yet in the registry.
+    """
+    if not optimizer_tasks:
+        return
+    device_registry = dr.async_get(hass)
+    data = coordinator.data if isinstance(coordinator.data, dict) else {}
+    registered = 0
+    for optimizer, _inverter, _string, inv_num, str_num, opt_num, suffix in optimizer_tasks:
+        opt_key = f"{opt_num}{suffix}"
+        inv_key, str_key = inv_num, str_num
+        if include_site_id:
+            optimizer_name = f"Optimizer {site_id}.{inv_num}.{str_num}.{opt_key}"
+        else:
+            optimizer_name = f"Optimizer {inv_num}.{str_num}.{opt_key}"
+        info = data.get(optimizer.optimizerId)
+        model = ""
+        if info is not None:
+            model = (getattr(info, "model", None) or "").strip()
+            panel_desc = (getattr(info, "panel_description", None) or "").strip()
+            if panel_desc and model:
+                model = f"{model} {panel_desc}"
+            elif panel_desc:
+                model = panel_desc
+        if not model:
+            model = (
+                getattr(optimizer, "type", None)
+                or getattr(optimizer, "displayName", None)
+                or "Optimizer"
+            )
+        str_device_id = string_device_identifier(entry.entry_id, inv_key, str_key)
+        opt_device_id = optimizer_device_identifier(entry.entry_id, inv_key, str_key, opt_key)
+        device_registry.async_get_or_create(
+            config_entry_id=entry.entry_id,
+            identifiers={(DOMAIN, opt_device_id)},
+            manufacturer="SolarEdge",
+            model=model,
+            name=optimizer_name,
+            hw_version=getattr(optimizer, "serialNumber", None),
+            via_device=(DOMAIN, str_device_id),
+        )
+        registered += 1
+    _LOGGER.info(
+        "SolarEdge Optimizers sensor: Registered %d optimizer devices before adding entities",
+        registered,
+    )
 
 
 def _create_string_aggregated_data(string, string_entity_path):
@@ -538,22 +544,25 @@ def _build_string_sensors_for_inverter(  # pylint: disable=too-many-arguments
     
     inv_idx_str = f"{inv_idx}{inv_suffix}"
     
+    indexed_strings = list(enumerate(inverter.strings, start=1))
     str_suffix_map = resolve_duplicate_indices(
-        inverter.strings,
-        get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, 0),
-        get_status=lambda s: getattr(s, "status", "") or "",
-        get_serial=lambda s: getattr(s, "serialNumber", "") or str(getattr(s, "stringId", "")),
+        indexed_strings,
+        get_key=lambda t: string_position_key_from_display_name(
+            getattr(t[1], "displayName", "") or "", inv_idx, t[0]
+        ),
+        get_status=lambda t: getattr(t[1], "status", "") or "",
+        get_serial=lambda t: getattr(t[1], "serialNumber", "") or str(getattr(t[1], "stringId", "")),
         logger=_LOGGER,
     )
-    
-    for str_idx, string in enumerate(inverter.strings, start=1):
-        str_suffix = str_suffix_map.get(str_idx - 1, "")
+
+    for list_idx, (str_idx, string) in enumerate(indexed_strings):
+        str_suffix = str_suffix_map.get(list_idx, "")
         str_idx_str = f"{str_idx}{str_suffix}"
-        
+
         parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
         if parsed is not None:
-            inv_num, str_num = parsed
-            str_num_str = f"{str_num}{str_suffix}"
+            inv_num, str_num, display_suffix = parsed
+            str_num_str = f"{str_num}{display_suffix or str_suffix}"
             string_entity_path = (site_id, inv_num, str_num_str) if include_site_id else (inv_num, str_num_str)
         else:
             string_entity_path = (site_id, inv_idx_str, str_idx_str) if include_site_id else (inv_idx_str, str_idx_str)
@@ -817,7 +826,8 @@ async def _finalize_sensor_setup(
     async_add_entities: AddEntitiesCallback,
     sensors_to_add: list[SensorEntity],
     optimizer_count: int,
-    aggregated_count: int
+    aggregated_count: int,
+    coordinator: MyCoordinator | None = None,
 ) -> None:
     """Add sensors to Home Assistant and log completion."""
     if sensors_to_add:
@@ -850,6 +860,13 @@ async def _finalize_sensor_setup(
             if start_idx + len(batch) < total_entities:
                 # Yield to the event loop so HA can process registry/state events between batches.
                 await asyncio.sleep(0)
+        # update_before_add=False skips per-entity refresh; push coordinator data to all listeners.
+        if coordinator is not None and coordinator.data is not None:
+            coordinator.async_update_listeners()
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers sensor: Notified coordinator listeners after batched entity registration",
+                )
         _LOGGER.info(
             "Done adding all sensors. Added %d sensors in total (%d optimizer sensors + %d aggregated sensors + 2 site sensors).",
             total_entities, optimizer_count, aggregated_count,
@@ -902,7 +919,7 @@ async def async_setup_entry(
     _log_setup_info(site, base_name, include_site_id, site_id)
 
     # Build optimizer sensors
-    optimizer_tasks = _build_optimizer_tasks(site)
+    optimizer_tasks = build_optimizer_tasks(site)
     coordinator_data = coordinator.data if isinstance(coordinator.data, dict) else None
     results_by_task_idx = await _fetch_missing_optimizer_data(
         hass, coordinator, optimizer_tasks, coordinator_data
@@ -931,8 +948,18 @@ async def async_setup_entry(
         active_opt, inactive_opt, active_str, inactive_str, active_inv, inactive_inv, skipped_opt, skipped_agg
     )
 
+    _register_optimizer_devices(
+        hass, entry, coordinator, optimizer_tasks, site_id, include_site_id
+    )
+
     # Finalize setup
-    await _finalize_sensor_setup(async_add_entities, sensors_to_add, len(optimizer_sensors), len(aggregated_sensors))
+    await _finalize_sensor_setup(
+        async_add_entities,
+        sensors_to_add,
+        len(optimizer_sensors),
+        len(aggregated_sensors),
+        coordinator,
+    )
 
 
 class SolarEdgeIntegrationLastPolledSensor(CoordinatorEntity, SensorEntity):
@@ -1472,6 +1499,12 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
             )
         self.async_write_ha_state()
 
+    async def async_restore_last_state(self) -> None:
+        """Re-apply coordinator data after HA restores persisted state (avoids stale Unknown)."""
+        await super().async_restore_last_state()
+        if self.coordinator.data is not None:
+            self._handle_coordinator_update()
+
     def _set_optimizer_identity(
         self, entry: ConfigEntry, panel: SolarEdgeOptimizerData, sensortype,
         optimizer: SolarlEdgeOptimizer, site_id: str, entity_id_path: tuple,
@@ -1576,6 +1609,51 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         if self._sensor_type != SENSOR_TYPE_STATUS:
             return None
         return status_icon(self._attr_native_value)
+
+    def _lookup_optimizer_data_item(self, data: dict):
+        """Resolve optimizer measurement object from coordinator data_dict."""
+        panel_id = getattr(self._panelobject, "panel_id", None)
+        if panel_id:
+            item = data.get(panel_id)
+            if item is not None and not hasattr(item, "entity_type"):
+                return item
+        inv, str_key, opt_key = opt_keys_from_entity_id_path(
+            self._entity_id_path,
+            include_site_id_in_entity_id=self._include_site_id_in_entity_id,
+        )
+        candidates = []
+        if self._entity_id_path:
+            opt_str = str(opt_key)
+            digit_len = 0
+            while digit_len < len(opt_str) and opt_str[digit_len].isdigit():
+                digit_len += 1
+            letter_suffix = opt_str[digit_len:].lower() if digit_len else ""
+            # Try suffixed key first (e.g. 1.1.1a), then bare index, then raw path segment.
+            if digit_len and letter_suffix:
+                candidates.append((inv, str_key, f"{int(opt_str[:digit_len])}{letter_suffix}"))
+            if digit_len:
+                candidates.append((inv, str_key, int(opt_str[:digit_len])))
+            candidates.append((inv, str_key, opt_key))
+            if opt_str.isdigit():
+                candidates.append((inv, str_key, int(opt_str)))
+        for key in candidates:
+            item = data.get(key)
+            if item is not None and not hasattr(item, "entity_type"):
+                return item
+        return None
+
+    def _zero_optimizer_when_item_missing(self) -> None:
+        """Apply safe defaults when coordinator has data but this optimizer is not indexed yet."""
+        if self._sensor_type in (
+            SENSOR_TYPE_ENERGY,
+            SENSOR_TYPE_LASTMEASUREMENT,
+            SENSOR_TYPE_TEMPERATURE,
+            SENSOR_TYPE_AZIMUTH,
+            SENSOR_TYPE_TILT,
+            SENSOR_TYPE_STATUS,
+        ):
+            return
+        self._attr_native_value = 0
 
     def _timetocheck_and_ts(self, item):
         """Return (timetocheck, ts) with ts timezone-aware. May mutate item.lastmeasurement."""
@@ -1750,12 +1828,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         """Handle updated data from the coordinator."""
         data = self.coordinator.data
         if data is not None:
-            # Look up by logical position first so hardware swap (new serial at same position) keeps same sensor
-            path = self._entity_id_path
-            lookup_key = (path[-3], path[-2], path[-1]) if len(path) >= 3 else None
-            item = data.get(lookup_key) if lookup_key else None
-            if item is None:
-                item = data.get(self._panelobject.panel_id)
+            item = self._lookup_optimizer_data_item(data)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
                     "Update the sensor %s - %s with the info from the coordinator",
@@ -1770,6 +1843,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                     self._attr_device_info = {**self._attr_device_info, "model": new_model}
                 timetocheck, ts = self._timetocheck_and_ts(item)
                 self._update_optimizer_value_from_item(item, timetocheck, ts)
+            else:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers sensor: No coordinator data for panel_id=%s path=%s (%s)",
+                        self._panelobject.panel_id,
+                        self._entity_id_path,
+                        self._sensor_type,
+                    )
+                self._zero_optimizer_when_item_missing()
         else:
             self._zero_optimizer_when_no_data()
         self._normalize_optimizer_display_value()
