@@ -30,7 +30,9 @@ exist before entities are added. Entities link to those devices by identifier on
 The sensor platform registers per-optimizer entities with ``has_entity_name`` disabled so
 ``entity_id`` matches the path-based ``suggested_object_id`` (e.g. ``sensor.power_1_1_1``)
 without Home Assistant prepending the optimizer device slug; friendly names use short
-translated sensor labels only (device name shows optimizer position).
+translated sensor labels only (device name shows optimizer position). On large sites, entities
+are added in batches (``ENTITY_ADD_BATCH_SIZE``) with event-loop yields so startup does not
+flood the entity registry or websocket bus.
 """
 import logging
 from typing import Any
