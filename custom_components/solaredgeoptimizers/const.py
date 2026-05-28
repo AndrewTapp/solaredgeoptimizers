@@ -50,6 +50,8 @@ Each constant is documented below with a full description of what it is used for
 - API_TIMEOUT_LONG: Timeout for longer requests (layout, batch operations).
 - LIGHT_CHECK_BATCH_SIZE: Number of optimizers to sample in One API lightweight checks;
   sampling several (e.g. 5) from different strings improves detection of new data.
+- ENTITY_ADD_BATCH_SIZE: Number of sensor entities registered per startup batch in the sensor
+  platform (with event-loop yields between batches on large sites).
 - MAX_PARALLEL_WORKERS: Maximum threads for parallel API requests (legacy per-optimizer, etc.).
 - USER_AGENT: Common User-Agent string for API requests (Chrome on Windows).
 
@@ -139,6 +141,7 @@ API_TIMEOUT_LONG = 60   # For longer requests (layout, batch operations)
 
 # Batch operation limits
 LIGHT_CHECK_BATCH_SIZE = 5  # Number of optimizers to sample in lightweight checks
+ENTITY_ADD_BATCH_SIZE = 50  # Number of entities to register per startup batch
 MAX_PARALLEL_WORKERS = 10   # Maximum threads for parallel API requests
 
 # Common User-Agent string for API requests (Chrome on Windows)
