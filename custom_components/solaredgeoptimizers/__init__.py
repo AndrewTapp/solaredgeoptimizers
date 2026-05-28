@@ -30,9 +30,11 @@ exist before entities are added. Entities link to those devices by identifier on
 The sensor platform registers per-optimizer entities with ``has_entity_name`` disabled so
 ``entity_id`` matches the path-based ``suggested_object_id`` (e.g. ``sensor.power_1_1_1``)
 without Home Assistant prepending the optimizer device slug; friendly names use short
-translated sensor labels only (device name shows optimizer position). On large sites, entities
-are added in batches (``ENTITY_ADD_BATCH_SIZE``) with event-loop yields so startup does not
-flood the entity registry or websocket bus.
+translated sensor labels only (device name shows optimizer position). Optimizer devices are
+created in the sensor platform before entities are added. On large sites, entities are added
+in batches (``ENTITY_ADD_BATCH_SIZE``) with event-loop yields so startup does not flood the
+entity registry or websocket bus; coordinator listeners are notified after registration so
+sensor states can update without waiting for the next poll.
 """
 import logging
 from typing import Any
@@ -348,11 +350,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             try:
                 await hass.async_add_executor_job(coordinator.my_api.close)
-                if LOGGER.isEnabledFor(logging.DEBUG):
-                    LOGGER.debug(
-                        "SolarEdge Optimizers: Closed API session for entry %s during unload",
-                        entry.entry_id,
-                    )
+                LOGGER.info(
+                    "SolarEdge Optimizers: Closed API clients for entry %s (file descriptors released)",
+                    entry.entry_id,
+                )
             except Exception as e:  # pylint: disable=broad-except
                 LOGGER.warning("SolarEdge Optimizers: Error closing API sessions: %s", e)
 
