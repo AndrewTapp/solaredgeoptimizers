@@ -5,7 +5,8 @@ Shared helpers for device registry identifier strings used by the coordinator wh
 registering site/inverter/string devices and by the sensor platform when linking entities.
 
 link_device_info() returns identifiers-only DeviceInfo so Home Assistant matches pre-registered
-devices without re-applying via_device during async_add_entities (avoids startup warnings).
+devices without re-applying via_device during async_add_entities (avoids startup warnings from
+v2.4.17 onward). Large sites rely on batched entity registration in the sensor platform (v2.4.18+).
 
 Path parsers (inv_str_keys_from_entity_id_path, etc.) respect include_site_id_in_entity_id so
 device identifiers stay aligned with entity_id_path tuples.
