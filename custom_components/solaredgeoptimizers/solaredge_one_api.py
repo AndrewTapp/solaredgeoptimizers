@@ -261,8 +261,29 @@ def _perform_oauth_pkce_login(session: Session, username: str, password: str) ->
     }
     login_page_html, login_page_url = _oauth_get_login_page(session, login_params)
     _, _, form_inputs = _parse_login_form(login_page_html)
-    post_body = {k: v for k, v in (form_inputs or {}).items() if k not in ("username", "password", "email")}
-    post_body["username"] = username
+    form_inputs = form_inputs or {}
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge One: Parsed login form fields: %s",
+            sorted(form_inputs.keys()) or "(none)",
+        )
+    if not form_inputs:
+        _LOGGER.warning(
+            "SolarEdge One: No login form fields parsed from HTML; posting credentials only "
+            "(login may fail if the portal requires hidden fields)"
+        )
+    post_body = {
+        k: v
+        for k, v in form_inputs.items()
+        if k not in ("username", "password", "email")
+    }
+    # Cognito hosted UI may use name=username, name=email, or both; set whichever the form declares.
+    if "email" in form_inputs:
+        post_body["email"] = username
+    if "username" in form_inputs:
+        post_body["username"] = username
+    if "username" not in post_body and "email" not in post_body:
+        post_body["username"] = username
     post_body["password"] = password
 
     final_url = _oauth_post_credentials_and_follow(
@@ -1336,6 +1357,7 @@ class solaredge_one:
             _LOGGER.debug("SolarEdge One: close() clearing access token")
         self._access_token = None
         self._refresh_token = None
+        _LOGGER.info("SolarEdge One: API client closed (OAuth tokens cleared)")
 
     def __del__(self) -> None:
         """Best-effort cleanup if GC collects an unclosed client."""
