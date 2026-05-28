@@ -44,7 +44,7 @@ The integration sets `translation_domain` to the integration domain so the front
 
 Sensor **translation keys** are unchanged when aggregation rules change (e.g. last measurement rollups, lifetime portal guards): entity names still come from `entity.sensor.*.name` in each locale file. New behaviour is documented in English in the wiki and README.
 
-Behavioural changes such as legacy-only mode (`use_solaredge_one=False`), the legacy CSRF bootstrap fallback (`/solaredge-web/p/logout/slo` then `/solaredge-web/p/login`), explicit legacy HTTP `498` diagnostics, or device-registry linking via identifiers-only `device_info` (v2.4.18+) do **not** require new translation keys because they change runtime behaviour and logging, not user-facing labels. Device names in **Settings → Devices** still use the translated `device.*` keys from the coordinator registration step.
+Behavioural changes such as legacy-only mode (`use_solaredge_one=False`), the legacy CSRF bootstrap fallback (`/solaredge-web/p/logout/slo` then `/solaredge-web/p/login`), explicit legacy HTTP `498` diagnostics, device-registry linking via identifiers-only `device_info` (v2.4.17+), or batched sensor registration at startup (`ENTITY_ADD_BATCH_SIZE`, v2.4.18+) do **not** require new translation keys because they change runtime behaviour and logging, not user-facing labels. Device names in **Settings → Devices** still use the translated `device.*` keys from the coordinator registration step.
 
 ## What is not translated (by design)
 
