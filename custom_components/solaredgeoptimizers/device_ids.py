@@ -6,10 +6,13 @@ registering site/inverter/string devices and by the sensor platform when linking
 
 link_device_info() returns identifiers-only DeviceInfo so Home Assistant matches pre-registered
 devices without re-applying via_device during async_add_entities (avoids startup warnings from
-v2.4.17 onward). Large sites rely on batched entity registration in the sensor platform (v2.4.18+).
+v2.4.17 onward). Optimizer devices are registered in the sensor platform before entities are
+added; registration uses via_device=(DOMAIN, parent_id) as a tuple (not a set).
 
-Path parsers (inv_str_keys_from_entity_id_path, etc.) respect include_site_id_in_entity_id so
-device identifiers stay aligned with entity_id_path tuples.
+Path parsers (inv_str_keys_from_entity_id_path, opt_keys_from_entity_id_path, etc.) respect
+include_site_id_in_entity_id so device identifiers stay aligned with entity_id_path tuples,
+including suffixed optimizers (e.g. opt key 1a). Large sites rely on batched entity registration
+in the sensor platform (v2.4.18+).
 """
 
 from __future__ import annotations
