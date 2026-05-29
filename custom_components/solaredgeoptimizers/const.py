@@ -90,6 +90,8 @@ Utility Functions:
 - string_position_key_from_display_name(): (inv, str) key for string duplicate resolution
 - build_optimizer_tasks(): Optimizer task list for sensor setup and coordinator position indexing
 - resolve_duplicate_indices(): Assign letter suffixes to duplicate positions
+- format_config_entry_title(): Safe substitution of config.title_entry %(siteid)s with fallback
+- UNFORMATTED_CONFIG_TITLE_MARKER: Detects literal %(siteid)s in stored config entry titles
 - ENTITY_ADD_BATCH_SIZE: Startup batch size for async_add_entities (default 50)
 """
 from __future__ import annotations
@@ -306,6 +308,25 @@ SENSOR_TYPE_AGGREGATED_SITE = SENSOR_TYPE_AGGREGATED_COMMON + [
 ]
 
 SENSOR_TYPE = SENSOR_TYPE_INDIVIDUAL  # For backwards compatibility
+
+
+UNFORMATTED_CONFIG_TITLE_MARKER = "%(siteid)s"
+
+
+def format_config_entry_title(template: str, siteid: str) -> str:
+    """Format config entry title from translation template; fall back if template is malformed."""
+    siteid = (siteid or "").strip()
+    if not template:
+        return f"SolarEdge Site {siteid}"
+    try:
+        return template % {"siteid": siteid}
+    except (TypeError, ValueError, KeyError):
+        logging.getLogger(__name__).warning(
+            "SolarEdge Optimizers config: Malformed title template %r; using default for site %s",
+            template,
+            siteid,
+        )
+        return f"SolarEdge Site {siteid}"
 
 
 def parse_string_display_name_path(display_name: str) -> tuple[int, int, str] | None:
