@@ -110,7 +110,9 @@ Entity IDs remain path-based only (no device-name prefix), for example
 the API uses that numbering. Site, inverter, and string devices are registered in the device registry before
 entities are added; **optimizer** devices are registered in the sensor platform
 immediately before optimizer entities are added (so devices are not “Unnamed”).
-Entity `device_info` uses identifiers-only links so Home Assistant does not
+Optimizer `via_device` uses the same string device identifier as the coordinator,
+including duplicate and portal suffixes on string keys (e.g. `_str_1_0a` for a
+duplicate string at position 1.0). Entity `device_info` uses identifiers-only links so Home Assistant does not
 re-apply `via_device` during `async_add_entities` (avoiding "references a non
 existing via_device" on startup).
 
@@ -118,7 +120,9 @@ The device hierarchy is **Site → Inverter → String → Optimizer**; optimize
 grouped under their string. In **Settings → Devices & services**, each device shows
 what it's **connected via** (e.g. optimizer → string, string → inverter). Friendly
 names and “connected via” follow the same hierarchy. The integration entry title shows
-your site (e.g. "SolarEdge Site 9999999").
+your site (e.g. "SolarEdge Site 9999999"). If an older entry still shows the literal
+template **"SolarEdge Site %(siteid)s"**, reload or restart after upgrading to v2.4.18+;
+setup auto-repairs the title when it contains `%(siteid)s`.
 
 ## What Data You Get
 
@@ -255,6 +259,7 @@ If your SolarEdge credentials expire or become invalid (for example after a pass
 - All API sessions and connections are released when the integration is removed or reloaded: the **legacy** client tracks every thread-local `requests.Session`, closes each in `close()`, and uses `with session.request(...)` so each response is consumed and connections return to the pool or close. If legacy session bootstrap fails while priming cookies/CSRF, that temporary `Session` is closed immediately instead of being reused. For accounts where SolarEdge no longer sets `CSRF-TOKEN` on `.../solaredge-web/p/login`, the legacy client retries `.../solaredge-web/p/logout/slo` and then `.../solaredge-web/p/login` before CSRF-protected POSTs. If SolarEdge still rejects a legacy POST with **HTTP 498**, the logs now call that out explicitly as a likely rejected/missing/expired CSRF token or legacy web session. The **SolarEdge One** client uses `with requests.get/post(...)` for routine calls, `with Session()` only during OAuth, and `with ThreadPoolExecutor(...)` for parallel lifetime fetches so workers shut down; `close()` clears tokens and marks the client closed. **`async_unload_entry`** and **`async_remove_entry`** both call `await hass.async_add_executor_job(api.close)` on the dual API (which closes One and legacy even if one side errors). Setup failures also close the API in a `finally` block when the coordinator was not stored. This avoids leaking sockets/file descriptors during long HA uptime.
 - When you **delete the integration** (remove the config entry), the integration removes all associated entities and devices from the registries via a shared cleanup routine (used by both the config flow and unload), so no leftover entries remain. Delete from **Settings → Devices & services → Integrations** (not only from HACS) so that this cleanup runs.
 - **Large sites (many optimizers):** If startup previously flooded Home Assistant with hundreds of entity-registry updates or triggered “Client unable to keep up with pending messages” in the browser, update to **v2.4.18+**, which registers sensors in batches instead of one bulk `async_add_entities` call. Tune `ENTITY_ADD_BATCH_SIZE` in `const.py` if needed (lower = gentler on HA, higher = faster setup). After reload, per-optimizer values usually appear within seconds (coordinator listener notify) or within the next coordinator refresh (a few minutes on a slow first full fetch); **unknown** on many sensors right after setup is often normal until data arrives.
+- **Entity ID ending in `_2` (e.g. `sensor.power_1_0_1_2`):** The integration builds three-segment optimizer paths (e.g. `power_1_0_1`). A four-segment id with `_2` at the end is usually Home Assistant registry disambiguation when a stale entity kept the base `entity_id`. Check **Settings → Entities** for both `power_1_0_1` and `power_1_0_1_2`, compare `unique_id`, then **remove and re-add** the integration if a stale row persists after upgrading.
 
 ## Installation
 
@@ -294,7 +299,7 @@ logger:
     solaredgeoptimizers: debug
 ```
 
-Restart Home Assistant for the change to take effect. Debug logging covers the full lifecycle: config flow; setup and unload (including `api.close()`); coordinator (device hierarchy, `build_optimizer_tasks` position indexing with suffixes such as `1.1.1a`, adaptive polling, aggregation, portal lifetime overrides); sensor setup (optimizer device registration before entities, batched `async_add_entities` with per-batch range, post-batch `async_update_listeners`, `_lookup_optimizer_data_item`, `async_restore_last_state`, inactive skipping, short translated names); and API traffic (SolarEdge One, legacy including CSRF/498 diagnostics, dual API fallback and `close()`). `Info` logging keeps high-value summaries (batched registration totals, duplicate suffix counts, optimizer device registration count, API close on unload) and avoids credentials or per-refresh cache chatter. All debug calls use `isEnabledFor(logging.DEBUG)`. Prefixes: `SolarEdge Optimizers`, `SolarEdge Optimizers coordinator`, `SolarEdge Optimizers sensor`, `SolarEdge One`, `SolarEdge Optimizers (legacy)`, `SolarEdge Dual API`. Turn logging back to `info` when you are done.
+Restart Home Assistant for the change to take effect. Debug logging covers the full lifecycle: config flow (including `format_config_entry_title` and title self-repair at setup); setup and unload (including `api.close()` and config entry title migration); coordinator (device hierarchy, `build_optimizer_tasks` position indexing with suffixes such as `1.1.1a`, adaptive polling, aggregation, portal lifetime overrides); sensor setup (optimizer device registration with `build_string_device_key_lookup` for correct string parent, batched `async_add_entities` with per-batch range, post-batch `async_update_listeners`, `_lookup_optimizer_data_item`, `async_restore_last_state`, inactive skipping, short translated names); and API traffic (SolarEdge One, legacy including CSRF/498 diagnostics, dual API fallback and `close()`). `Info` logging keeps high-value summaries (batched registration totals, duplicate suffix counts, optimizer device registration count, config entry title repair, API close on unload/removal) and avoids credentials or per-refresh cache chatter. All debug calls use `isEnabledFor(logging.DEBUG)`. Prefixes: `SolarEdge Optimizers`, `SolarEdge Optimizers coordinator`, `SolarEdge Optimizers sensor`, `SolarEdge One`, `SolarEdge Optimizers (legacy)`, `SolarEdge Dual API`. Turn logging back to `info` when you are done.
 
 **Code quality:** The project uses Pylint and pycodestyle (aligned with [CodeFactor](https://www.codefactor.io/repository/github/AndrewTapp/solaredgeoptimizers) on the repo). Root `.pylintrc` sets `max-args=10`, `max-module-lines=2000`, `max-line-length=159`; `setup.cfg` sets pycodestyle `max-line-length=159`. Prefer focused functions, guard debug logging, avoid logging credentials or repetitive per-refresh summaries at `info`, and use inline `# pylint: disable=...` only where the Home Assistant/coordinator design needs extra parameters or branches.
 
