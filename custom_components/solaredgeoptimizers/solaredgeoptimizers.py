@@ -794,7 +794,7 @@ class solaredgeoptimizers:
             session = Session()
             try:
                 self._prime_session_cookies(session)
-            except Exception:
+            except Exception:  # pylint: disable=broad-except
                 session.close()
                 raise
             with self._sessions_lock:
