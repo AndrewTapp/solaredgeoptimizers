@@ -36,8 +36,9 @@ created in the sensor platform before entities are added; ``via_device`` uses th
 device identifier as the coordinator (including duplicate/portal suffixes on string keys).
 On large sites, entities are added
 in batches (``ENTITY_ADD_BATCH_SIZE``) with event-loop yields so startup does not flood the
-entity registry or websocket bus; coordinator listeners are notified after registration so
-sensor states can update without waiting for the next poll.
+entity registry or websocket bus; ``coordinator.async_update_listeners()`` (sync) runs after
+the last batch; optimizer ``async_restore_last_state()`` reapplies coordinator data after HA
+state restore so sensors are not stuck at **unknown** until the next poll.
 """
 import logging
 from typing import Any
