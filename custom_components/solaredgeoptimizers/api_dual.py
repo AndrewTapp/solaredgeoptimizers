@@ -21,7 +21,7 @@ Methods Implemented:
 - get_dashboard_site_production_cached(installation_date): One API only; returns site production (Wh) from dashboard/energy
 - get_layout_energy_by_inverter_cached(installation_date): One API only; returns inverter/string energy (Wh) from layout/energy by-inverter
 - close(): Closes both API backends (legacy closes all thread-local sessions; One clears tokens);
-  idempotent via _closed flag; both backends closed even if one raises
+  idempotent via _closed flag; both backends closed even if one raises; logs at **info** when both succeed
 
 Tracking:
 - _last_used_api: Tracks which API ("one" or "legacy") provided the last data
