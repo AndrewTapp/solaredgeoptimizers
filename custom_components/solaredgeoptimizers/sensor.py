@@ -26,9 +26,18 @@ Site-Level Sensors:
 Key features:
 - Entities use CoordinatorEntity for automatic updates from the data coordinator
 - Position-based entity IDs ensure hardware swaps don't create duplicate entities
-- Device hierarchy: coordinator registers site/inverter/string devices first; entities use
-  link_device_info (identifiers only) from device_ids.py so HA does not re-apply via_device
-- Entities are added in tier order (site → inverter → string → optimizer) before async_add_entities
+- Device hierarchy: coordinator registers site/inverter/string devices first; optimizer devices
+  are pre-registered in ``_register_optimizer_devices()`` with ``via_device`` aligned to the
+  coordinator string key via ``build_string_device_key_lookup()`` (duplicate/portal suffixes)
+- Entities link with ``device_ids.link_device_info()`` (identifiers only) so HA does not
+  re-apply ``via_device`` during ``async_add_entities``
+- Optimizer tasks from shared ``build_optimizer_tasks()`` in const.py (display-name suffixes,
+  duplicate letter suffixes); ``_lookup_optimizer_data_item()`` resolves coordinator keys
+- Startup registration in tier order (site → inverter → string → optimizer) using batched
+  ``async_add_entities`` (``ENTITY_ADD_BATCH_SIZE``, ``update_before_add=False``); then
+  ``coordinator.async_update_listeners()`` (sync) so states populate without waiting for poll
+- ``async_restore_last_state()`` on optimizer sensors reapplies coordinator data after HA
+  restores persisted state (avoids **unknown** right after restart)
 - Inactive devices have certain sensors excluded (power, current, voltage, etc.)
 - Duplicate optimizer/string/inverter positions get letter suffixes (a, b, c...)
 - Supports optional entity ID prefix and site ID inclusion in entity names
@@ -872,7 +881,7 @@ async def _finalize_sensor_setup(
             )
         async_add_entities(batch, update_before_add=False)
         await asyncio.sleep(0)
-    await coordinator.async_update_listeners()
+    coordinator.async_update_listeners()
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug(
             "SolarEdge Optimizers sensor: Notified coordinator listeners after batched entity registration"
@@ -1507,6 +1516,22 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                 getattr(self, "internal_integration_suggested_object_id", None),
             )
         self.async_write_ha_state()
+
+    async def async_restore_last_state(self) -> None:
+        """Restore persisted state, then reapply coordinator data when already loaded.
+
+        After restart HA may leave optimizer sensors as unknown until the next poll even
+        though async_config_entry_first_refresh() already populated coordinator.data.
+        """
+        await super().async_restore_last_state()
+        if self.coordinator is not None and self.coordinator.data is not None:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers sensor: Restored state for %s (%s); reapplying coordinator data",
+                    self._panelobject.panel_id,
+                    self._sensor_type,
+                )
+            self._handle_coordinator_update()
 
     def _set_optimizer_identity(
         self, entry: ConfigEntry, panel: SolarEdgeOptimizerData, sensortype,
