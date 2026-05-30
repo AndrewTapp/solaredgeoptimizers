@@ -56,7 +56,7 @@ Key Features:
 - No persistent HTTP session for /services/ calls: `requests.get`/`post` use response context managers
   so connections are released; OAuth uses a short-lived `Session()` inside `with` during token fetch only.
 - Parallel lifetime-energy fetches use `with ThreadPoolExecutor(...) as executor` so workers shut down cleanly.
-- `close()` clears OAuth tokens and sets `_closed` (idempotent); call on integration unload/removal.
+- `close()` clears OAuth tokens and sets `_closed` (idempotent); logs session/token release at **info**; call on integration unload/removal.
 """
 import math
 import base64
