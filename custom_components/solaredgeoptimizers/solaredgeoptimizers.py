@@ -794,7 +794,7 @@ class solaredgeoptimizers:
             session = Session()
             try:
                 self._prime_session_cookies(session)
-            except Exception:
+            except Exception:  # pylint: disable=broad-except
                 session.close()
                 raise
             with self._sessions_lock:
@@ -904,13 +904,20 @@ class solaredgeoptimizers:
         with self._sessions_lock:
             sessions_to_close = set(self._all_sessions)
             self._all_sessions.clear()
+        closed_count = 0
         for session in sessions_to_close:
             try:
                 session.close()
+                closed_count += 1
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("SolarEdge Optimizers (legacy): Closed session")
             except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.warning("SolarEdge Optimizers (legacy): Error closing session: %s", e)
+        if closed_count:
+            _LOGGER.info(
+                "SolarEdge Optimizers (legacy): Closed %d session(s) (file descriptors released)",
+                closed_count,
+            )
 
     def __del__(self) -> None:
         """Best-effort cleanup if GC collects an unclosed client."""

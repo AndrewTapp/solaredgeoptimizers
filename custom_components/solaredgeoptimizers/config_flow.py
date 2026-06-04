@@ -30,8 +30,10 @@ Error Handling:
 Cleanup:
 - Credential validation: `api.close()` in a finally block after check_login so temporary
   sessions are not left open when the user cancels or validation fails
+- Config entry title: `format_config_entry_title()` substitutes `%(siteid)s` with fallback
+  when the translation template is malformed
 - async_remove_entry: Pops coordinator if present, awaits executor `api.close()` (releases legacy
-  sessions and One tokens), then removes entities and devices from registries
+  sessions and One tokens), logs info on success, then removes entities and devices from registries
 """
 from __future__ import annotations
 
@@ -47,8 +49,9 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.translation import async_get_translations
+from homeassistant.util import dt as dt_util
 
-from .const import CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, DOMAIN
+from .const import CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, DOMAIN, format_config_entry_title
 from . import remove_entities_and_devices_for_entry
 
 _LOGGER = logging.getLogger(__name__)
@@ -122,9 +125,18 @@ async def validate_input(
     siteid = (data.get("siteid") or "").strip()
     username = data.get("username") or ""
     password = data.get("password") or ""
+    use_solaredge_one = data.get(CONF_USE_SOLAREDGE_ONE, True)
+    ha_timezone = dt_util.get_time_zone(hass.config.time_zone)
 
     from .api_dual import SolarEdgeDualAPI
-    api = SolarEdgeDualAPI(siteid=siteid, username=username, password=password)
+    api = SolarEdgeDualAPI(
+        siteid=siteid,
+        username=username,
+        password=password,
+        timezone=ha_timezone,
+        language=hass.config.language,
+        use_solaredge_one=use_solaredge_one,
+    )
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug("SolarEdge Optimizers config: Validating dual API for site %s", siteid)
     try:
@@ -154,9 +166,20 @@ async def validate_input(
             _LOGGER.warning("SolarEdge Optimizers config: Error closing API after validation: %s", e)
 
     if code == 200:
-        return {"title": translated_title % {"siteid": siteid}}
+        return {"title": format_config_entry_title(translated_title, siteid)}
     if code == 401:
+        _LOGGER.warning(
+            "SolarEdge Optimizers config: Authentication failed for site %s "
+            "(check email/password at monitoring.solaredge.com; legacy-only: disable Use SolarEdge One)",
+            siteid,
+        )
         raise InvalidAuth
+    if code == 0:
+        _LOGGER.warning(
+            "SolarEdge Optimizers config: Login check returned no HTTP status for site %s "
+            "(often SolarEdge One OAuth did not complete; try legacy-only or verify credentials)",
+            siteid,
+        )
     raise CannotConnect
 
 
@@ -318,6 +341,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             try:
                 await hass.async_add_executor_job(coordinator.my_api.close)
+                _LOGGER.info(
+                    "SolarEdge Optimizers: Closed API on config entry removal for entry %s "
+                    "(file descriptors released)",
+                    entry.entry_id,
+                )
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug(
                         "SolarEdge Optimizers config: Closed API on config entry removal for entry %s",

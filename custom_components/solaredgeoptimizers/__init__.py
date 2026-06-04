@@ -7,7 +7,8 @@ This module serves as the main entry point for the Home Assistant integration. I
 - API client initialization using the dual API wrapper (SolarEdge One + legacy fallback)
 - Data coordinator creation for polling optimizer data at regular intervals
 - Platform registration (sensor platform) for exposing optimizer data as HA entities
-- Migration of legacy configuration options (use_solaredge_one default)
+- Migration of legacy configuration options (use_solaredge_one default; repair unformatted
+  config entry titles containing literal ``%(siteid)s``)
 - Entity and device registry cleanup when the integration is removed or reloaded
 - Timezone configuration for proper date/time parsing of API responses
 
@@ -30,7 +31,14 @@ exist before entities are added. Entities link to those devices by identifier on
 The sensor platform registers per-optimizer entities with ``has_entity_name`` disabled so
 ``entity_id`` matches the path-based ``suggested_object_id`` (e.g. ``sensor.power_1_1_1``)
 without Home Assistant prepending the optimizer device slug; friendly names use short
-translated sensor labels only (device name shows optimizer position).
+translated sensor labels only (device name shows optimizer position). Optimizer devices are
+created in the sensor platform before entities are added; ``via_device`` uses the same string
+device identifier as the coordinator (including duplicate/portal suffixes on string keys).
+On large sites, entities are added
+in batches (``ENTITY_ADD_BATCH_SIZE``) with event-loop yields so startup does not flood the
+entity registry or websocket bus; ``coordinator.async_update_listeners()`` (sync) runs after
+the last batch; optimizer ``async_restore_last_state()`` reapplies coordinator data after HA
+state restore so sensors are not stuck at **unknown** until the next poll.
 """
 import logging
 from typing import Any
@@ -49,10 +57,37 @@ from .const import (
     LOGGER,
     CONF_SITE_ID,
     CONF_USE_SOLAREDGE_ONE,
+    UNFORMATTED_CONFIG_TITLE_MARKER,
+    format_config_entry_title,
 )
 from .coordinator import MyCoordinator
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
+
+
+async def _migrate_config_entry_title(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Repair config entry titles that still contain the unsubstituted %(siteid)s template."""
+    title = entry.title or ""
+    if UNFORMATTED_CONFIG_TITLE_MARKER not in title:
+        return
+    siteid = (entry.data.get("siteid") or entry.data.get(CONF_SITE_ID) or "").strip()
+    if not siteid:
+        LOGGER.warning(
+            "SolarEdge Optimizers: Config entry %s has unformatted title %r but no site ID to repair with",
+            entry.entry_id,
+            title,
+        )
+        return
+    new_title = format_config_entry_title(title, siteid)
+    if new_title == title:
+        new_title = f"SolarEdge Site {siteid}"
+    hass.config_entries.async_update_entry(entry, title=new_title)
+    LOGGER.info(
+        "SolarEdge Optimizers: Repaired unformatted config entry title for entry %s (%r -> %r)",
+        entry.entry_id,
+        title,
+        new_title,
+    )
 
 
 async def _migrate_use_solaredge_one(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -152,7 +187,7 @@ async def _async_forward_platforms(hass: HomeAssistant, entry: ConfigEntry, coor
         )
     try:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         # Platform setup failed; remove partial state so caller closes API.
         hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
         raise
@@ -177,6 +212,7 @@ async def _async_close_api_after_setup_failure(hass: HomeAssistant, api: SolarEd
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SolarEdge Optimizers Data from a config entry."""
     await _migrate_use_solaredge_one(hass, entry)
+    await _migrate_config_entry_title(hass, entry)
     LOGGER.info("SolarEdge Optimizers: Starting setup for config entry: %s", entry.entry_id)
     ha_timezone = dt_util.get_time_zone(hass.config.time_zone)
     use_solaredge_one = entry.options.get(CONF_USE_SOLAREDGE_ONE, entry.data.get(CONF_USE_SOLAREDGE_ONE, True))
@@ -346,11 +382,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             try:
                 await hass.async_add_executor_job(coordinator.my_api.close)
-                if LOGGER.isEnabledFor(logging.DEBUG):
-                    LOGGER.debug(
-                        "SolarEdge Optimizers: Closed API session for entry %s during unload",
-                        entry.entry_id,
-                    )
+                LOGGER.info(
+                    "SolarEdge Optimizers: Closed API clients for entry %s (file descriptors released)",
+                    entry.entry_id,
+                )
             except Exception as e:  # pylint: disable=broad-except
                 LOGGER.warning("SolarEdge Optimizers: Error closing API sessions: %s", e)
 

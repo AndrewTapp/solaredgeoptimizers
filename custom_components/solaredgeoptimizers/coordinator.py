@@ -11,7 +11,9 @@ Key Responsibilities:
 - Manages One API vs Legacy API fallback (retries One periodically when using legacy)
 - Calculates aggregated data (power, voltage, current, energy) at string/inverter/site levels
 - Handles hardware swaps by using position-based keys instead of serial numbers
-- Registers devices in Home Assistant device registry (site, inverters, strings)
+- Indexes optimizer data by display-name position (via `build_optimizer_tasks`) including letter
+  suffixes (e.g. 1.1.1a) as well as panel_id serial keys
+- Registers devices in Home Assistant device registry (site, inverters, strings; optimizers in sensor.py)
 
 Adaptive Polling Strategy:
 - Lightweight check: samples 5 random optimizers (batch, One API) or 1 representative (single, legacy)
@@ -80,7 +82,9 @@ from .const import (
     STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO,
     is_status_active,
     parse_string_display_name_path,
+    build_optimizer_tasks,
     resolve_duplicate_indices,
+    string_position_key_from_display_name,
 )
 from .device_ids import (
     inverter_device_identifier,
@@ -525,11 +529,14 @@ class MyCoordinator(DataUpdateCoordinator):
         )
         
         # Resolve duplicate strings within this inverter
+        indexed_strings = list(enumerate(inverter.strings, start=1))
         string_suffix_map = resolve_duplicate_indices(
-            inverter.strings,
-            get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, len([x for x in inverter.strings if x == s])),
-            get_status=lambda s: getattr(s, "status", "") or "",
-            get_serial=lambda s: getattr(s, "serialNumber", "") or str(getattr(s, "stringId", "")),
+            indexed_strings,
+            get_key=lambda t: string_position_key_from_display_name(
+                getattr(t[1], "displayName", "") or "", inv_idx, t[0]
+            ),
+            get_status=lambda t: getattr(t[1], "status", "") or "",
+            get_serial=lambda t: getattr(t[1], "serialNumber", "") or str(getattr(t[1], "stringId", "")),
             logger=_LOGGER,
         )
         
@@ -541,12 +548,12 @@ class MyCoordinator(DataUpdateCoordinator):
                 str_duplicates, inv_idx_str,
             )
         
-        for str_idx, string in enumerate(inverter.strings, start=1):
-            str_suffix = string_suffix_map.get(str_idx - 1, "")  # 0-indexed in suffix_map
+        for list_idx, (str_idx, string) in enumerate(indexed_strings):
+            str_suffix = string_suffix_map.get(list_idx, "")
             parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
             if parsed is not None:
-                inv_num, str_num = parsed
-                str_num_str = f"{str_num}{str_suffix}"
+                inv_num, str_num, display_suffix = parsed
+                str_num_str = f"{str_num}{display_suffix or str_suffix}"
                 string_name = f"String {site_id}.{inv_num}.{str_num_str}"
                 str_device_id = string_device_identifier(
                     self.config_entry.entry_id, inv_num, str_num_str
@@ -671,8 +678,8 @@ class MyCoordinator(DataUpdateCoordinator):
         """Build entity path for a string based on display name or position."""
         parsed = parse_string_display_name_path(getattr(string, "displayName", "") or "")
         if parsed is not None:
-            inv_num, str_num = parsed
-            str_num_str = f"{str_num}{str_suffix}"
+            inv_num, str_num, display_suffix = parsed
+            str_num_str = f"{str_num}{display_suffix or str_suffix}"
             return (ctx.site_id_str, inv_num, str_num_str) if ctx.include_site_id_in_entity_id else (inv_num, str_num_str)
         str_idx_str = f"{str_idx}{str_suffix}"
         return (ctx.site_id_str, inv_idx_str, str_idx_str) if ctx.include_site_id_in_entity_id else (inv_idx_str, str_idx_str)
@@ -833,14 +840,17 @@ class MyCoordinator(DataUpdateCoordinator):
         }
         inv_idx_str = f"{inv_idx}{inv_suffix}"
         
+        indexed_strings_agg = list(enumerate(inverter.strings, start=1))
         str_suffix_map = resolve_duplicate_indices(
-            inverter.strings,
-            get_key=lambda s: parse_string_display_name_path(getattr(s, "displayName", "") or "") or (inv_idx, 0),
-            get_status=lambda s: getattr(s, "status", "") or "",
-            get_serial=lambda s: getattr(s, "serialNumber", "") or str(getattr(s, "stringId", "")),
+            indexed_strings_agg,
+            get_key=lambda t: string_position_key_from_display_name(
+                getattr(t[1], "displayName", "") or "", inv_idx, t[0]
+            ),
+            get_status=lambda t: getattr(t[1], "status", "") or "",
+            get_serial=lambda t: getattr(t[1], "serialNumber", "") or str(getattr(t[1], "stringId", "")),
             logger=_LOGGER,
         )
-        
+
         str_duplicates = sum(1 for suffix in str_suffix_map.values() if suffix)
         if str_duplicates > 0 and _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
@@ -863,8 +873,8 @@ class MyCoordinator(DataUpdateCoordinator):
                     n_str,
                     inv_serial or inv_idx_str,
                 )
-        for str_idx, string in enumerate(inverter.strings, start=1):
-            str_suffix = str_suffix_map.get(str_idx - 1, "")
+        for list_idx, (str_idx, string) in enumerate(indexed_strings_agg):
+            str_suffix = str_suffix_map.get(list_idx, "")
             string_aggregated, string_is_active, agg_data = self._process_single_string(
                 string, str_suffix, str_idx, inv_idx_str, inv_serial, ctx, portal_string_wh_by_id
             )
@@ -1163,18 +1173,25 @@ class MyCoordinator(DataUpdateCoordinator):
             return False
 
     def _index_optimizers_by_position(self, data_dict: dict) -> None:
-        """Add position keys (inv_idx, str_idx, opt_idx) to data_dict for stable lookup after hardware swap."""
+        """Add position keys to data_dict for stable lookup after hardware swap.
+
+        Keys match entity_id_path indices (display-name based when available), including
+        int and suffixed string forms e.g. (1, 0, 1) and (1, 0, '1a').
+        """
         if not self._site_structure:
             return
-        for inv_idx, inverter in enumerate(self._site_structure.inverters, start=1):
-            for str_idx, string in enumerate(inverter.strings, start=1):
-                for opt_idx, optimizer in enumerate(
-                    getattr(string, "optimizers") or (), start=1
-                ):
-                    pos_key = (inv_idx, str_idx, opt_idx)
-                    item = data_dict.get(optimizer.optimizerId)
-                    if item is not None:
-                        data_dict[pos_key] = item
+        for optimizer, _inverter, _string, inv_num, str_num, opt_num, suffix in build_optimizer_tasks(
+            self._site_structure
+        ):
+            item = data_dict.get(optimizer.optimizerId)
+            if item is None:
+                continue
+            opt_with_suffix = f"{opt_num}{suffix}"
+            for pos_key in (
+                (inv_num, str_num, opt_num),
+                (inv_num, str_num, opt_with_suffix),
+            ):
+                data_dict[pos_key] = item
 
     def _build_data_dict(self, data_list, current_data, is_data_dict):
         """Build data_dict from full refresh list or reuse current_data. Updates first_boot and _obtained_from.

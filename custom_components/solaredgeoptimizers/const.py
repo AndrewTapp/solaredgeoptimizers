@@ -50,6 +50,8 @@ Each constant is documented below with a full description of what it is used for
 - API_TIMEOUT_LONG: Timeout for longer requests (layout, batch operations).
 - LIGHT_CHECK_BATCH_SIZE: Number of optimizers to sample in One API lightweight checks;
   sampling several (e.g. 5) from different strings improves detection of new data.
+- ENTITY_ADD_BATCH_SIZE: Number of sensor entities registered per startup batch in the sensor
+  platform (with event-loop yields between batches on large sites).
 - MAX_PARALLEL_WORKERS: Maximum threads for parallel API requests (legacy per-optimizer, etc.).
 - USER_AGENT: Common User-Agent string for API requests (Chrome on Windows).
 
@@ -82,9 +84,15 @@ Each constant is documented below with a full description of what it is used for
   See in-code comments for which entities get which sensor types.
 
 Utility Functions:
-- parse_string_display_name_path(): Extract (inv, str) from display names like "1.0"
-- parse_optimizer_display_name_to_indices(): Extract (inv, str, opt) from display names
+- parse_string_display_name_path(): Extract (inv, str, suffix) from string display names (e.g. 1.0a)
+- parse_optimizer_display_name_to_indices(): Extract (inv, str, opt, suffix) from optimizer names
+  (e.g. 1.1.1a -> suffix a for replaced/duplicate panels)
+- string_position_key_from_display_name(): (inv, str) key for string duplicate resolution
+- build_optimizer_tasks(): Optimizer task list for sensor setup and coordinator position indexing
 - resolve_duplicate_indices(): Assign letter suffixes to duplicate positions
+- format_config_entry_title(): Safe substitution of config.title_entry %(siteid)s with fallback
+- UNFORMATTED_CONFIG_TITLE_MARKER: Detects literal %(siteid)s in stored config entry titles
+- ENTITY_ADD_BATCH_SIZE: Startup batch size for async_add_entities (default 50)
 """
 from __future__ import annotations
 
@@ -139,6 +147,7 @@ API_TIMEOUT_LONG = 60   # For longer requests (layout, batch operations)
 
 # Batch operation limits
 LIGHT_CHECK_BATCH_SIZE = 5  # Number of optimizers to sample in lightweight checks
+ENTITY_ADD_BATCH_SIZE = 50  # Number of entities to register per startup batch
 MAX_PARALLEL_WORKERS = 10   # Maximum threads for parallel API requests
 
 # Common User-Agent string for API requests (Chrome on Windows)
@@ -301,46 +310,103 @@ SENSOR_TYPE_AGGREGATED_SITE = SENSOR_TYPE_AGGREGATED_COMMON + [
 SENSOR_TYPE = SENSOR_TYPE_INDIVIDUAL  # For backwards compatibility
 
 
-def parse_string_display_name_path(display_name: str) -> tuple[int, int] | None:
-    """Parse string displayName (e.g. '1.0', '1.1', 'String 1.0') into (inv, str) for device/entity IDs.
-    Returns None if not in expected format so callers can fall back to position-based indices."""
+UNFORMATTED_CONFIG_TITLE_MARKER = "%(siteid)s"
+
+
+def format_config_entry_title(template: str, siteid: str) -> str:
+    """Format config entry title from translation template; fall back if template is malformed."""
+    siteid = (siteid or "").strip()
+    if not template:
+        return f"SolarEdge Site {siteid}"
+    try:
+        return template % {"siteid": siteid}
+    except (TypeError, ValueError, KeyError):
+        logging.getLogger(__name__).warning(
+            "SolarEdge Optimizers config: Malformed title template %r; using default for site %s",
+            template,
+            siteid,
+        )
+        return f"SolarEdge Site {siteid}"
+
+
+def parse_string_display_name_path(display_name: str) -> tuple[int, int, str] | None:
+    """Parse string displayName into (inv, str, suffix) for device/entity IDs.
+
+    Examples: '1.0' -> (1, 0, ''); '1.0a' / 'String 1.0a' -> (1, 0, 'a').
+    Letter suffix applies only to the string index (second segment).
+    """
     if not display_name or not isinstance(display_name, str):
         return None
     raw = display_name.strip()
     if raw.upper().startswith("STRING "):
         raw = raw[7:].strip()
-    parts = raw.split(".")
+    parts = [p.strip() for p in raw.split(".") if p.strip()]
     if len(parts) != 2:
         return None
-    try:
-        nums = [int(p.strip()) for p in parts if p.strip().isdigit()]
-    except (ValueError, TypeError):
+    parsed = [_parse_index_segment(p) for p in parts]
+    if any(seg is None for seg in parsed):
         return None
-    if len(nums) != 2:
+    (inv, inv_suffix), (str_num, str_suffix) = parsed
+    if inv_suffix:
         return None
-    return (nums[0], nums[1])
+    return inv, str_num, str_suffix
 
 
-def parse_optimizer_display_name_to_indices(display_name: str) -> tuple[int, int, int] | None:
-    """Parse optimizer displayName (e.g. '1.0.1', 'Optimizer 1.0.1') into (inv, str, opt) for device/entity IDs.
-    Returns None if not in expected format so callers can fall back to position-based indices."""
+def string_position_key_from_display_name(
+    display_name: str, inv_idx: int, str_idx: int
+) -> tuple[int, int]:
+    """Position key (inv, str) for duplicate resolution; ignores letter suffix on string index."""
+    parsed = parse_string_display_name_path(display_name or "")
+    if parsed is not None:
+        return (parsed[0], parsed[1])
+    return (inv_idx, str_idx)
+
+
+def _parse_index_segment(segment: str) -> tuple[int, str] | None:
+    """Parse one dotted segment into (index, letter_suffix). Suffix only on the last segment is used."""
+    if not segment or not isinstance(segment, str):
+        return None
+    part = segment.strip()
+    digit_len = 0
+    while digit_len < len(part) and part[digit_len].isdigit():
+        digit_len += 1
+    if digit_len == 0:
+        return None
+    suffix = part[digit_len:].lower()
+    if suffix and not suffix.isalpha():
+        return None
+    return int(part[:digit_len]), suffix
+
+
+def parse_optimizer_display_name_to_indices(
+    display_name: str,
+) -> tuple[int, int, int, str] | None:
+    """Parse optimizer displayName into (inv, str, opt, suffix) for device/entity IDs.
+
+    Examples: '1.0.1' -> (1, 0, 1, ''); '1.1.1a' / 'Optimizer 1.1.1a' -> (1, 1, 1, 'a');
+    'site.1.0.1b' (4 segments) -> (1, 0, 1, 'b'). Letter suffix applies only to the optimizer
+    index (last segment). Returns None if not parseable so callers can use enumerate indices.
+    """
     if not display_name or not isinstance(display_name, str):
         return None
     raw = display_name.strip()
     if raw.upper().startswith("OPTIMIZER "):
         raw = raw[10:].strip()
-    parts = raw.split(".")
+    parts = [p.strip() for p in raw.split(".") if p.strip()]
     if len(parts) not in (3, 4):
         return None
-    try:
-        nums = [int(p.strip()) for p in parts if p.strip().isdigit()]
-    except (ValueError, TypeError):
+    parsed = [_parse_index_segment(p) for p in parts]
+    if any(seg is None for seg in parsed):
         return None
-    if len(nums) != len(parts):
+    if len(parsed) == 3:
+        (inv, inv_suffix), (str_num, str_suffix), (opt, opt_suffix) = parsed
+        if inv_suffix or str_suffix:
+            return None
+        return inv, str_num, opt, opt_suffix
+    (_site, _site_suffix), (inv, inv_suffix), (str_num, str_suffix), (opt, opt_suffix) = parsed
+    if inv_suffix or str_suffix:
         return None
-    if len(nums) == 3:
-        return (nums[0], nums[1], nums[2])
-    return (nums[1], nums[2], nums[3])  # site.inv.str.opt -> inv, str, opt
+    return inv, str_num, opt, opt_suffix
 
 
 def make_duplicate_sort_key(item, get_status: Callable, get_serial: Callable) -> tuple[int, str]:
@@ -412,3 +478,66 @@ def resolve_duplicate_indices(items: list, get_key: Callable, get_status: Callab
             )
     
     return resolved
+
+
+def build_optimizer_tasks(site) -> list:
+    """Build optimizer task tuples for sensor setup and coordinator position indexing.
+
+    Each task is (optimizer, inverter, string, inv_num, str_num, opt_num, suffix).
+    Uses display-name-based (inv, str, opt) when optimizer.displayName parses (e.g. '1.0.1',
+    '1.1.1a'). Suffix comes from the display name when present, else duplicate positions get
+    letter suffixes (a, b, c...) from resolve_duplicate_indices.
+    """
+    logger = logging.getLogger(__name__)
+    tasks_with_keys = []
+    for inv_idx, inverter in enumerate(site.inverters, start=1):
+        for str_idx, string in enumerate(inverter.strings, start=1):
+            for opt_idx, optimizer in enumerate(string.optimizers, start=1):
+                parsed = parse_optimizer_display_name_to_indices(
+                    getattr(optimizer, "displayName", "") or ""
+                )
+                if parsed is not None:
+                    inv_num, str_num, opt_num, display_suffix = parsed
+                else:
+                    inv_num, str_num, opt_num = inv_idx, str_idx, opt_idx
+                    display_suffix = ""
+                position_key = (inv_num, str_num, opt_num)
+                tasks_with_keys.append(
+                    (
+                        optimizer,
+                        inverter,
+                        string,
+                        inv_num,
+                        str_num,
+                        opt_num,
+                        position_key,
+                        display_suffix,
+                    )
+                )
+
+    suffix_map = resolve_duplicate_indices(
+        tasks_with_keys,
+        get_key=lambda item: item[6],
+        get_status=lambda item: getattr(item[0], "status", "") or "",
+        get_serial=lambda item: getattr(item[0], "serialNumber", "") or "",
+        logger=logger,
+    )
+
+    tasks = []
+    duplicates_count = sum(1 for suffix in suffix_map.values() if suffix)
+    for idx, item in enumerate(tasks_with_keys):
+        optimizer, inverter, string, inv_num, str_num, opt_num, _key, display_suffix = item
+        suffix = display_suffix or suffix_map.get(idx, "")
+        tasks.append((optimizer, inverter, string, inv_num, str_num, opt_num, suffix))
+    if duplicates_count > 0:
+        logger.info(
+            "SolarEdge Optimizers: Found %d duplicate optimizer positions, assigned suffixes (a, b, c...)",
+            duplicates_count,
+        )
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "SolarEdge Optimizers: Built %d optimizer tasks (%d with duplicate-assigned suffixes)",
+            len(tasks),
+            duplicates_count,
+        )
+    return tasks
