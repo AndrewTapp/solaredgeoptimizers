@@ -16,7 +16,8 @@ Key Responsibilities:
 - Registers devices in Home Assistant device registry (site, inverters, strings; optimizers in sensor.py)
 
 Adaptive Polling Strategy:
-- Lightweight check: samples 5 random optimizers (batch, One API) or 1 representative (single, legacy)
+- Lightweight check: samples up to 5 random **active** optimizers (batch, One API) or 1 active
+  representative (single, legacy); inactive/replaced serials are excluded from the sample pool
 - Full refresh: One API uses one batch POST for all optimizers; legacy uses parallel per-optimizer requests
 - Full refresh triggered when lightweight check detects newer lastmeasurement
 - Stale threshold: 1 hour (One API) or 2 hours (Legacy API)
@@ -110,6 +111,17 @@ def _get_all_optimizer_ids(site) -> list:
     ]
 
 
+def _get_active_optimizer_ids(site) -> list:
+    """Return optimizer IDs with blank or ACTIVE layout status (skip inactive/replaced for light checks)."""
+    return [
+        opt.optimizerId
+        for inv in site.inverters
+        for s in inv.strings
+        for opt in getattr(s, "optimizers") or ()
+        if is_status_active(getattr(opt, "status", "") or "")
+    ]
+
+
 def _get_first_optimizer_id(site):
     """Return the first optimizer ID found in site structure, or None."""
     for inv in site.inverters:
@@ -117,6 +129,16 @@ def _get_first_optimizer_id(site):
             if getattr(s, "optimizers", None) and s.optimizers:
                 return s.optimizers[0].optimizerId
     return None
+
+
+def _get_first_active_optimizer_id(site):
+    """Return the first active optimizer ID in site structure, or first optimizer if none are active."""
+    for inv in site.inverters:
+        for s in inv.strings:
+            for opt in getattr(s, "optimizers") or ():
+                if is_status_active(getattr(opt, "status", "") or ""):
+                    return opt.optimizerId
+    return _get_first_optimizer_id(site)
 
 
 # Rollup state types to avoid passing many parameters (CodeFactor: too many arguments)
@@ -255,17 +277,18 @@ class MyCoordinator(DataUpdateCoordinator):
         if self._representative_optimizer_id is not None or self._light_check_optimizer_ids is not None:
             return
         if self._has_batch_api:
-            all_ids = _get_all_optimizer_ids(site)
-            ids = random.sample(all_ids, min(LIGHT_CHECK_BATCH_SIZE, len(all_ids))) if all_ids else []
+            active_ids = _get_active_optimizer_ids(site)
+            pool_ids = active_ids or _get_all_optimizer_ids(site)
+            ids = random.sample(pool_ids, min(LIGHT_CHECK_BATCH_SIZE, len(pool_ids))) if pool_ids else []
             if ids:
                 self._light_check_optimizer_ids = ids
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug(
-                        "SolarEdge Optimizers: Using %d representative optimizers for lightweight checks (batch): %s",
+                        "SolarEdge Optimizers: Using %d active representative optimizers for lightweight checks (batch): %s",
                         len(ids), ids,
                     )
         if not self._light_check_optimizer_ids:
-            self._representative_optimizer_id = _get_first_optimizer_id(site)
+            self._representative_optimizer_id = _get_first_active_optimizer_id(site)
             if _LOGGER.isEnabledFor(logging.DEBUG) and self._representative_optimizer_id:
                 _LOGGER.debug(
                     "SolarEdge Optimizers: Using representative optimizer %s for lightweight checks",

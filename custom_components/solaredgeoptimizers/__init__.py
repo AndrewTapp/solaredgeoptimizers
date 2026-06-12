@@ -39,6 +39,10 @@ in batches (``ENTITY_ADD_BATCH_SIZE``) with event-loop yields so startup does no
 entity registry or websocket bus; ``coordinator.async_update_listeners()`` (sync) runs after
 the last batch; optimizer ``async_restore_last_state()`` reapplies coordinator data after HA
 state restore so sensors are not stuck at **unknown** until the next poll.
+
+v2.4.19+: inactive/replaced optimizers with empty portal measurements log at DEBUG only;
+lightweight polling samples active optimizers only. Unload/removal logs a single INFO when
+the dual API closes both backends (backend close summaries are DEBUG when invoked via dual API).
 """
 import logging
 from typing import Any
@@ -382,10 +386,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             try:
                 await hass.async_add_executor_job(coordinator.my_api.close)
-                LOGGER.info(
-                    "SolarEdge Optimizers: Closed API clients for entry %s (file descriptors released)",
-                    entry.entry_id,
-                )
             except Exception as e:  # pylint: disable=broad-except
                 LOGGER.warning("SolarEdge Optimizers: Error closing API sessions: %s", e)
 

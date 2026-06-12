@@ -21,7 +21,8 @@ Methods Implemented:
 - get_dashboard_site_production_cached(installation_date): One API only; returns site production (Wh) from dashboard/energy
 - get_layout_energy_by_inverter_cached(installation_date): One API only; returns inverter/string energy (Wh) from layout/energy by-inverter
 - close(): Closes both API backends (legacy closes all thread-local sessions; One clears tokens);
-  idempotent via _closed flag; both backends closed even if one raises; logs at **info** when both succeed
+  idempotent via _closed flag; both backends closed even if one raises; single **info** summary here
+  (child clients use log_summary=False to avoid stacked unload messages)
 
 Tracking:
 - _last_used_api: Tracks which API ("one" or "legacy") provided the last data
@@ -219,7 +220,7 @@ class SolarEdgeDualAPI:
         last_error = None
         for name, client in [("One", self._one), ("Legacy", self._legacy)]:
             try:
-                client.close()
+                client.close(log_summary=False)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug("SolarEdge Dual API: Closed %s API client", name)
             except Exception as e:  # pylint: disable=broad-except
@@ -242,4 +243,5 @@ class SolarEdgeDualAPI:
             self.close()
         except Exception as exc:  # pylint: disable=broad-except
             # Never raise from destructor, but leave a debug breadcrumb.
-            _LOGGER.debug("SolarEdge Dual API: Ignoring close error in __del__: %s", exc)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Dual API: Ignoring close error in __del__: %s", exc)

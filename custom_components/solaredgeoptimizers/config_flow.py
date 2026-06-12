@@ -29,11 +29,12 @@ Error Handling:
 
 Cleanup:
 - Credential validation: `api.close()` in a finally block after check_login so temporary
-  sessions are not left open when the user cancels or validation fails
+  sessions are not left open when the user cancels or validation fails (DEBUG on success).
 - Config entry title: `format_config_entry_title()` substitutes `%(siteid)s` with fallback
-  when the translation template is malformed
-- async_remove_entry: Pops coordinator if present, awaits executor `api.close()` (releases legacy
-  sessions and One tokens), logs info on success, then removes entities and devices from registries
+  when the translation template is malformed.
+- async_remove_entry: Pops coordinator if present, awaits executor `api.close()` (dual API
+  emits one INFO close summary; child backends use log_summary=False), then removes entities
+  and devices via the shared helper in `__init__.py`.
 """
 from __future__ import annotations
 
@@ -242,8 +243,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     info["title"],
                 )
             entry_data = dict(user_input)
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Optimizers config flow: Creating entry title=%s", info["title"])
             return self.async_create_entry(title=info["title"], data=entry_data)
 
         return self.async_show_form(
@@ -341,16 +340,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             try:
                 await hass.async_add_executor_job(coordinator.my_api.close)
-                _LOGGER.info(
-                    "SolarEdge Optimizers: Closed API on config entry removal for entry %s "
-                    "(file descriptors released)",
-                    entry.entry_id,
-                )
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers config: Closed API on config entry removal for entry %s",
-                        entry.entry_id,
-                    )
             except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.warning(
                     "SolarEdge Optimizers: Error closing API on removal (file descriptors may leak): %s",

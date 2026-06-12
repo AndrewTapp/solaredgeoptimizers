@@ -56,7 +56,9 @@ Key Features:
 - No persistent HTTP session for /services/ calls: `requests.get`/`post` use response context managers
   so connections are released; OAuth uses a short-lived `Session()` inside `with` during token fetch only.
 - Parallel lifetime-energy fetches use `with ThreadPoolExecutor(...) as executor` so workers shut down cleanly.
-- `close()` clears OAuth tokens and sets `_closed` (idempotent); logs session/token release at **info**; call on integration unload/removal.
+- `close()` clears OAuth tokens and sets `_closed` (idempotent); logs at **info** when log_summary=True (dual API passes False for a single unload INFO); call on integration unload/removal.
+- Inactive/replaced optimizers (v2.4.19+): layout status from site structure passed into SolarEdgeOptimizerData; empty live measurements for inactive units log at DEBUG only.
+- Lightweight checks use active optimizers only (coordinator); full refresh still includes inactive layout entries.
 """
 import math
 import base64
@@ -96,6 +98,7 @@ from .solaredgeoptimizers import (
     SolarEdgeSite,
     SolarEdgeOptimizerData,
     _lifetime_energy_to_kwh,
+    optimizer_status_lookup_from_site,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -576,7 +579,6 @@ class solaredge_one:
         self.password = password
         self._timezone = timezone if timezone is not None else pytz.UTC
         self._language = (language or "en").split("-")[0].lower()
-        self._session = None
         self._panels_cache = None
         self._panels_cache_time = None
         self._panels_cache_ttl = PANELS_CACHE_TTL_ONE
@@ -1058,7 +1060,19 @@ class solaredge_one:
                 pass
         return azimuth_deg, tilt_deg
 
-    def _build_optimizer_data_from_response(self, item_id: str, live: dict, basic: dict):
+    def _get_optimizer_status_lookup(self) -> dict[str, str]:
+        """Return optimizer-id -> layout status from cached or freshly fetched site structure."""
+        site = self._panels_cache
+        if site is None:
+            try:
+                site = self.requestListOfAllPanels()
+            except Exception:  # pylint: disable=broad-except
+                return {}
+        return optimizer_status_lookup_from_site(site)
+
+    def _build_optimizer_data_from_response(
+        self, item_id: str, live: dict, basic: dict, layout_status: str | None = None
+    ):
         """Build SolarEdgeOptimizerData from API live/basic dicts for one optimizer. Returns None on error."""
         last_measurement = live.get("lastMeasurement") or ""
         model = basic.get("model") or ""
@@ -1091,7 +1105,11 @@ class solaredge_one:
             )
         try:
             opt_data = SolarEdgeOptimizerData(
-                item_id, json_object, self._timezone, has_valid_measurements=bool(measurements)
+                item_id,
+                json_object,
+                self._timezone,
+                has_valid_measurements=bool(measurements),
+                layout_status=layout_status,
             )
             azimuth, tilt = self._extract_azimuth_tilt_from_basic(basic)
             opt_data.azimuth = azimuth
@@ -1134,14 +1152,15 @@ class solaredge_one:
         live_map = data.get("serialToLiveData") or {}
         live = live_map.get(item_id) or {}
         basic = next((b for b in basic_list if (b.get("serial") or "").strip() == (item_id or "").strip()), None) or {}
-        info = self._build_optimizer_data_from_response(item_id, live, basic)
+        layout_status = self._get_optimizer_status_lookup().get(item_id)
+        info = self._build_optimizer_data_from_response(item_id, live, basic, layout_status=layout_status)
         if info is not None:
             temp_map = self.get_optimizer_temperatures_cached()
             if item_id in temp_map:
                 info.temperature = temp_map[item_id]
         return info
 
-    def requestSystemDataBatch(self, item_ids: list):
+    def requestSystemDataBatch(self, item_ids: list, status_lookup: dict[str, str] | None = None):
         """
         Fetch live data for multiple optimizers in one API call.
         Used by the coordinator for lightweight "has any panel updated?" checks so we sample
@@ -1170,18 +1189,24 @@ class solaredge_one:
             raise
         basic_list = data.get("basicInformationList") or []
         live_map = data.get("serialToLiveData") or {}
+        lookup = status_lookup if status_lookup is not None else self._get_optimizer_status_lookup()
         result = []
         for item_id in item_ids:
             live = live_map.get(item_id) or {}
             basic = next((b for b in basic_list if (b.get("serial") or "").strip() == (str(item_id) or "").strip()), None) or {}
-            result.append(self._build_optimizer_data_from_response(item_id, live, basic))
+            layout_status = lookup.get(item_id)
+            result.append(
+                self._build_optimizer_data_from_response(item_id, live, basic, layout_status=layout_status)
+            )
         temp_map = self.get_optimizer_temperatures_cached()
         for i, item_id in enumerate(item_ids):
             if result[i] is not None and item_id in temp_map:
                 result[i].temperature = temp_map[item_id]
         return result
 
-    def _fetch_all_optimizer_data(self, optimizer_ids: list) -> list:
+    def _fetch_all_optimizer_data(
+        self, optimizer_ids: list, status_lookup: dict[str, str] | None = None
+    ) -> list:
         """Fetch live data for all optimizers in one batch POST. Returns list of SolarEdgeOptimizerData (successful only)."""
         if not optimizer_ids:
             return []
@@ -1191,7 +1216,7 @@ class solaredge_one:
                 len(optimizer_ids),
             )
         try:
-            result = self.requestSystemDataBatch(optimizer_ids)
+            result = self.requestSystemDataBatch(optimizer_ids, status_lookup=status_lookup)
             return [item for item in result if item is not None]
         except Exception as e:  # pylint: disable=broad-except
             _LOGGER.warning(
@@ -1243,13 +1268,14 @@ class solaredge_one:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge One: requestAllData starting")
         site = self.requestListOfAllPanels()
+        status_lookup = optimizer_status_lookup_from_site(site)
         optimizer_ids = [
             opt.optimizerId
             for inv in site.inverters
             for s in inv.strings
             for opt in s.optimizers
         ]
-        data = self._fetch_all_optimizer_data(optimizer_ids)
+        data = self._fetch_all_optimizer_data(optimizer_ids, status_lookup=status_lookup)
         lifetimeenergy = self.get_lifetime_energy_cached()
         temperature_map = self.get_optimizer_temperatures_cached()
         self._attach_lifetime_energy_and_temperatures(data, lifetimeenergy, temperature_map)
@@ -1340,7 +1366,7 @@ class solaredge_one:
                 )
         return self._lifetime_energy_cache or {}
 
-    def close(self):
+    def close(self, log_summary: bool = True):
         """Clear OAuth tokens and mark client closed. Idempotent; safe to call multiple times.
 
         Routine GET/POST use ``with requests.get/post(...)`` so responses and pooled connections
@@ -1348,7 +1374,7 @@ class solaredge_one:
         session is closed before normal API traffic. Parallel energy-graph fetches use
         ``with ThreadPoolExecutor(...)`` so executor threads finish and shutdown. This method
         prevents token reuse after unload; pair with dual API ``close()`` so legacy sessions
-        are also closed.
+        are also closed. When called from SolarEdgeDualAPI, pass log_summary=False.
         """
         if self._closed:
             return
@@ -1357,12 +1383,16 @@ class solaredge_one:
             _LOGGER.debug("SolarEdge One: close() clearing access token")
         self._access_token = None
         self._refresh_token = None
-        _LOGGER.info("SolarEdge One: API client closed (OAuth tokens cleared)")
+        if log_summary:
+            _LOGGER.info("SolarEdge One: API client closed (OAuth tokens cleared)")
+        elif _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: API client closed (OAuth tokens cleared)")
 
     def __del__(self) -> None:
         """Best-effort cleanup if GC collects an unclosed client."""
         try:
-            self.close()
+            self.close(log_summary=False)
         except Exception as exc:  # pylint: disable=broad-except
             # Never raise from destructor, but leave a debug breadcrumb.
-            _LOGGER.debug("SolarEdge One API: Ignoring close error in __del__: %s", exc)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One API: Ignoring close error in __del__: %s", exc)
