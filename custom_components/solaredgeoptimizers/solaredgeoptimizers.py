@@ -55,6 +55,9 @@ Key Features:
 - Caching for panels (PANELS_CACHE_TTL_LEGACY) and lifetime energy (LIFETIME_ENERGY_CACHE_TTL)
 - Unicode normalization for measurement keys (handles various dash/space variants)
 - Timezone-aware date parsing for lastMeasurementDate
+- Inactive/replaced optimizers (v2.4.19+): layout status passed into SolarEdgeOptimizerData;
+  empty measurements for inactive units log at DEBUG only in _normalize_measurements_dict
+- Session close(): optional log_summary=False when called from dual API (single INFO at wrapper)
 """
 import time
 import threading
@@ -79,6 +82,7 @@ from .const import (
     PANELS_CACHE_TTL_LEGACY,
     LIFETIME_ENERGY_CACHE_TTL,
     MEASUREMENT_KEYS,
+    is_status_active,
 )
 from .exceptions import SolarEdgeAPIError
 
@@ -144,7 +148,17 @@ def _lifetime_energy_to_kwh(energy_data):
     return None
 
 
-def _parse_system_data_json(json_object, item_id, timezone):
+def optimizer_status_lookup_from_site(site) -> dict[str, str]:
+    """Map optimizer serial/id from cached layout to layout status (e.g. Active, Inactive)."""
+    lookup: dict[str, str] = {}
+    for inv in site.inverters:
+        for string in inv.strings:
+            for opt in getattr(string, "optimizers") or ():
+                lookup[opt.optimizerId] = getattr(opt, "status", "") or ""
+    return lookup
+
+
+def _parse_system_data_json(json_object, item_id, timezone, layout_status=None):
     """Parse and validate systemData JSON into SolarEdgeOptimizerData or None.
     Handles list/dict types, missing lastMeasurementDate, and KeyError.
     """
@@ -163,7 +177,9 @@ def _parse_system_data_json(json_object, item_id, timezone):
             _LOGGER.debug("SolarEdge Optimizers (legacy): Skipping optimizer %s without measurements", item_id)
         return None
     try:
-        return SolarEdgeOptimizerData(item_id, json_object, timezone)
+        return SolarEdgeOptimizerData(
+            item_id, json_object, timezone, layout_status=layout_status
+        )
     except KeyError as e:
         _LOGGER.error("Missing expected key in response for optimizer %s: %s", item_id, e)
         if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -246,17 +262,38 @@ def _parse_last_measurement_date(rawdate, panelid, timezone):
         return datetime.now(pytz.UTC)
 
 
-def _normalize_measurements_dict(json_object, panelid):
+def _normalize_measurements_dict(json_object, panelid, expected_inactive=False):
     """Extract and validate measurements dict from optimizer json_object; return {} if invalid."""
-    measurements = json_object.get("measurements", {})
-    if not measurements or not isinstance(measurements, dict):
-        available_keys = list(json_object.keys()) if _LOGGER.isEnabledFor(logging.WARNING) and isinstance(json_object, dict) else "N/A"
-        _LOGGER.warning(
-            "Missing or invalid measurements for optimizer %s (panel_id: %s). Available keys: %s",
-            panelid, json_object.get("serialNumber", "unknown"), available_keys
-        )
+    has_measurements_key = isinstance(json_object, dict) and "measurements" in json_object
+    measurements = json_object.get("measurements", {}) if isinstance(json_object, dict) else {}
+    if isinstance(measurements, dict) and measurements:
+        return measurements
+    serial = json_object.get("serialNumber", "unknown") if isinstance(json_object, dict) else "unknown"
+    if (
+        isinstance(measurements, dict)
+        and measurements == {}
+        and has_measurements_key
+        and expected_inactive
+    ):
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Empty measurements for inactive/replaced optimizer %s (panel_id: %s); expected from portal",
+                panelid,
+                serial,
+            )
         return {}
-    return measurements
+    available_keys = (
+        list(json_object.keys())
+        if _LOGGER.isEnabledFor(logging.WARNING) and isinstance(json_object, dict)
+        else "N/A"
+    )
+    _LOGGER.warning(
+        "Missing or invalid measurements for optimizer %s (panel_id: %s). Available keys: %s",
+        panelid,
+        serial,
+        available_keys,
+    )
+    return {}
 
 
 def _apply_measurements_to_optimizer_data(instance, measurements, json_object, panelid):
@@ -532,9 +569,21 @@ class solaredgeoptimizers:
             )
         return self._panels_cache
 
-    def requestSystemData(self, itemId):
+    def _get_optimizer_status_lookup(self) -> dict[str, str]:
+        """Return optimizer-id -> layout status from cached or freshly fetched site structure."""
+        site = self._panels_cache
+        if site is None:
+            try:
+                site = self.requestListOfAllPanels()
+            except Exception:  # pylint: disable=broad-except
+                return {}
+        return optimizer_status_lookup_from_site(site)
+
+    def requestSystemData(self, itemId, layout_status=None):
         # Fixed endpoint URL - changed from monitoringpublic.solaredge.com/publicSystemData to monitoring.solaredge.com/systemData,
         # changed isPublic=true to false, added locale parameter, and added v parameter with timestamp
+        if layout_status is None:
+            layout_status = self._get_optimizer_status_lookup().get(itemId)
         locale = self._locale_from_language()
         base = "https://monitoring.solaredge.com/solaredge-web/p/systemData"
         params = f"reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale={locale}&v={round(time.time() * 1000)}"
@@ -555,7 +604,9 @@ class solaredgeoptimizers:
             json_object = self.decodeResult(r.text)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("Decoded JSON object for optimizer %s: %s", itemId, json_object)
-            return _parse_system_data_json(json_object, itemId, self._timezone)
+            return _parse_system_data_json(
+                json_object, itemId, self._timezone, layout_status=layout_status
+            )
 
     def _parse_lifetime_energy_response(self, response: str) -> dict:
         """Parse getLifeTimeEnergy response string to dict. Returns {} on error or ERROR001."""
@@ -600,6 +651,7 @@ class solaredgeoptimizers:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers (legacy): requestAllData starting")
         solarsite = self.requestListOfAllPanels()
+        status_lookup = optimizer_status_lookup_from_site(solarsite)
         lifetimeenergy = self._get_cached_lifetime_energy()
 
         optimizer_ids = [
@@ -617,7 +669,12 @@ class solaredgeoptimizers:
             )
         data = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_id = {executor.submit(self.requestSystemData, opt_id): opt_id for opt_id in optimizer_ids}
+            future_to_id = {
+                executor.submit(
+                    self.requestSystemData, opt_id, status_lookup.get(opt_id)
+                ): opt_id
+                for opt_id in optimizer_ids
+            }
             for future in as_completed(future_to_id):
                 optimizer_id = future_to_id[future]
                 try:
@@ -888,13 +945,15 @@ class solaredgeoptimizers:
             _LOGGER.debug("Endpoint (lifetime energy, whole site): %s", url)
         return self._doRequest("POST", url)
 
-    def close(self):
+    def close(self, log_summary: bool = True):
         """Close all sessions (all threads) to prevent file descriptor leaks.
 
         Call when the API client is no longer needed (e.g. integration unload/removal).
         No requests should be in progress when close() is called. Sets _closed so any
         subsequent _get_session() raises. Closes every tracked Session so connection
         pools and file descriptors are released. Idempotent; safe to call multiple times.
+
+        When called from SolarEdgeDualAPI, pass log_summary=False so unload logs once at INFO.
         """
         if self._closed:
             return
@@ -913,8 +972,13 @@ class solaredgeoptimizers:
                     _LOGGER.debug("SolarEdge Optimizers (legacy): Closed session")
             except Exception as e:  # pylint: disable=broad-except
                 _LOGGER.warning("SolarEdge Optimizers (legacy): Error closing session: %s", e)
-        if closed_count:
+        if closed_count and log_summary:
             _LOGGER.info(
+                "SolarEdge Optimizers (legacy): Closed %d session(s) (file descriptors released)",
+                closed_count,
+            )
+        elif closed_count and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
                 "SolarEdge Optimizers (legacy): Closed %d session(s) (file descriptors released)",
                 closed_count,
             )
@@ -922,15 +986,18 @@ class solaredgeoptimizers:
     def __del__(self) -> None:
         """Best-effort cleanup if GC collects an unclosed client."""
         try:
-            self.close()
+            self.close(log_summary=False)
         except Exception as exc:  # pylint: disable=broad-except
             # Never raise from destructor, but leave a debug breadcrumb.
-            _LOGGER.debug("SolarEdge Optimizers (legacy): Ignoring close error in __del__: %s", exc)
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers (legacy): Ignoring close error in __del__: %s", exc
+                )
 
     def getAlerts(self, only_open=False):
-        # Note: this might require FULL_ACCESS rights in the SE portal, as opposed to DASHBOARD_AND_LAYOUT
-        # Use f-string instead of .format() for better performance
-        url = f"https://monitoring.solaredge.com/solaredge-apigw/api/rna/v1.0/site/{self.siteid}/alerts"
+        # Note: FULL_ACCESS rights in the SE portal may be required (not DASHBOARD_AND_LAYOUT).
+        base = "https://monitoring.solaredge.com/solaredge-apigw/api/rna/v1.0"
+        url = f"{base}/site/{self.siteid}/alerts"
         data = None
         if only_open:
             data = [{"fieldFilterOperator": "IN",
@@ -1198,7 +1265,14 @@ class SolarEdgeOptimizerData:
         'power', 'voltage', 'temperature', 'lifetime_energy', 'azimuth', 'tilt', 'status'
     )
 
-    def __init__(self, panelid, json_object, timezone=None, has_valid_measurements=None):
+    def __init__(
+        self,
+        panelid,
+        json_object,
+        timezone=None,
+        has_valid_measurements=None,
+        layout_status=None,
+    ):
         self._timezone = timezone if timezone is not None else pytz.UTC
         # True when the API provided a non-empty measurements dict (used for One vs legacy fallback)
         if has_valid_measurements is not None:
@@ -1220,7 +1294,7 @@ class SolarEdgeOptimizerData:
         self.lifetime_energy = ""
         self.azimuth = None
         self.tilt = None
-        self.status = ""
+        self.status = (layout_status or "").strip() if layout_status else ""
 
         if panelid is not None:
             self._json_obj = json_object
@@ -1231,5 +1305,8 @@ class SolarEdgeOptimizerData:
             self.lastmeasurement = _parse_last_measurement_date(rawdate, panelid, self._timezone)
             self.model = json_object.get("model", "")
             self.manufacturer = json_object.get("manufacturer", "")
-            measurements = _normalize_measurements_dict(json_object, panelid)
+            expected_inactive = bool(self.status) and not is_status_active(self.status)
+            measurements = _normalize_measurements_dict(
+                json_object, panelid, expected_inactive=expected_inactive
+            )
             _apply_measurements_to_optimizer_data(self, measurements, json_object, panelid)
