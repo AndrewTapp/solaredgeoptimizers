@@ -43,6 +43,10 @@ state restore so sensors are not stuck at **unknown** until the next poll.
 v2.4.19+: inactive/replaced optimizers with empty portal measurements log at DEBUG only;
 lightweight polling samples active optimizers only. Unload/removal logs a single INFO when
 the dual API closes both backends (backend close summaries are DEBUG when invoked via dual API).
+
+v2.4.20+: re-authentication UX — user-initiated credential update via config-flow Reconfigure;
+runtime auth failures during coordinator polling raise ConfigEntryAuthFailed (not only at setup);
+credential validation and removal paths still close temporary dual API clients in finally blocks.
 """
 import logging
 from typing import Any
