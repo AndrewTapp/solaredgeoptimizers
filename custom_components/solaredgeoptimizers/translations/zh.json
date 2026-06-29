@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "设备已配置",
       "reauth_successful": "重新验证成功",
-      "reauth_entry_missing": "未找到用于重新验证的配置项。"
+      "reauth_entry_missing": "未找到用于重新验证的配置项。",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "连接失败",
@@ -30,7 +32,18 @@
           "username": "用户名",
           "password": "密码"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {
