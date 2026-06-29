@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "Az eszköz már konfigurálva van",
       "reauth_successful": "Újra-hitelesítés sikeres",
-      "reauth_entry_missing": "A konfigurációs bejegyzés az újra-hitelesítéshez nem található."
+      "reauth_entry_missing": "A konfigurációs bejegyzés az újra-hitelesítéshez nem található.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Sikertelen csatlakozás",
@@ -30,7 +32,18 @@
           "username": "Felhasználónév",
           "password": "Jelszó"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {
