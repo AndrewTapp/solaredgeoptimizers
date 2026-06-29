@@ -46,6 +46,11 @@ does not re-validate via_device during async_add_entities.
 
 Note: Per-optimizer entity IDs and friendly names are finalized in the sensor platform
 (SolarEdgeOptimizersSensor.async_added_to_hass); see sensor.py for has_entity_name and translations.
+
+Authentication (v2.4.20+):
+- During polling, auth-like failures (HTTP 401/498, SolarEdgeAuthError, legacy ERROR001)
+  trigger a login check; HTTP 401 raises ConfigEntryAuthFailed so Home Assistant shows re-auth.
+- Transient network/parse errors still raise UpdateFailed without forcing re-auth.
 """
 from __future__ import annotations
 
@@ -59,6 +64,7 @@ import requests
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -92,6 +98,7 @@ from .device_ids import (
     site_device_identifier,
     string_device_identifier,
 )
+from .exceptions import SolarEdgeAuthError
 from .solaredgeoptimizers import (
     SolarEdgeAggregatedData,
     _lifetime_energy_to_kwh,
@@ -99,6 +106,41 @@ from .solaredgeoptimizers import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+_AUTH_FAILED_MESSAGE = "Invalid or expired credentials; please re-authenticate"
+
+
+def _is_likely_auth_failure(err: BaseException) -> bool:
+    """Return True when an error may indicate invalid or expired credentials."""
+    if isinstance(err, SolarEdgeAuthError):
+        return True
+    if isinstance(err, requests.HTTPError) and err.response is not None:
+        return err.response.status_code in (401, 498)
+    message = str(err)
+    if "ERROR001" in message and ("401" in message or "498" in message):
+        return True
+    return False
+
+
+async def _async_raise_if_auth_failed(hass: HomeAssistant, api, trigger: str = "update") -> None:
+    """Run login check and raise ConfigEntryAuthFailed when credentials are rejected."""
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge Optimizers coordinator: Verifying credentials after auth-like failure (%s)",
+            trigger,
+        )
+    code = await hass.async_add_executor_job(api.check_login)
+    if code == 401:
+        _LOGGER.error(
+            "SolarEdge Optimizers: Authentication failed during %s (401); please re-authenticate",
+            trigger,
+        )
+        raise ConfigEntryAuthFailed(_AUTH_FAILED_MESSAGE)
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge Optimizers coordinator: Login check after auth-like failure returned %s (not treating as auth failure)",
+            code,
+        )
 
 
 def _get_all_optimizer_ids(site) -> list:
@@ -694,6 +736,8 @@ class MyCoordinator(DataUpdateCoordinator):
             await self._fetch_inverter_models(site)
         except Exception as e:  # pylint: disable=broad-except
             _LOGGER.error("SolarEdge Optimizers: Failed to get panel list in coordinator setup: %s", e)
+            if _is_likely_auth_failure(e):
+                await _async_raise_if_auth_failed(self.hass, self.my_api, "setup")
             raise
         self._register_site_and_inverter_devices(site)
 
@@ -1521,14 +1565,33 @@ class MyCoordinator(DataUpdateCoordinator):
                 COORDINATOR_REFRESH_TIMEOUT_SEC,
             )
             raise UpdateFailed(err) from err
+        except ConfigEntryAuthFailed:
+            raise
+        except SolarEdgeAuthError as err:
+            await _async_raise_if_auth_failed(self.hass, self.my_api)
+            raise ConfigEntryAuthFailed(_AUTH_FAILED_MESSAGE) from err
         except (ConnectionError, OSError) as err:
             _LOGGER.error("SolarEdge Optimizers: Network error during update: %s", err)
             raise UpdateFailed(err) from err
         except (ValueError, KeyError, TypeError) as err:
             _LOGGER.error("SolarEdge Optimizers: Data parsing error during update: %s", err)
             raise UpdateFailed(err) from err
-        except UpdateFailed:
+        except UpdateFailed as err:
+            if _is_likely_auth_failure(err.__cause__ or err):
+                await _async_raise_if_auth_failed(self.hass, self.my_api)
             raise
+        except requests.HTTPError as err:
+            if _is_likely_auth_failure(err):
+                await _async_raise_if_auth_failed(self.hass, self.my_api)
+            _LOGGER.error("SolarEdge Optimizers: HTTP error during update: %s", err)
+            raise UpdateFailed(err) from err
         except RuntimeError as err:
             _LOGGER.exception("SolarEdge Optimizers: Runtime error during update: %s", err)
+            if _is_likely_auth_failure(err):
+                await _async_raise_if_auth_failed(self.hass, self.my_api)
+            raise UpdateFailed(err) from err
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.exception("SolarEdge Optimizers: Unexpected error during update: %s", err)
+            if _is_likely_auth_failure(err):
+                await _async_raise_if_auth_failed(self.hass, self.my_api)
             raise UpdateFailed(err) from err
