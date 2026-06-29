@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "Enheten er allerede konfigurert",
       "reauth_successful": "Ny godkjenning fullført",
-      "reauth_entry_missing": "Konfigurasjonsoppføringen for ny godkjenning ble ikke funnet."
+      "reauth_entry_missing": "Konfigurasjonsoppføringen for ny godkjenning ble ikke funnet.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Kunne ikke koble til",
@@ -30,7 +32,18 @@
           "username": "Brukernavn",
           "password": "Passord"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {
