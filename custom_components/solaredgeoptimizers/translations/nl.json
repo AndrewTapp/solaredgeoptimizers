@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "Apparaat is al geconfigureerd",
       "reauth_successful": "Herauthenticatie geslaagd",
-      "reauth_entry_missing": "Configuratie-item voor herauthenticatie niet gevonden."
+      "reauth_entry_missing": "Configuratie-item voor herauthenticatie niet gevonden.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Kan niet verbinden",
@@ -30,7 +32,18 @@
           "username": "Gebruikersnaam",
           "password": "Wachtwoord"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {
