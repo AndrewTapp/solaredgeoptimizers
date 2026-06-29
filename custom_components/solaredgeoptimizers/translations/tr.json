@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "Cihaz zaten yapılandırılmış",
       "reauth_successful": "Yeniden kimlik doğrulama başarılı",
-      "reauth_entry_missing": "Yeniden kimlik doğrulama için yapılandırma girişi bulunamadı."
+      "reauth_entry_missing": "Yeniden kimlik doğrulama için yapılandırma girişi bulunamadı.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Bağlantı kurulamadı",
@@ -30,7 +32,18 @@
           "username": "Kullanıcı adı",
           "password": "Parola"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {
