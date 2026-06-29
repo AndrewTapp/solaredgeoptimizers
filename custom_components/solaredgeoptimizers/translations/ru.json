@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "Устройство уже настроено",
       "reauth_successful": "Повторная аутентификация выполнена",
-      "reauth_entry_missing": "Запись конфигурации для повторной аутентификации не найдена."
+      "reauth_entry_missing": "Запись конфигурации для повторной аутентификации не найдена.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Ошибка подключения",
@@ -30,7 +32,18 @@
           "username": "Имя пользователя",
           "password": "Пароль"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {
