@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "L'appareil est déjà configuré",
       "reauth_successful": "Réauthentification réussie",
-      "reauth_entry_missing": "Entrée de configuration pour la réauthentification introuvable."
+      "reauth_entry_missing": "Entrée de configuration pour la réauthentification introuvable.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Échec de la connexion",
@@ -30,7 +32,18 @@
           "username": "Nom d'utilisateur",
           "password": "Mot de passe"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {
