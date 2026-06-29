@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "Laite on jo määritetty",
       "reauth_successful": "Uudelleen tunnistautuminen onnistui",
-      "reauth_entry_missing": "Konfiguraation kohdetta uudelleen tunnistautumista varten ei löytynyt."
+      "reauth_entry_missing": "Konfiguraation kohdetta uudelleen tunnistautumista varten ei löytynyt.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Yhteys epäonnistui",
@@ -30,7 +32,18 @@
           "username": "Käyttäjätunnus",
           "password": "Salasana"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {
