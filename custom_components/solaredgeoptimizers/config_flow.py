@@ -17,6 +17,11 @@ Reauth Flow (async_step_reauth, async_step_reauth_confirm):
 - Allows updating username/password without removing the integration
 - Preserves existing options (entity prefix, site ID inclusion)
 
+Reconfigure Flow (async_step_reconfigure):
+- User-initiated credential update from the integration menu (⋮ → Update credentials)
+- Menu label from config.initiate_flow.reconfigure (distinct from Configure cog / options flow)
+- Same username/password form and validation as reauth; options unchanged
+
 Options Flow (SolarEdgeOptimizersOptionsFlowHandler):
 - Accessible via Configure button on the integration card
 - Allows changing entity ID prefix, site ID inclusion, and One API toggle
@@ -26,6 +31,10 @@ Options Flow (SolarEdgeOptimizersOptionsFlowHandler):
 Error Handling:
 - CannotConnect: Network/timeout errors during credential validation
 - InvalidAuth: HTTP 401 authentication failure
+
+Logging:
+- INFO when credentials are updated successfully (reauth or Reconfigure); DEBUG for form display
+  and validation close; no credentials at INFO.
 
 Cleanup:
 - Credential validation: `api.close()` in a finally block after check_login so temporary
@@ -104,13 +113,60 @@ def _options_schema(entry: ConfigEntry) -> vol.Schema:
     )
 
 
-def _reauth_schema(entry: ConfigEntry) -> vol.Schema:
-    """Build reauth schema with current username as default."""
+def _credentials_schema(entry: ConfigEntry) -> vol.Schema:
+    """Build username/password schema with current username as default."""
     return vol.Schema(
         {
             vol.Required("username", default=entry.data.get("username", "")): str,
             vol.Required("password"): str,
         }
+    )
+
+
+async def _async_get_title_template(hass: HomeAssistant) -> str:
+    """Resolve config entry title template in the user's language."""
+    translations = await async_get_translations(
+        hass, hass.config.language, "config", [DOMAIN]
+    )
+    full_key = f"component.{DOMAIN}.config.title_entry"
+    return translations.get(
+        full_key,
+        translations.get("config.title_entry", "SolarEdge Site %(siteid)s"),
+    )
+
+
+async def _async_validate_credentials_update(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    username: str,
+    password: str,
+) -> dict[str, str]:
+    """Validate new credentials for reauth/reconfigure. Returns form errors (empty on success)."""
+    title_template = await _async_get_title_template(hass)
+    data = {
+        **entry.data,
+        "username": username,
+        "password": password,
+    }
+    try:
+        await validate_input(hass, data, title_template)
+    except InvalidAuth:
+        return {"base": "invalid_auth"}
+    except CannotConnect:
+        return {"base": "cannot_connect"}
+    except Exception as e:  # pylint: disable=broad-except
+        _LOGGER.exception("Unexpected exception during credential validation: %s", e)
+        return {"base": "unknown"}
+    return {}
+
+
+def _log_credentials_updated(entry: ConfigEntry, flow_name: str) -> None:
+    """Log INFO when credentials were validated and the config entry will reload."""
+    _LOGGER.info(
+        "SolarEdge Optimizers config flow: Credentials updated via %s for entry %s (site %s); reloading",
+        flow_name,
+        entry.entry_id,
+        (entry.data.get("siteid") or entry.data.get(CONF_SITE_ID) or "?"),
     )
 
 
@@ -273,46 +329,69 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 _LOGGER.debug("SolarEdge Optimizers config flow: Showing reauth form")
             return self.async_show_form(
                 step_id="reauth_confirm",
-                data_schema=_reauth_schema(entry),
+                data_schema=_credentials_schema(entry),
                 description_placeholders={"title": entry.title},
             )
 
-        errors: dict[str, str] = {}
-        # Validate new credentials (reuse same validation as user step)
-        translations = await async_get_translations(
-            self.hass, self.hass.config.language, "config", [DOMAIN]
+        errors = await _async_validate_credentials_update(
+            self.hass,
+            entry,
+            user_input["username"],
+            user_input["password"],
         )
-        full_key = f"component.{DOMAIN}.config.title_entry"
-        title_template = translations.get(
-            full_key,
-            translations.get("config.title_entry", "SolarEdge Site %(siteid)s"),
-        )
-        data = {
-            **entry.data,
-            "username": user_input["username"],
-            "password": user_input["password"],
-        }
-        try:
-            await validate_input(self.hass, data, title_template)
-        except InvalidAuth:
-            errors["base"] = "invalid_auth"
-        except CannotConnect:
-            errors["base"] = "cannot_connect"
-        except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.exception("Unexpected exception during reauth: %s", e)
-            errors["base"] = "unknown"
-
         if errors:
             return self.async_show_form(
                 step_id="reauth_confirm",
-                data_schema=_reauth_schema(entry),
+                data_schema=_credentials_schema(entry),
                 errors=errors,
                 description_placeholders={"title": entry.title},
             )
 
         # Only update credentials in entry.data; options (entity_id_prefix, include_site_id_in_entity_id) are unchanged
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers config flow: Reauth successful, updating entry")
+        _log_credentials_updated(entry, "reauth")
+        return self.async_update_reload_and_abort(
+            entry,
+            data_updates={
+                "username": user_input["username"],
+                "password": user_input["password"],
+            },
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Allow updating username/password without removing the integration."""
+        entry = self._get_reconfigure_entry()
+        if entry is None:
+            return self.async_abort(reason="reconfigure_entry_missing")
+
+        if user_input is None:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers config flow: Showing reconfigure credentials form for entry %s",
+                    entry.entry_id,
+                )
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=_credentials_schema(entry),
+                description_placeholders={"title": entry.title},
+            )
+
+        errors = await _async_validate_credentials_update(
+            self.hass,
+            entry,
+            user_input["username"],
+            user_input["password"],
+        )
+        if errors:
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=_credentials_schema(entry),
+                errors=errors,
+                description_placeholders={"title": entry.title},
+            )
+
+        _log_credentials_updated(entry, "update credentials")
         return self.async_update_reload_and_abort(
             entry,
             data_updates={

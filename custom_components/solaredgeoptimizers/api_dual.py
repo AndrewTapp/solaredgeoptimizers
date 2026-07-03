@@ -11,6 +11,7 @@ API Selection Strategy:
 
 Methods Implemented:
 - check_login(): Succeeds if either API authenticates successfully
+- verify_authentication(): Raises SolarEdgeAuthError when check_login returns 401 (v2.4.20+)
 - requestListOfAllPanels(): Prefers One for site layout, falls back to legacy
 - requestAllData(): Tries One first, uses legacy if One has no valid measurements
 - get_lifetime_energy_cached(): Uses whichever API was last used for requestAllData
@@ -30,17 +31,35 @@ Tracking:
 
 The "Obtained from" sensor shows users which API is currently providing data,
 helping diagnose issues when One API is unavailable or returning stale data.
+
+Authentication (v2.4.20+):
+- verify_authentication() and _is_auth_related_error() detect invalid credentials during
+  requestAllData when both backends fail with auth-like errors; coordinator maps these to
+  ConfigEntryAuthFailed after confirming check_login returns 401.
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+import requests
+
 from .const import OBTAINED_FROM_ONE, OBTAINED_FROM_LEGACY
+from .exceptions import SolarEdgeAuthError
 from .solaredgeoptimizers import solaredgeoptimizers
 from .solaredge_one_api import solaredge_one
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _is_auth_related_error(err: BaseException) -> bool:
+    """Return True when an exception may indicate invalid credentials."""
+    if isinstance(err, SolarEdgeAuthError):
+        return True
+    if isinstance(err, requests.HTTPError) and err.response is not None:
+        return err.response.status_code in (401, 498)
+    message = str(err)
+    return "ERROR001" in message and ("401" in message or "498" in message)
 
 
 class SolarEdgeDualAPI:
@@ -91,6 +110,11 @@ class SolarEdgeDualAPI:
         # Otherwise return the first meaningful non-zero status, falling back to 0.
         return code_one or code_legacy or 0
 
+    def verify_authentication(self) -> None:
+        """Raise SolarEdgeAuthError when stored credentials are rejected (HTTP 401)."""
+        if self.check_login() == 401:
+            raise SolarEdgeAuthError("Invalid or expired SolarEdge credentials")
+
     def requestListOfAllPanels(self) -> Any:
         """Prefer One for layout (unless use_solaredge_one is False); fall back to legacy on failure."""
         if not self._use_solaredge_one:
@@ -128,9 +152,11 @@ class SolarEdgeDualAPI:
 
         self._obtained_from = OBTAINED_FROM_ONE
         data_list = None
+        one_error: BaseException | None = None
         try:
             data_list = self._one.requestAllData()
         except Exception as e:  # pylint: disable=broad-except
+            one_error = e
             _LOGGER.warning(
                 "SolarEdge Dual API: One requestAllData failed (%s), falling back to legacy",
                 e,
@@ -160,6 +186,8 @@ class SolarEdgeDualAPI:
             return data_list or []
         except Exception as e:  # pylint: disable=broad-except
             _LOGGER.error("SolarEdge Dual API: Legacy requestAllData also failed: %s", e)
+            if _is_auth_related_error(e) or (one_error is not None and _is_auth_related_error(one_error)):
+                self.verify_authentication()
             # Return One result if we have it (even if invalid) so UI doesn't break
             if data_list is not None:
                 self._last_used_api = "one"

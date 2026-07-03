@@ -2,10 +2,15 @@
   "config": {
     "title": "SolarEdge Optimizers Data",
     "title_entry": "SolarEdge Site %(siteid)s",
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
+    },
     "abort": {
       "already_configured": "Device is already configured",
       "reauth_successful": "Re-authentication successful",
-      "reauth_entry_missing": "Re-authentication could not find the config entry."
+      "reauth_entry_missing": "Re-authentication could not find the config entry.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Failed to connect",
@@ -26,6 +31,14 @@
       "reauth_confirm": {
         "title": "Re-authenticate SolarEdge Optimizers",
         "description": "Credentials for {title} are no longer valid. Enter your SolarEdge username and password.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
         "data": {
           "username": "Username",
           "password": "Password"

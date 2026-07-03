@@ -8,8 +8,8 @@ Each `translations/<code>.json` file has four top-level sections. All four must 
 
 | Section   | Purpose |
 |-----------|---------|
-| **config** | Add-integration form (labels, errors, abort messages, re-auth step), config entry title, integration title. |
-| **options** | Reconfigure (Configure) dialog: title, description, Entity ID prefix, Include Site ID in Entity ID, and Use SolarEdge One labels. |
+| **config** | Add-integration form (labels, errors, abort messages, re-auth step, Update credentials step), config entry title, integration title. Menu label for credential update: `config.initiate_flow.reconfigure`. |
+| **options** | Configure dialog: title, description, Entity ID prefix, Include Site ID in Entity ID, and Use SolarEdge One labels. |
 | **entity** | Sensor entity names (Power, Voltage, Obtained from, Status, Azimuth, Tilt, etc.) under `entity.sensor.<key>.name`; attribute labels (e.g. Panel type) under `entity.sensor.state_attributes.<key>.name`. **Per-optimizer** sensors use the same short `entity.sensor.<key>.name` as the measurement type (e.g. “Azimuth” only); the optimizer device name provides site/string/optimizer context. |
 | **device** | Device names (Site, Inverter, String, Optimizer) with placeholders `{site_id}` or `{display_name}` under `device.<key>.name`. |
 
@@ -21,14 +21,15 @@ The integration sets `translation_domain` to the integration domain so the front
 
 - **Form labels**: Site id, Username, Password, Entity ID prefix (optional), Include Site ID in Entity ID, Use SolarEdge One — from `config.step.user.data.*` in each `translations/<code>.json`.
 - **Errors**: "Failed to connect", "Invalid authentication", "Unexpected error" — from `config.error.*`.
-- **Abort**: "Device is already configured" — from `config.abort.already_configured`. Re-auth flow: `config.abort.reauth_successful`, `config.abort.reauth_entry_missing`.
+- **Abort**: "Device is already configured" — from `config.abort.already_configured`. Re-auth flow: `config.abort.reauth_successful`, `config.abort.reauth_entry_missing`. Reconfigure credential update (v2.4.20+): `config.abort.reconfigure_successful`, `config.abort.reconfigure_entry_missing`.
 - **Re-authentication step**: When credentials expire, the re-auth form (title, description, username, password) — from `config.step.reauth_confirm`.
+- **Update credentials (Reconfigure)** (v2.4.20+): Proactive username/password update from the integration menu — from `config.step.reconfigure` (form title/description) with menu label from `config.initiate_flow.reconfigure` (**Update credentials**). Distinct from the **Configure** cog / options flow (`options.step.init.*`), which does not include credentials.
 - **Config entry title**: The name of the integration instance in Devices & services (e.g. "SolarEdge Site 12345") — from `config.title_entry` (supports `%(siteid)s`). On setup, entries that still contain the literal template are auto-repaired via `format_config_entry_title()` / `_migrate_config_entry_title()` (v2.4.18+).
 - **Integration title**: The name shown when adding the integration — from `config.title`.
 
-### Options flow (Reconfigure / Configure dialog)
+### Options flow (Configure dialog)
 
-- **Form labels and description**: The Configure dialog (options flow) uses the **options** section: `options.step.init.title`, `options.step.init.description`, `options.step.init.data.entity_id_prefix`, `options.step.init.data.include_site_id_in_entity_id`, `options.step.init.data.use_solaredge_one`. The description shows the current prefix (`{current_entity_id_prefix}`); leave the Entity ID prefix field empty to remove the prefix. The integration sets `translation_domain` so the frontend loads these strings from the integration's translation files.
+- **Form labels and description**: The Configure dialog (options flow) uses the **options** section: `options.step.init.title`, `options.step.init.description`, `options.step.init.data.entity_id_prefix`, `options.step.init.data.include_site_id_in_entity_id`, `options.step.init.data.use_solaredge_one`. The description shows the current prefix (`{current_entity_id_prefix}`); leave the Entity ID prefix field empty to remove the prefix. The integration sets `translation_domain` so the frontend loads these strings from the integration's translation files. **Username and password are not in this dialog** — use **Update credentials** from the integration menu (⋮) (v2.4.20+) for credential updates.
 
 ### Entities and devices
 
@@ -44,7 +45,7 @@ The integration sets `translation_domain` to the integration domain so the front
 
 Sensor **translation keys** are unchanged when aggregation rules change (e.g. last measurement rollups, lifetime portal guards): entity names still come from `entity.sensor.*.name` in each locale file. New behaviour is documented in English in the wiki and README.
 
-Behavioural changes such as legacy-only mode (`use_solaredge_one=False`), the legacy CSRF bootstrap fallback (`/solaredge-web/p/logout/slo` then `/solaredge-web/p/login`), explicit legacy HTTP `498` diagnostics, device-registry linking via identifiers-only `device_info` (v2.4.17+), batched sensor registration at startup (`ENTITY_ADD_BATCH_SIZE`, v2.4.18+), optimizer device pre-registration in the sensor platform with string-parent `via_device` aligned to coordinator suffix keys (`build_string_device_key_lookup`, v2.4.18+), config entry title self-repair when stored title still contains `%(siteid)s`, display-name suffix parsing (e.g. portal names `1.1.1a`), coordinator listener notify after batched entity add, optimizer `async_restore_last_state()` after HA recorder restore, inactive/replaced optimizer empty-measurement logging at debug and active-only lightweight polling (v2.4.19+), or consolidated dual API close logging on unload do **not** require new translation keys because they change runtime behaviour and logging, not user-facing labels. Device names in **Settings → Devices** still use the translated `device.*` keys from coordinator and sensor registration (optimizer names are built from site/string/optimizer position, not separate `device.*` keys for each suffix).
+Behavioural changes such as legacy-only mode (`use_solaredge_one=False`), the legacy CSRF bootstrap fallback (`/solaredge-web/p/logout/slo` then `/solaredge-web/p/login`), explicit legacy HTTP `498` diagnostics, device-registry linking via identifiers-only `device_info` (v2.4.17+), batched sensor registration at startup (`ENTITY_ADD_BATCH_SIZE`, v2.4.18+), optimizer device pre-registration in the sensor platform with string-parent `via_device` aligned to coordinator suffix keys (`build_string_device_key_lookup`, v2.4.18+), config entry title self-repair when stored title still contains `%(siteid)s`, display-name suffix parsing (e.g. portal names `1.1.1a`), coordinator listener notify after batched entity add, optimizer `async_restore_last_state()` after HA recorder restore, inactive/replaced optimizer empty-measurement logging at debug and active-only lightweight polling (v2.4.19+), consolidated dual API close logging on unload, or runtime `ConfigEntryAuthFailed` during polling (v2.4.20+) do **not** require new translation keys because they change runtime behaviour and logging, not user-facing labels — except v2.4.20 **Reconfigure**, which adds `config.step.reconfigure` and `config.abort.reconfigure_*` keys (present in `strings.json`, `en.json`, and all locale files). Device names in **Settings → Devices** still use the translated `device.*` keys from coordinator and sensor registration (optimizer names are built from site/string/optimizer position, not separate `device.*` keys for each suffix).
 
 ## What is not translated (by design)
 
@@ -68,4 +69,4 @@ For the full table with language names (e.g. Čeština, Deutsch), see the [Trans
 ## Validation
 
 - Use [Hassfest](https://developers.home-assistant.io/blog/2020/04/16/hassfest) to validate translation files.
-- Test the config flow (add integration, re-auth if applicable), the Configure (options) dialog, and entity/device names in the target language in the Home Assistant UI.
+- Test the config flow (add integration, re-auth if applicable, **Reconfigure** credential update (v2.4.20+)), the Configure (options) dialog, and entity/device names in the target language in the Home Assistant UI.

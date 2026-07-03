@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "Zařízení je již nakonfigurováno",
       "reauth_successful": "Reautentizace proběhla úspěšně",
-      "reauth_entry_missing": "Položku konfigurace pro reautentizaci se nepodařilo najít."
+      "reauth_entry_missing": "Položku konfigurace pro reautentizaci se nepodařilo najít.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Nepodařilo se připojit",
@@ -30,7 +32,18 @@
           "username": "Uživatelské jméno",
           "password": "Heslo"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {

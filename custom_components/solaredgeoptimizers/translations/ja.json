@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "デバイスは既に設定されています",
       "reauth_successful": "再認証が完了しました",
-      "reauth_entry_missing": "再認証用の設定エントリが見つかりませんでした。"
+      "reauth_entry_missing": "再認証用の設定エントリが見つかりませんでした。",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "接続に失敗しました",
@@ -30,7 +32,18 @@
           "username": "ユーザー名",
           "password": "パスワード"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {

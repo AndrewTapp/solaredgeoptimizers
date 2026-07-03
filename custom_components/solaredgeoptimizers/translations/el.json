@@ -5,7 +5,9 @@
     "abort": {
       "already_configured": "Η συσκευή είναι ήδη ρυθμισμένη",
       "reauth_successful": "Η επαναεπεξεργασία πιστοποίησης ολοκληρώθηκε",
-      "reauth_entry_missing": "Δεν βρέθηκε η καταχώρηση ρυθμίσεων για επαναεπεξεργασία."
+      "reauth_entry_missing": "Δεν βρέθηκε η καταχώρηση ρυθμίσεων για επαναεπεξεργασία.",
+      "reconfigure_successful": "Credentials updated successfully",
+      "reconfigure_entry_missing": "Reconfigure could not find the config entry."
     },
     "error": {
       "cannot_connect": "Αποτυχία σύνδεσης",
@@ -30,7 +32,18 @@
           "username": "Όνομα χρήστη",
           "password": "Κωδικός πρόσβασης"
         }
+      },
+      "reconfigure": {
+        "title": "Update SolarEdge credentials",
+        "description": "Enter your SolarEdge username and password for {title}. Use Configure for entity naming and API options only.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
       }
+    },
+    "initiate_flow": {
+      "reconfigure": "Update credentials"
     }
   },
   "options": {

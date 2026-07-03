@@ -249,9 +249,33 @@ If you already see duplicate sensors or devices from an earlier swap, remove the
 
 You can add the integration once per **Site ID**. If you try to add the same site again, Home Assistant will show "Device is already configured". To use multiple sites, add a separate integration entry for each site (each with its own Site ID).
 
-## Re-authentication
+## Re-authentication and updating credentials
 
-If your SolarEdge credentials expire or become invalid (for example after a password change), the integration will detect this (e.g. when the API returns 401) and Home Assistant will prompt you to **re-authenticate**. You will see a form to enter your current username and password; after saving, the integration reloads with the new credentials. Only your username and password are updated; any settings you changed in **Configure** (e.g. Entity ID prefix, Include Site ID in Entity ID, Use SolarEdge One) are kept. The re-authentication step is translated like the rest of the config flow (all supported languages).
+You do **not** need to delete and re-add the integration to change your SolarEdge username or password.
+
+### Update credentials proactively
+
+1. Go to **Settings** → **Devices & services** → **SolarEdge Optimizers** → your site.
+2. Open the integration menu (three dots) and choose **Update credentials**.
+3. Enter your current **Username** and **Password**, then submit.
+
+Your **Configure** options (Entity ID prefix, Include Site ID in Entity ID, Use SolarEdge One) are unchanged. Only credentials in the config entry are updated, then the integration reloads.
+
+**Configure** is for naming and API options only — it does not include username or password fields.
+
+### When credentials expire or become invalid
+
+If your SolarEdge credentials expire or become invalid (for example after a password change), the integration detects auth failures during setup, reload, or polling (for example HTTP 401 or repeated legacy session errors). Home Assistant then prompts you to **Re-authenticate** on the integration card.
+
+You will see a form to enter your current username and password; after saving, the integration reloads with the new credentials. Only your username and password are updated; any settings you changed in **Configure** are kept.
+
+If sensors go stale after a password change but you do not see a re-auth prompt, try **Update credentials** (above) or **Reload** the integration from the integration menu — that re-runs login validation and can surface the re-auth flow.
+
+The re-authentication and reconfigure steps are translated like the rest of the config flow (all supported languages).
+
+### Delete/re-add is not required for credential changes
+
+Removing the integration is still useful for registry cleanup (for example duplicate entities after a hardware swap), but it should not be necessary just to update login details.
 
 ## Reliability and Errors
 
@@ -287,7 +311,7 @@ Until this integration is part of Home Assistant Core, installing via HACS is re
 
 The **Obtained from** sensor on the site device shows "One API" or "Legacy API".
 
-**Reconfigure (optional):** After setup, you can change **Entity ID prefix**, **Include Site ID in Entity ID**, or **Use SolarEdge One** without deleting the integration: go to **Settings** → **Devices & services** → **SolarEdge Optimizers** → your site → **Configure**. The dialog shows Entity ID prefix (description shows current prefix; leave empty to remove it), Include Site ID in Entity ID, and Use SolarEdge One. Saving will reload the integration. The integration only rebuilds entities when entity-ID shaping actually changed (prefix or Include Site ID), so normal restarts/reloads do not churn the entity registry. **Note:** Changing Entity ID prefix or Include Site ID can change entity IDs and unique_ids, so existing entity history and statistics may be lost; consider backing up or exporting data first.
+**Configure (optional):** After setup, you can change **Entity ID prefix**, **Include Site ID in Entity ID**, or **Use SolarEdge One** without deleting the integration: go to **Settings** → **Devices & services** → **SolarEdge Optimizers** → your site → **Configure**. The dialog shows Entity ID prefix (description shows current prefix; leave empty to remove it), Include Site ID in Entity ID, and Use SolarEdge One. Saving will reload the integration. The integration only rebuilds entities when entity-ID shaping actually changed (prefix or Include Site ID), so normal restarts/reloads do not churn the entity registry. **Note:** Changing Entity ID prefix or Include Site ID can change entity IDs and unique_ids, so existing entity history and statistics may be lost; consider backing up or exporting data first. To update **username or password**, use **Update credentials** from the integration menu (three dots), not **Configure** — see [Re-authentication and updating credentials](#re-authentication-and-updating-credentials) above.
 
 On first load, the integration fetches all optimizer data once in the coordinator; the sensor platform then reuses that data when creating entities, so it does not send duplicate API calls for each optimizer. Optimizer devices are created in the registry before optimizer sensors are added. With many optimizers, entities are registered in batches of `ENTITY_ADD_BATCH_SIZE` (default 50) with short yields to the event loop between batches, so Home Assistant can process registry and state events without flooding the websocket bus. After the last batch, the coordinator notifies all entity listeners so states can update immediately. `update_before_add` is not used at registration time because the coordinator has already completed its first refresh. The initial fetch and batched device/entity creation may still take a short while on large sites.
 
@@ -302,7 +326,7 @@ logger:
     solaredgeoptimizers: debug
 ```
 
-Restart Home Assistant for the change to take effect. Debug logging covers the full lifecycle: config flow (including `format_config_entry_title` and title self-repair at setup); setup and unload (including dual `api.close()` with per-backend DEBUG detail); coordinator (device hierarchy, `build_optimizer_tasks` position indexing with suffixes such as `1.1.1a`, **active-only** lightweight check sampling, adaptive polling, aggregation, portal lifetime overrides); sensor setup (optimizer device registration with `build_string_device_key_lookup`, batched `async_add_entities` with per-batch range, post-batch `coordinator.async_update_listeners()` — sync, not awaited — `_lookup_optimizer_data_item`, `async_restore_last_state` on optimizer sensors, inactive skipping, short translated names); and API traffic (SolarEdge One, legacy including CSRF/498 diagnostics and layout-status-aware measurement parsing, dual API fallback and `close()`). From **v2.4.19**, empty measurements for inactive/replaced optimizers log at **debug** in `_normalize_measurements_dict`. `Info` logging keeps high-value summaries (batched registration totals, duplicate suffix counts, optimizer device registration count, config entry title repair, **one** dual API close summary on unload/removal) and avoids credentials or per-refresh cache chatter. Debug calls use `isEnabledFor(logging.DEBUG)` (destructor breadcrumbs in `__del__` are the only exceptions). Prefixes: `SolarEdge Optimizers`, `SolarEdge Optimizers coordinator`, `SolarEdge Optimizers sensor`, `SolarEdge One`, `SolarEdge Optimizers (legacy)`, `SolarEdge Dual API`. Turn logging back to `info` when you are done.
+Restart Home Assistant for the change to take effect. Debug logging covers the full lifecycle: config flow (including `format_config_entry_title`, title self-repair at setup, reauth, **Reconfigure** credential forms (v2.4.20+), and Configure/options); setup and unload (including dual `api.close()` with per-backend DEBUG detail); coordinator (device hierarchy, `build_optimizer_tasks` position indexing with suffixes such as `1.1.1a`, **active-only** lightweight check sampling, auth-like failure handling and login re-check (v2.4.20+), adaptive polling, aggregation, portal lifetime overrides); sensor setup (optimizer device registration with `build_string_device_key_lookup`, batched `async_add_entities` with per-batch range, post-batch `coordinator.async_update_listeners()` — sync, not awaited — `_lookup_optimizer_data_item`, `async_restore_last_state` on optimizer sensors, inactive skipping, short translated names); and API traffic (SolarEdge One, legacy including CSRF/498 diagnostics and layout-status-aware measurement parsing, dual API fallback, verify_authentication on auth-like total failure (v2.4.20+), and `close()`). From **v2.4.19**, empty measurements for inactive/replaced optimizers log at **debug** in `_normalize_measurements_dict`. `Info` logging keeps high-value summaries (batched registration totals, duplicate suffix counts, optimizer device registration count, config entry title repair, credential updates via reauth/Reconfigure (v2.4.20+), **one** dual API close summary on unload/removal) and avoids credentials or per-refresh cache chatter. Debug calls use `isEnabledFor(logging.DEBUG)` (destructor breadcrumbs in `__del__` are the only exceptions). Prefixes: `SolarEdge Optimizers`, `SolarEdge Optimizers coordinator`, `SolarEdge Optimizers sensor`, `SolarEdge One`, `SolarEdge Optimizers (legacy)`, `SolarEdge Dual API`. Turn logging back to `info` when you are done.
 
 **Deploy note:** Copy the **entire** `custom_components/solaredgeoptimizers/` folder to Home Assistant together — mixed versions (e.g. new `const.py` with old `sensor.py`) cause setup errors. A valid `sensor.py` is ~1,800 lines and defines `async_setup_entry`.
 
