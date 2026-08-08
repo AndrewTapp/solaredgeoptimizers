@@ -4,6 +4,7 @@
 [![CodeFactor Grade](https://img.shields.io/codefactor/grade/github/AndrewTapp/solaredgeoptimizers.svg)](https://www.codefactor.io/repository/github/AndrewTapp/solaredgeoptimizers)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.me/AndrewJTapp)
 [![Donate](https://img.shields.io/badge/Donate-BuyMeACoffee-green.svg)](https://buymeacoffee.com/andrewtapp)
+[![Downloads](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FAndrewTapp%2Fsolaredgeoptimizers%2Fgh-pages%2Fgh-dl%2Fdownloads.json&query=%24.stats.total&label=Downloads&color=blue)](https://github.com/AndrewTapp/solaredgeoptimizers/releases)
 
 This integration brings your SolarEdge optimizer data from the SolarEdge monitoring
 portal into Home Assistant. You can see current production, voltage, power,
