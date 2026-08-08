@@ -10,8 +10,9 @@ Individual Optimizer Sensors:
 
 Aggregated Sensors (String, Inverter, Site levels):
 - Average Current, Total Power, Average Voltage
-- Lifetime Energy (summed from children; string portal override aligned by layout relativeOrder,
-  skipped if portal Wh exceeds optimizer sum by STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO)
+- Lifetime Energy (summed from children; string/inverter portal override via shared helper,
+  skipped if aggregated Wh is 0 or portal Wh exceeds aggregate by
+  STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO; site prefers dashboard production)
 - Last Measurement (string: latest among active optimizers; inverter: among active strings;
   site: among active inverters; unknown/None if no qualifying timestamp—no fake “now”)
 - Child Count (optimizers per string, strings per inverter, inverters per site)
@@ -36,8 +37,10 @@ Key features:
 - Startup registration in tier order (site → inverter → string → optimizer) using batched
   ``async_add_entities`` (``ENTITY_ADD_BATCH_SIZE``, ``update_before_add=False``); then
   ``coordinator.async_update_listeners()`` (sync) so states populate without waiting for poll
-- ``async_restore_last_state()`` on optimizer sensors reapplies coordinator data after HA
-  restores persisted state (avoids **unknown** right after restart)
+- Optimizer sensors reapply coordinator data in ``async_added_to_hass`` when the coordinator
+  already has data (avoids **unknown** right after restart / batched registration)
+- Missing-optimizer backfill at setup is concurrency-capped (``MAX_PARALLEL_WORKERS``) and
+  prefers One ``requestSystemDataBatch`` when available
 - Inactive devices have certain sensors excluded (power, current, voltage, etc.)
 - Duplicate optimizer/string/inverter positions get letter suffixes (a, b, c...)
 - Supports optional entity ID prefix and site ID inclusion in entity names
@@ -99,6 +102,7 @@ from .const import (
     string_position_key_from_display_name,
     resolve_duplicate_indices,
     ENTITY_ADD_BATCH_SIZE,
+    MAX_PARALLEL_WORKERS,
     status_display_value,
     status_icon,
     SENSOR_TYPE_INACTIVE_OPTIMIZER_EXCLUDE,
@@ -254,7 +258,11 @@ def _should_rebuild_entities_this_setup(hass: HomeAssistant, entry: ConfigEntry)
 
 
 async def _fetch_missing_optimizer_data(hass, coordinator, optimizer_tasks, coordinator_data):
-    """Fetch optimizer data from API for optimizers not already in coordinator cache. Returns dict task_idx -> result."""
+    """Fetch optimizer data from API for optimizers not already in coordinator cache.
+
+    Returns dict task_idx -> result. Concurrency is capped at MAX_PARALLEL_WORKERS.
+    Prefers One requestSystemDataBatch when available (chunked), else per-optimizer fetches.
+    """
     optimizers_to_fetch = [
         (task_idx, opt)
         for task_idx, (opt, *_) in enumerate(optimizer_tasks)
@@ -263,21 +271,68 @@ async def _fetch_missing_optimizer_data(hass, coordinator, optimizer_tasks, coor
     results_by_task_idx = {}
     if not optimizers_to_fetch:
         return results_by_task_idx
+    _LOGGER.info(
+        "SolarEdge Optimizers sensor: Backfilling %d missing optimizer(s) "
+        "(batch API when available, else capped at %d concurrent fetches)",
+        len(optimizers_to_fetch),
+        MAX_PARALLEL_WORKERS,
+    )
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug(
             "SolarEdge Optimizers sensor: Fetching data for %d optimizers not present in coordinator cache",
             len(optimizers_to_fetch),
         )
+
+    batch_fn = getattr(coordinator.my_api, "requestSystemDataBatch", None)
+    if batch_fn is not None:
+        # Chunk batch calls to avoid very large portal payloads.
+        chunk_size = max(1, MAX_PARALLEL_WORKERS * 2)
+        for start in range(0, len(optimizers_to_fetch), chunk_size):
+            chunk = optimizers_to_fetch[start : start + chunk_size]
+            ids = [opt.optimizerId for _task_idx, opt in chunk]
+            try:
+                batch_results = await hass.async_add_executor_job(batch_fn, ids)
+            except Exception as e:  # pylint: disable=broad-except
+                _LOGGER.warning(
+                    "SolarEdge Optimizers sensor: Batch fetch of %d missing optimizers failed (%s); "
+                    "falling back to capped per-optimizer fetches for this chunk",
+                    len(ids),
+                    e,
+                )
+                batch_results = None
+            if batch_results is not None:
+                for (task_idx, _opt), result in zip(chunk, batch_results):
+                    results_by_task_idx[task_idx] = result
+                continue
+            # Fall through to per-optimizer for this chunk only.
+            await _fetch_missing_optimizer_data_capped(hass, coordinator, chunk, results_by_task_idx)
+        return results_by_task_idx
+
+    await _fetch_missing_optimizer_data_capped(
+        hass, coordinator, optimizers_to_fetch, results_by_task_idx
+    )
+    return results_by_task_idx
+
+
+async def _fetch_missing_optimizer_data_capped(hass, coordinator, optimizers_to_fetch, results_by_task_idx):
+    """Fill results_by_task_idx via per-optimizer requestSystemData with a concurrency semaphore."""
+    sem = asyncio.Semaphore(MAX_PARALLEL_WORKERS)
+
+    async def _one(task_idx, opt):
+        async with sem:
+            return task_idx, await hass.async_add_executor_job(
+                coordinator.my_api.requestSystemData, opt.optimizerId
+            )
+
     fetch_results = await asyncio.gather(
-        *[
-            hass.async_add_executor_job(coordinator.my_api.requestSystemData, opt.optimizerId)
-            for _task_idx, opt in optimizers_to_fetch
-        ],
+        *[_one(task_idx, opt) for task_idx, opt in optimizers_to_fetch],
         return_exceptions=True,
     )
     for (task_idx, _opt), result in zip(optimizers_to_fetch, fetch_results):
-        results_by_task_idx[task_idx] = result
-    return results_by_task_idx
+        if isinstance(result, Exception):
+            results_by_task_idx[task_idx] = result
+        else:
+            results_by_task_idx[result[0]] = result[1]
 
 
 def _get_optimizer_info_for_task(task_idx, optimizer_tasks, coordinator_data, results_by_task_idx):
@@ -1497,7 +1552,7 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         self._set_optimizer_units_and_state_class()
 
     async def async_added_to_hass(self) -> None:
-        """Set short translated friendly name (sensor type only); device shows optimizer position."""
+        """Set short translated friendly name; reapply coordinator data when already loaded."""
         await super().async_added_to_hass()
         translations = await async_get_translations(
             self.hass, self.hass.config.language, "entity", [DOMAIN]
@@ -1515,23 +1570,19 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
                 slug,
                 getattr(self, "internal_integration_suggested_object_id", None),
             )
-        self.async_write_ha_state()
-
-    async def async_restore_last_state(self) -> None:
-        """Restore persisted state, then reapply coordinator data when already loaded.
-
-        After restart HA may leave optimizer sensors as unknown until the next poll even
-        though async_config_entry_first_refresh() already populated coordinator.data.
-        """
-        await super().async_restore_last_state()
+        # Reapply coordinator data after entity is added so sensors are not stuck at unknown
+        # until the next poll (batched registration + HA restart). Not RestoreEntity — the
+        # coordinator is authoritative when it already has data.
         if self.coordinator is not None and self.coordinator.data is not None:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge Optimizers sensor: Restored state for %s (%s); reapplying coordinator data",
+                    "SolarEdge Optimizers sensor: Reapplying coordinator data for %s (%s) in async_added_to_hass",
                     self._panelobject.panel_id,
                     self._sensor_type,
                 )
             self._handle_coordinator_update()
+        else:
+            self.async_write_ha_state()
 
     def _set_optimizer_identity(
         self, entry: ConfigEntry, panel: SolarEdgeOptimizerData, sensortype,
@@ -1646,12 +1697,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         return timetocheck, ts
 
     def _normalize_lifetime_energy(self, lifetime_energy):
-        """Return lifetime_energy as float rounded to 3 decimals, or 0.0 if None."""
-        if lifetime_energy is None:
+        """Return lifetime_energy as float rounded to 3 decimals, or 0.0 if None/empty/invalid."""
+        if lifetime_energy is None or lifetime_energy == "":
             return 0.0
         if isinstance(lifetime_energy, float):
             return round(lifetime_energy, 3)
-        return round(float(lifetime_energy), 3)
+        try:
+            return round(float(lifetime_energy), 3)
+        except (TypeError, ValueError):
+            return 0.0
 
     def _set_energy_value_from_item(self, item) -> None:
         """Set _attr_native_value from item.lifetime_energy (monotonic: never decrease)."""
@@ -1659,7 +1713,15 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
         if self._attr_native_value is None:
             self._attr_native_value = new_value
             return
-        prev = float(self._attr_native_value) if not isinstance(self._attr_native_value, float) else self._attr_native_value
+        try:
+            prev = (
+                float(self._attr_native_value)
+                if not isinstance(self._attr_native_value, float)
+                else self._attr_native_value
+            )
+        except (TypeError, ValueError):
+            self._attr_native_value = new_value
+            return
         if new_value >= prev:
             self._attr_native_value = new_value
         elif _LOGGER.isEnabledFor(logging.DEBUG):
@@ -1699,7 +1761,14 @@ class SolarEdgeOptimizersSensor(CoordinatorEntity, SensorEntity):
     def _round_live_value(self, actual_value) -> float | int:
         """Round live value for power/voltage/opt_voltage; return as-is for current."""
         if self._sensor_type in (SENSOR_TYPE_POWER, SENSOR_TYPE_VOLTAGE, SENSOR_TYPE_OPT_VOLTAGE):
-            return round(float(actual_value), 2) if actual_value is not None else 0.0
+            if actual_value is None or actual_value == "":
+                return 0.0
+            try:
+                return round(float(actual_value), 2)
+            except (TypeError, ValueError):
+                return 0.0
+        if actual_value == "":
+            return 0
         return actual_value
 
     def _set_live_value_from_item(self, item, measurement_too_old: bool, ts: datetime, timetocheck) -> None:

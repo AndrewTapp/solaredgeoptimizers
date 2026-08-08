@@ -7,6 +7,7 @@ richer data and better performance compared to the legacy Monitoring API.
 Authentication:
 - Uses OAuth 2.0 with PKCE (Proof Key for Code Exchange) flow
 - Authenticates via login.solaredge.com, exchanges authorization code for access token
+- Stores refresh_token and prefers refresh_token grant before a full PKCE password login
 - Bearer token used for all /services/ API calls
 
 API Endpoints (monitoring.solaredge.com/services/...):
@@ -53,12 +54,25 @@ Key Features:
 - Azimuth and tilt extraction from optimizer module data (radians to degrees)
 - Inverter nodes include maxActivePower (API watts → stored as kW) from layout for inverter-level sensor
 - Panel cache (PANELS_CACHE_TTL_ONE), site info (SITE_INFO_CACHE_TTL), temperature (TEMPERATURE_CACHE_TTL), lifetime (LIFETIME_ENERGY_CACHE_TTL)
-- No persistent HTTP session for /services/ calls: `requests.get`/`post` use response context managers
-  so connections are released; OAuth uses a short-lived `Session()` inside `with` during token fetch only.
-- Parallel lifetime-energy fetches use `with ThreadPoolExecutor(...) as executor` so workers shut down cleanly.
-- `close()` clears OAuth tokens and sets `_closed` (idempotent); logs at **info** when log_summary=True (dual API passes False for a single unload INFO); call on integration unload/removal.
-- Inactive/replaced optimizers (v2.4.19+): layout status from site structure passed into SolarEdgeOptimizerData; empty live measurements for inactive units log at DEBUG only.
-- Lightweight checks use active optimizers only (coordinator); full refresh still includes inactive layout entries.
+- No persistent HTTP session for /services/ calls: `requests.get`/`post` use response
+  context managers so connections are released; on HTTP 401 the first response is closed
+  *before* token refresh/PKCE and a single retry (avoids holding sockets during login).
+- OAuth uses a short-lived `Session()` inside `with` for PKCE login and refresh_token grant;
+  `_token_lock` serializes token obtain/clear under ThreadPoolExecutor.
+- Parallel lifetime-energy fetches use `with ThreadPoolExecutor(...) as executor` so workers
+  shut down cleanly.
+- `close()` clears OAuth tokens under the lock and sets `_closed` (idempotent); logs at
+  **info** when log_summary=True (dual API passes False for a single unload INFO).
+  Subsequent token obtain raises if the client is closed. Pair with dual API ``close()``
+  and HA unload ``async_shutdown`` so in-flight coordinator work finishes first.
+- DEBUG never logs OAuth authorization codes (URLs redacted via `_redact_url_for_log`);
+  204 Location hosts are allowlisted to `*.solaredge.com`.
+- Inactive/replaced optimizers (v2.4.19+): layout status from site structure passed into
+  SolarEdgeOptimizerData; empty live measurements for inactive units log at DEBUG only.
+- Lightweight checks use active optimizers only (coordinator); full refresh still includes
+  inactive layout entries.
+- v2.4.21+: no extra PyPI packages in ``manifest.json`` (``requirements: []``); HA provides
+  ``requests`` / ``pytz``. Legacy fallback JSON parsing is stdlib-only (see legacy client).
 """
 import math
 import base64
@@ -67,11 +81,12 @@ import json
 import logging
 import os
 import secrets
+import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import requests
 from requests.sessions import Session
@@ -107,6 +122,16 @@ BASE_URL = BASE_URL_MONITORING
 MFE_AUTH_URL = f"{BASE_URL_MONITORING}{MFE_AUTH_PATH}"
 MFE_AUTH_CALLBACK = f"{BASE_URL_MONITORING}{MFE_AUTH_CALLBACK_PATH}"
 TOKEN_URL = f"{LOGIN_BASE}{TOKEN_PATH}"
+
+
+def _redact_url_for_log(url: str) -> str:
+    """Strip query/fragment (may contain OAuth authorization codes) for safe DEBUG logging."""
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if not parsed.query and not parsed.fragment:
+        return url
+    return urlunparse(parsed._replace(query="***", fragment=""))
 
 
 def _pkce_verifier_and_challenge():
@@ -186,14 +211,34 @@ def _oauth_post_credentials_and_follow(
     }
     with session.post(post_url, data=post_body, headers=post_headers, timeout=API_TIMEOUT_SHORT, allow_redirects=True) as r:
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: POST login -> %s, URL: %s", r.status_code, r.url)
+            _LOGGER.debug(
+                "SolarEdge One: POST login -> %s, URL: %s",
+                r.status_code,
+                _redact_url_for_log(r.url),
+            )
         if r.status_code >= 400 and _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: login POST %s response: %s", r.status_code, (r.text or "")[:500])
+            # Avoid logging response bodies (may echo form fields); status is enough.
+            _LOGGER.debug("SolarEdge One: login POST %s (body omitted)", r.status_code)
         final_url = r.url
         if r.status_code == 204 and "Location" in r.headers:
             callback_url = r.headers["Location"]
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: 204 response, following Location: %s", callback_url)
+                _LOGGER.debug(
+                    "SolarEdge One: 204 response, following Location: %s",
+                    _redact_url_for_log(callback_url),
+                )
+            # Only follow redirects back to SolarEdge monitoring hosts (defense in depth).
+            parsed_loc = urlparse(callback_url)
+            if parsed_loc.scheme not in ("https",) or not (
+                parsed_loc.netloc.endswith("solaredge.com")
+                or parsed_loc.netloc == "monitoring.solaredge.com"
+                or parsed_loc.netloc == "login.solaredge.com"
+            ):
+                _LOGGER.warning(
+                    "SolarEdge One: refusing to follow OAuth Location to unexpected host: %s",
+                    parsed_loc.netloc or "(empty)",
+                )
+                raise requests.RequestException("OAuth redirect host not allowed")
             with session.get(callback_url, timeout=API_TIMEOUT_SHORT, allow_redirects=True) as r2:
                 final_url = r2.url
     return final_url
@@ -203,7 +248,10 @@ def _oauth_extract_code_from_callback(final_url: str) -> str:
     """Extract authorization code from callback URL. Raises if missing."""
     if MFE_AUTH_CALLBACK not in final_url:
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: did not reach callback (final URL: %s)", final_url)
+            _LOGGER.debug(
+                "SolarEdge One: did not reach callback (final URL: %s)",
+                _redact_url_for_log(final_url),
+            )
         raise requests.RequestException("OAuth callback failed")
     parsed_cb = urlparse(final_url)
     q = parse_qs(parsed_cb.query)
@@ -245,6 +293,33 @@ def _oauth_exchange_code_for_tokens(
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug("SolarEdge One: OAuth login complete, access token obtained")
     return access_token, refresh_token
+
+
+def _oauth_refresh_access_token(session: Session, refresh_token: str) -> tuple[str, str | None]:
+    """Exchange refresh_token for a new access_token (and optionally a new refresh_token)."""
+    token_data = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": SOLAREDGE_ONE_CLIENT_ID,
+    }
+    token_headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "*/*",
+        "Origin": BASE_URL,
+        "Referer": f"{BASE_URL}/",
+        "User-Agent": session.headers.get("User-Agent", USER_AGENT),
+    }
+    with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=API_TIMEOUT_SHORT) as r:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: POST oauth2/token (refresh) -> %s", r.status_code)
+        r.raise_for_status()
+        tok = r.json()
+    access_token = tok.get("access_token")
+    new_refresh = tok.get("refresh_token") or refresh_token
+    if not access_token:
+        _LOGGER.warning("SolarEdge One: refresh token response missing access_token")
+        raise requests.RequestException("No access_token in refresh token response")
+    return access_token, new_refresh
 
 
 def _perform_oauth_pkce_login(session: Session, username: str, password: str) -> tuple[str, str | None]:
@@ -593,25 +668,56 @@ class solaredge_one:
         self._temperature_cache_ttl = TEMPERATURE_CACHE_TTL
         self._access_token = None
         self._refresh_token = None
+        self._token_lock = threading.Lock()
         self._closed = False
 
     def _ensure_token(self) -> str:
-        """Obtain OAuth access_token via PKCE flow and token exchange. Returns access_token."""
-        if self._closed:
-            raise RuntimeError("SolarEdge One API client is closed")
-        if self._access_token:
+        """Obtain OAuth access_token via refresh grant or PKCE login. Returns access_token.
+
+        Thread-safe: concurrent workers share one login/refresh under ``_token_lock``.
+        """
+        with self._token_lock:
+            if self._closed:
+                raise RuntimeError("SolarEdge One API client is closed")
+            if self._access_token:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge One: Using cached access token")
+                return self._access_token
+
+            if self._refresh_token:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge One: Access token missing; trying refresh_token grant")
+                try:
+                    with Session() as session:
+                        session.headers["User-Agent"] = USER_AGENT
+                        self._access_token, self._refresh_token = _oauth_refresh_access_token(
+                            session, self._refresh_token
+                        )
+                    return self._access_token
+                except Exception as e:  # pylint: disable=broad-except
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug(
+                            "SolarEdge One: refresh_token grant failed (%s); falling back to PKCE login",
+                            e,
+                        )
+                    _LOGGER.info(
+                        "SolarEdge One: Access token refresh failed; re-authenticating via OAuth login"
+                    )
+                    self._refresh_token = None
+
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: Using cached access token")
+                _LOGGER.debug("SolarEdge One: No token; starting OAuth PKCE login flow")
+            with Session() as session:
+                session.headers["User-Agent"] = USER_AGENT
+                self._access_token, self._refresh_token = _perform_oauth_pkce_login(
+                    session, self.username, self.password
+                )
             return self._access_token
 
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: No token; starting OAuth PKCE login flow")
-        with Session() as session:
-            session.headers["User-Agent"] = USER_AGENT
-            self._access_token, self._refresh_token = _perform_oauth_pkce_login(
-                session, self.username, self.password
-            )
-        return self._access_token
+    def _clear_access_token(self) -> None:
+        """Clear cached access token under the token lock (keep refresh_token for next ensure)."""
+        with self._token_lock:
+            self._access_token = None
 
     def _request_headers(self):
         """Headers for /services/ requests; use Bearer token from OAuth."""
@@ -625,7 +731,39 @@ class solaredge_one:
             "Referer": f"{BASE_URL}/",
         }
 
+    def _handle_401_and_retry_json(self, method: str, path: str, url: str, *, params=None, json_data=None, timeout=API_TIMEOUT_LONG):
+        """After a closed 401 response: clear access token, refresh/login, retry once; return JSON."""
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge One: 401 on %s %s, clearing token and retrying once",
+                method,
+                path,
+            )
+        self._clear_access_token()
+        headers = self._request_headers()
+        if method == "GET":
+            kwargs = {"headers": headers, "timeout": timeout}
+            if params:
+                kwargs["params"] = params
+            with requests.get(url, **kwargs) as r2:
+                return self._finalize_json_response(method, path, r2, is_retry=True)
+        with requests.post(url, headers=headers, json=json_data, timeout=timeout) as r2:
+            return self._finalize_json_response(method, path, r2, is_retry=True)
+
+    def _finalize_json_response(self, method: str, path: str, response, *, is_retry: bool = False):
+        """Log status, clear tokens on retry 401, raise_for_status, return JSON."""
+        label = f"{method} {path}" + (" retry" if is_retry else "")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge One: %s -> %s", label, response.status_code)
+        if response.status_code == 401 and is_retry:
+            self._clear_access_token()
+            with self._token_lock:
+                self._refresh_token = None
+        response.raise_for_status()
+        return response.json()
+
     def _get(self, path: str, params: dict | None = None, timeout: int = API_TIMEOUT_LONG):
+        """GET JSON; on 401 close the first response before token refresh and one retry."""
         url = f"{BASE_URL}{path}"
         kwargs = {"headers": self._request_headers(), "timeout": timeout}
         if params:
@@ -633,15 +771,14 @@ class solaredge_one:
         with requests.get(url, **kwargs) as r:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge One: GET %s -> %s", path, r.status_code)
-            if r.status_code == 401:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: 401 on GET %s, clearing token for re-login", path)
-                self._access_token = None
+            if r.status_code != 401:
                 r.raise_for_status()
-            r.raise_for_status()
-            return r.json()
+                return r.json()
+        # First response closed before refresh/PKCE so sockets are not held during login.
+        return self._handle_401_and_retry_json("GET", path, url, params=params, timeout=timeout)
 
     def _post(self, path: str, json_data, timeout: int = API_TIMEOUT_LONG):
+        """POST JSON; on 401 close the first response before token refresh and one retry."""
         url = f"{BASE_URL}{path}"
         with requests.post(
             url,
@@ -651,13 +788,13 @@ class solaredge_one:
         ) as r:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge One: POST %s -> %s", path, r.status_code)
-            if r.status_code == 401:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: 401 on POST %s, clearing token for re-login", path)
-                self._access_token = None
+            if r.status_code != 401:
                 r.raise_for_status()
-            r.raise_for_status()
-            return r.json()
+                return r.json()
+        # First response closed before refresh/PKCE so sockets are not held during login.
+        return self._handle_401_and_retry_json(
+            "POST", path, url, json_data=json_data, timeout=timeout
+        )
 
     def get_site_info_cached(self) -> dict:
         """
@@ -1379,10 +1516,11 @@ class solaredge_one:
         if self._closed:
             return
         self._closed = True
-        if self._access_token and _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: close() clearing access token")
-        self._access_token = None
-        self._refresh_token = None
+        with self._token_lock:
+            if self._access_token and _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge One: close() clearing access token")
+            self._access_token = None
+            self._refresh_token = None
         if log_summary:
             _LOGGER.info("SolarEdge One: API client closed (OAuth tokens cleared)")
         elif _LOGGER.isEnabledFor(logging.DEBUG):

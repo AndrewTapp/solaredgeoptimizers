@@ -17,7 +17,9 @@ Key Responsibilities:
 
 Adaptive Polling Strategy:
 - Lightweight check: samples up to 5 random **active** optimizers (batch, One API) or 1 active
-  representative (single, legacy); inactive/replaced serials are excluded from the sample pool
+  representative (single, legacy); inactive/replaced serials are excluded from the sample pool;
+  the sample is **rotated each light check** so shaded/faulty panels do not stall detection
+- Auth-like failures during light check raise ``ConfigEntryAuthFailed`` (same as full refresh)
 - Full refresh: One API uses one batch POST for all optimizers; legacy uses parallel per-optimizer requests
 - Full refresh triggered when lightweight check detects newer lastmeasurement
 - Stale threshold: 1 hour (One API) or 2 hours (Legacy API)
@@ -28,9 +30,11 @@ Data Aggregation:
 - Last measurement: string = latest among active optimizers; inverter = latest among active strings;
   site = latest among active inverters (optimizer entity uses portal lastMeasurement, may be absent)
 - Child counts (optimizer/string/inverter count) count only active devices (status blank or "Active")
-- Lifetime energy: site uses portal dashboard production (Wh) when > aggregated; inverter/string use
+- Lifetime energy: site uses portal dashboard production (Wh) when available (no layout-sum
+  fallback when the dashboard helper exists); inverter/string use
   portal layout/energy by-inverter (Wh) when > aggregated (strings aligned by layout relativeOrder vs
-  portal keys; string override skipped if portal Wh exceeds optimizer sum by STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO).
+  portal keys; string/inverter override skipped if aggregated Wh is 0 or portal Wh exceeds
+  aggregate by STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO).
   Start date for portal calls = installation date.
 - Fetches site info (installation date, peak power) from layout/information/site for site-only sensors
 - Inverter aggregated data includes max_active_power (kW) from layout logical v2 when available (One API)
@@ -47,10 +51,14 @@ does not re-validate via_device during async_add_entities.
 Note: Per-optimizer entity IDs and friendly names are finalized in the sensor platform
 (SolarEdgeOptimizersSensor.async_added_to_hass); see sensor.py for has_entity_name and translations.
 
-Authentication (v2.4.20+):
-- During polling, auth-like failures (HTTP 401/498, SolarEdgeAuthError, legacy ERROR001)
-  trigger a login check; HTTP 401 raises ConfigEntryAuthFailed so Home Assistant shows re-auth.
-- Transient network/parse errors still raise UpdateFailed without forcing re-auth.
+Authentication (v2.4.20+ / v2.4.21+):
+- During polling (full refresh **and** light check), auth-like failures (HTTP 401/498,
+  SolarEdgeAuthError, legacy ERROR001) trigger a login check; HTTP 401 raises
+  ConfigEntryAuthFailed so Home Assistant shows re-auth.
+- Transient network/parse errors still raise UpdateFailed (or soft-fail light check) without
+  forcing re-auth.
+- Portal lifetime overrides for string and inverter share ``_apply_portal_lifetime_override``
+  (zero-agg skip + max-ratio guard). Site portal lifetime prefers dashboard production.
 """
 from __future__ import annotations
 
@@ -108,6 +116,48 @@ from .solaredgeoptimizers import (
 _LOGGER = logging.getLogger(__name__)
 
 _AUTH_FAILED_MESSAGE = "Invalid or expired credentials; please re-authenticate"
+
+
+def _apply_portal_lifetime_override(agg_kwh, portal_wh, *, label: str, keep_what: str):
+    """Apply portal Wh override to aggregated lifetime kWh when portal is higher and sane.
+
+    Skips when aggregated kWh is 0 (cannot validate) or portal Wh exceeds aggregate by
+    STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO. Returns original or overridden kWh.
+    """
+    if portal_wh is None or agg_kwh is None:
+        return agg_kwh
+    agg_wh = agg_kwh * 1000.0
+    if portal_wh <= agg_wh:
+        return agg_kwh
+    if agg_kwh <= 0:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers coordinator: Skipping %s portal lifetime "
+                "(aggregated Wh=0; cannot validate portal Wh=%s)",
+                label,
+                portal_wh,
+            )
+        return agg_kwh
+    if portal_wh > agg_wh * STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers coordinator: Skipping %s portal lifetime "
+                "(portal Wh=%s vs aggregated Wh=%s exceeds ratio %s); keeping %s",
+                label,
+                portal_wh,
+                agg_wh,
+                STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO,
+                keep_what,
+            )
+        return agg_kwh
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "SolarEdge Optimizers coordinator: %s using portal lifetime: %.3f kWh (aggregated=%.3f)",
+            label,
+            round(portal_wh / 1000.0, 3),
+            agg_kwh,
+        )
+    return round(portal_wh / 1000.0, 3)
 
 
 def _is_likely_auth_failure(err: BaseException) -> bool:
@@ -314,27 +364,44 @@ class MyCoordinator(DataUpdateCoordinator):
                 self._include_site_id_in_entity,
             )
 
-    def _pick_light_check_optimizers(self, site) -> None:
-        """Set _light_check_optimizer_ids (batch API) or _representative_optimizer_id for lightweight checks."""
-        if self._representative_optimizer_id is not None or self._light_check_optimizer_ids is not None:
+    def _pick_light_check_optimizers(self, site, *, rotate: bool = False) -> None:
+        """Set _light_check_optimizer_ids (batch API) or _representative_optimizer_id for lightweight checks.
+
+        When rotate=True, re-sample even if IDs are already set so long runs do not stick to
+        a fixed (possibly shaded/faulty) sample.
+        """
+        if (
+            not rotate
+            and (
+                self._representative_optimizer_id is not None
+                or self._light_check_optimizer_ids is not None
+            )
+        ):
             return
-        if self._has_batch_api:
-            active_ids = _get_active_optimizer_ids(site)
-            pool_ids = active_ids or _get_all_optimizer_ids(site)
-            ids = random.sample(pool_ids, min(LIGHT_CHECK_BATCH_SIZE, len(pool_ids))) if pool_ids else []
-            if ids:
-                self._light_check_optimizer_ids = ids
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers: Using %d active representative optimizers for lightweight checks (batch): %s",
-                        len(ids), ids,
-                    )
+        self._representative_optimizer_id = None
+        self._light_check_optimizer_ids = None
+        active_ids = _get_active_optimizer_ids(site)
+        pool_ids = active_ids or _get_all_optimizer_ids(site)
+        if self._has_batch_api and pool_ids:
+            ids = random.sample(pool_ids, min(LIGHT_CHECK_BATCH_SIZE, len(pool_ids)))
+            self._light_check_optimizer_ids = ids
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge Optimizers: Using %d active representative optimizers for lightweight checks (batch%s): %s",
+                    len(ids),
+                    ", rotated" if rotate else "",
+                    ids,
+                )
         if not self._light_check_optimizer_ids:
-            self._representative_optimizer_id = _get_first_active_optimizer_id(site)
+            if pool_ids:
+                self._representative_optimizer_id = random.choice(pool_ids)
+            else:
+                self._representative_optimizer_id = _get_first_active_optimizer_id(site)
             if _LOGGER.isEnabledFor(logging.DEBUG) and self._representative_optimizer_id:
                 _LOGGER.debug(
-                    "SolarEdge Optimizers: Using representative optimizer %s for lightweight checks",
+                    "SolarEdge Optimizers: Using representative optimizer %s for lightweight checks%s",
                     self._representative_optimizer_id,
+                    " (rotated)" if rotate else "",
                 )
 
     async def _fetch_inverter_models(self, site) -> None:
@@ -820,32 +887,12 @@ class MyCoordinator(DataUpdateCoordinator):
             portal_wh = portal_string_wh_by_id.get(string.stringId)
         if portal_wh is None:
             portal_wh = portal_strings.get(str_idx)  # Legacy fallback: 1-based list position
-        agg_wh = (string_lifetime_energy * 1000.0) if string_lifetime_energy is not None else 0.0
-        if portal_wh is not None and string_lifetime_energy is not None and portal_wh > agg_wh:
-            if (
-                string_lifetime_energy > 0
-                and portal_wh > agg_wh * STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO
-            ):
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers coordinator: Skipping string %s portal lifetime "
-                        "(portal Wh=%s vs aggregated Wh=%s exceeds ratio %s); keeping optimizer sum",
-                        string.stringId,
-                        portal_wh,
-                        agg_wh,
-                        STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO,
-                    )
-            else:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers coordinator: String %s (inv_serial=%s str_idx=%s) using portal lifetime: %.3f kWh (aggregated=%.3f)",
-                        string.stringId,
-                        inv_serial,
-                        str_idx,
-                        round(portal_wh / 1000.0, 3),
-                        string_lifetime_energy,
-                    )
-                string_lifetime_energy = round(portal_wh / 1000.0, 3)  # Wh -> kWh
+        string_lifetime_energy = _apply_portal_lifetime_override(
+            string_lifetime_energy,
+            portal_wh,
+            label=f"string {string.stringId}",
+            keep_what="optimizer sum",
+        )
         string_status_raw = getattr(string, "status", "") or ""
         string_is_active = is_status_active(string_status_raw)
 
@@ -1013,15 +1060,12 @@ class MyCoordinator(DataUpdateCoordinator):
         portal_by_inv = getattr(ctx, "portal_by_inverter", None) or {}
         portal_inv = portal_by_inv.get(inv_serial, {})
         portal_inv_wh = portal_inv.get("energy_wh")  # Portal value in Wh (e.g. 2.8453492E7)
-        if portal_inv_wh is not None and inverter_lifetime_energy is not None and portal_inv_wh > (inverter_lifetime_energy * 1000.0):
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers coordinator: Inverter %s using portal lifetime: %.3f kWh (aggregated=%.3f)",
-                    inv_serial or inverter.inverterId,
-                    round(portal_inv_wh / 1000.0, 3),
-                    inverter_lifetime_energy,
-                )
-            inverter_lifetime_energy = round(portal_inv_wh / 1000.0, 3)  # Wh -> kWh
+        inverter_lifetime_energy = _apply_portal_lifetime_override(
+            inverter_lifetime_energy,
+            portal_inv_wh,
+            label=f"inverter {inv_serial or inverter.inverterId}",
+            keep_what="string sum",
+        )
 
         inv_data = InverterAggData(
             current=inverter_current, power=inverter_power, voltage_sum=inverter_voltage_sum,
@@ -1228,13 +1272,18 @@ class MyCoordinator(DataUpdateCoordinator):
     async def _run_light_check(self, now_utc, latest_measurement) -> bool:
         """
         Run lightweight check (batch or single optimizer). Return True if caller should set do_full_refresh.
-        Sets _last_light_check_utc.
+        Sets _last_light_check_utc. Auth-like failures raise ConfigEntryAuthFailed (do not soft-fail).
         """
         self._last_light_check_utc = now_utc
+        if self._site_structure is not None:
+            # Rotate sample each light check so shaded/faulty panels do not stall detection.
+            self._pick_light_check_optimizers(self._site_structure, rotate=True)
         try:
             rep_list = await self._fetch_light_check_rep_list()
             return self._light_check_should_trigger_full_refresh(rep_list, latest_measurement, now_utc)
         except Exception as e:  # pylint: disable=broad-except
+            if _is_likely_auth_failure(e):
+                await _async_raise_if_auth_failed(self.hass, self.my_api, "light_check")
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge Optimizers coordinator: Lightweight update check failed: %s", e)
             return False
@@ -1362,11 +1411,16 @@ class MyCoordinator(DataUpdateCoordinator):
             return {}
 
     async def _fetch_portal_site_lifetime_kwh(self, installation_date, lifetime_energy_data):
-        """Get site lifetime kWh from layout, optionally override with dashboard production."""
-        portal_site_lifetime_kwh = _site_lifetime_kwh_from_layout_energy(lifetime_energy_data)
+        """Get site lifetime kWh from dashboard production when available.
+
+        Prefer dashboard over summing layout/energy entries: mixed inverter+optimizer
+        payloads can double-count. When the dashboard helper is absent (legacy-only),
+        fall back to a layout sum. When the dashboard helper exists but fails or
+        returns None, return None so site lifetime stays on the inverter rollup sum.
+        """
         get_dashboard = getattr(self.my_api, "get_dashboard_site_production_cached", None)
         if get_dashboard is None or not installation_date:
-            return portal_site_lifetime_kwh
+            return _site_lifetime_kwh_from_layout_energy(lifetime_energy_data)
         try:
             prod_wh = await self.hass.async_add_executor_job(get_dashboard, installation_date)
             if prod_wh is not None:
@@ -1377,10 +1431,12 @@ class MyCoordinator(DataUpdateCoordinator):
                         portal_site_lifetime_kwh,
                         prod_wh,
                     )
+                return portal_site_lifetime_kwh
         except Exception as e:  # pylint: disable=broad-except
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge Optimizers: Dashboard production fetch failed: %s", e)
-        return portal_site_lifetime_kwh
+        # Dashboard path available but no usable value — do not inflate from layout sum.
+        return None
 
     async def _fetch_portal_by_inverter_safe(self, installation_date):
         """Fetch by-inverter energy; return dict or empty on error."""

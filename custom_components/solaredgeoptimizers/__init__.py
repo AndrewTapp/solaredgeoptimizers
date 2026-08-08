@@ -18,10 +18,11 @@ for power, voltage, current, maximum daily optimizer temperature, energy, and st
 inverter, and site levels. Site level includes installation date and peak power when
 using the SolarEdge One API; inverter level includes max active power (kW) from the
 layout. The coordinator aggregates lifetime energy with portal overrides (dashboard /
-by-inverter) and guards string-level overrides when portal Wh far exceeds optimizer sums;
-last-measurement rollups at string/inverter/site use active devices only. On unload or
-config entry removal, ``async_unload_entry`` / ``async_remove_entry`` call ``api.close()``
-so legacy thread-local sessions and dual API clients release connections (file descriptors).
+by-inverter) and guards string- and inverter-level overrides when portal Wh is 0-agg or
+far exceeds optimizer/string sums; last-measurement rollups at string/inverter/site use
+active devices only. On unload or config entry removal, ``async_unload_entry`` /
+``async_remove_entry`` call ``api.close()`` so legacy thread-local sessions and dual API
+clients release connections (file descriptors).
 
 Device registry: ``coordinator.ensure_devices_registered()`` runs after the first coordinator
 refresh and again before the sensor platform is forwarded, so site/inverter/string devices
@@ -37,8 +38,9 @@ device identifier as the coordinator (including duplicate/portal suffixes on str
 On large sites, entities are added
 in batches (``ENTITY_ADD_BATCH_SIZE``) with event-loop yields so startup does not flood the
 entity registry or websocket bus; ``coordinator.async_update_listeners()`` (sync) runs after
-the last batch; optimizer ``async_restore_last_state()`` reapplies coordinator data after HA
-state restore so sensors are not stuck at **unknown** until the next poll.
+the last batch; optimizer sensors reapply coordinator data in ``async_added_to_hass`` when
+the coordinator already has data so sensors are not stuck at **unknown** until the next poll.
+Missing-optimizer backfill at setup prefers One batch API and otherwise caps concurrency.
 
 v2.4.19+: inactive/replaced optimizers with empty portal measurements log at DEBUG only;
 lightweight polling samples active optimizers only. Unload/removal logs a single INFO when
@@ -47,6 +49,13 @@ the dual API closes both backends (backend close summaries are DEBUG when invoke
 v2.4.20+: re-authentication UX — user-initiated credential update via config-flow Reconfigure;
 runtime auth failures during coordinator polling raise ConfigEntryAuthFailed (not only at setup);
 credential validation and removal paths still close temporary dual API clients in finally blocks.
+
+v2.4.21+: light-check auth failures also raise ConfigEntryAuthFailed; light-check samples rotate;
+legacy ``_doRequest`` timeouts; OAuth DEBUG URL redaction + refresh_token; setup fan-out cap;
+float hardening; inverter/zero-agg lifetime guards; dashboard-preferred site lifetime;
+``manifest.json`` ``requirements`` emptied (jsonfinder removed; legacy decode is stdlib-only);
+unload calls coordinator ``async_shutdown`` before API ``close()`` so in-flight refreshes finish;
+legacy close waits for in-flight HTTP before releasing sessions.
 """
 import logging
 from typing import Any
@@ -257,8 +266,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Mark setup as successful only after platform forwarding completes.
         await _async_forward_platforms(hass, entry, coordinator)
         coordinator_stored = True
-        if LOGGER.isEnabledFor(logging.DEBUG):
-            LOGGER.debug("SolarEdge Optimizers: Platform setup complete for entry %s", entry.entry_id)
+        LOGGER.info(
+            "SolarEdge Optimizers: Setup complete for entry %s (site %s)",
+            entry.entry_id,
+            entry.data.get("siteid"),
+        )
         return True
     finally:
         if not coordinator_stored:
@@ -369,6 +381,22 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if LOGGER.isEnabledFor(logging.DEBUG):
         LOGGER.debug("SolarEdge Optimizers: Unloading config entry %s", entry.entry_id)
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+    # Prefer shutdown before close so an in-flight coordinator refresh finishes first
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None and hasattr(coordinator, "async_shutdown"):
+        try:
+            if LOGGER.isEnabledFor(logging.DEBUG):
+                LOGGER.debug(
+                    "SolarEdge Optimizers: Shutting down coordinator before API close for entry %s",
+                    entry.entry_id,
+                )
+            await coordinator.async_shutdown()
+        except Exception as e:  # pylint: disable=broad-except
+            LOGGER.warning(
+                "SolarEdge Optimizers: Error shutting down coordinator during unload: %s",
+                e,
+            )
 
     # Always pop coordinator and close API so file descriptors are released even if platform unload failed
     coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)

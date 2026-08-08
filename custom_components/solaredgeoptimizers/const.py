@@ -38,8 +38,9 @@ Each constant is documented below with a full description of what it is used for
   from layout/information/site; same duration as layout (e.g. 2 h).
 - LIFETIME_ENERGY_CACHE_TTL: How long to cache lifetime energy data (One and legacy);
   changes slowly so 1 hour is typical.
-- STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO: Skip string-level portal lifetime override when
-  by-inverter string Wh exceeds this multiple of the optimizer-sum aggregate (bad portal buckets).
+- STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO: Skip string- or inverter-level portal lifetime
+  override when by-inverter Wh exceeds this multiple of the optimizer/string-sum aggregate
+  (also skip when aggregated Wh is 0).
 - TEMPERATURE_CACHE_TTL: How long to cache optimizer maximum daily temperatures from One API (e.g. 30 min).
 
 === CACHE TTLs (Legacy API) ===
@@ -133,9 +134,9 @@ LIGHT_CHECK_DESIRED_INTERVAL_STALE = timedelta(minutes=30)
 PANELS_CACHE_TTL_ONE = timedelta(hours=2)       # Site structure (layout) cache
 SITE_INFO_CACHE_TTL = timedelta(hours=2)        # Site information (installation date, peak power) - same as layout
 LIFETIME_ENERGY_CACHE_TTL = timedelta(hours=1)  # Lifetime energy cache (One and legacy)
-# String-level portal override (layout/energy by-inverter): skip when portal Wh is this many times
-# larger than the optimizer-sum aggregate. Some sites return a wrong per-string bucket (e.g. near
-# inverter-total-minus-other-strings); optimizers stay authoritative in that case.
+# String-level / inverter-level portal override (layout/energy by-inverter): skip when portal Wh
+# is this many times larger than the optimizer/string-sum aggregate. Some sites return a wrong
+# per-string or per-inverter bucket; children stay authoritative in that case.
 STRING_LIFETIME_PORTAL_OVERRIDE_MAX_RATIO = 3.0
 TEMPERATURE_CACHE_TTL = timedelta(minutes=30)   # Optimizer temperatures cache (One API)
 # --- Cache TTLs: Legacy API ---
