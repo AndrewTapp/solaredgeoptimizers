@@ -23,7 +23,8 @@ Methods Implemented:
 - get_layout_energy_by_inverter_cached(installation_date): One API only; returns inverter/string energy (Wh) from layout/energy by-inverter
 - close(): Closes both API backends (legacy closes all thread-local sessions; One clears tokens);
   idempotent via _closed flag; both backends closed even if one raises; single **info** summary here
-  (child clients use log_summary=False to avoid stacked unload messages)
+  when both succeed; **warning** if either backend close fails (child clients use log_summary=False
+  to avoid stacked unload messages)
 
 Tracking:
 - _last_used_api: Tracks which API ("one" or "legacy") provided the last data
@@ -260,9 +261,11 @@ class SolarEdgeDualAPI:
                 )
         if last_error is None:
             _LOGGER.info("SolarEdge Dual API: Closed One and legacy API clients (file descriptors released)")
-        elif _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge Dual API: At least one client failed to close; the other was still closed"
+        else:
+            _LOGGER.warning(
+                "SolarEdge Dual API: At least one client failed to close (%s); "
+                "the other backend was still closed — reload the integration if sessions linger",
+                last_error,
             )
 
     def __del__(self) -> None:
