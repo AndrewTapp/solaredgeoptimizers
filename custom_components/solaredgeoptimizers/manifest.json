@@ -10,11 +10,8 @@
   "homekit": {},
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/AndrewTapp/solaredgeoptimizers/issues",
-  "requirements": [
-    "jsonfinder==0.4.2"
-  ],
-  
-  "ssdp": [],  
-  "version": "2.4.20",
+  "requirements": [],
+  "ssdp": [],
+  "version": "2.4.21",
   "zeroconf": []
 }
