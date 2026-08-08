@@ -25,6 +25,7 @@ Reconfigure Flow (async_step_reconfigure):
 Options Flow (SolarEdgeOptimizersOptionsFlowHandler):
 - Accessible via Configure button on the integration card
 - Allows changing entity ID prefix, site ID inclusion, and One API toggle
+- Persists ``entity_id_prefix`` with the same normalize as sensors (lowercase, spaces → ``_``)
 - Triggers integration reload after saving; marks entity-registry rebuild only when
   entity-id-shaping options changed (prefix/site-id inclusion)
 
@@ -42,8 +43,9 @@ Cleanup:
 - Config entry title: `format_config_entry_title()` substitutes `%(siteid)s` with fallback
   when the translation template is malformed.
 - async_remove_entry: Pops coordinator if present, awaits executor `api.close()` (dual API
-  emits one INFO close summary; child backends use log_summary=False), then removes entities
-  and devices via the shared helper in `__init__.py`.
+  emits one INFO close summary; WARNING if a backend close fails; child backends use
+  log_summary=False), then removes entities and devices via the shared helper in `__init__.py`.
+  Normal unload in `__init__.py` shuts down the coordinator before closing the API.
 """
 from __future__ import annotations
 
@@ -299,6 +301,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     info["title"],
                 )
             entry_data = dict(user_input)
+            entry_data["entity_id_prefix"] = _normalized_prefix(entry_data.get("entity_id_prefix"))
             return self.async_create_entry(title=info["title"], data=entry_data)
 
         return self.async_show_form(
@@ -462,7 +465,7 @@ class SolarEdgeOptimizersOptionsFlowHandler(config_entries.OptionsFlow):
         """Manage the options (reconfigure) step."""
         if user_input is not None:
             options_data = {
-                "entity_id_prefix": (user_input.get("entity_id_prefix") or "").strip(),
+                "entity_id_prefix": _normalized_prefix(user_input.get("entity_id_prefix")),
                 "include_site_id_in_entity_id": bool(user_input.get("include_site_id_in_entity_id", False)),
                 CONF_USE_SOLAREDGE_ONE: bool(user_input.get(CONF_USE_SOLAREDGE_ONE, True)),
             }
