@@ -49,15 +49,20 @@ Data Classes Defined:
 
 Key Features:
 - Locale-aware measurement key parsing (supports EN, DE, FR, ES, IT, NL, etc.)
-- Thread-local session reuse for efficient parallel requests; each HTTP call uses
-  ``with session.request(...)`` so the response is closed; close() closes all tracked
-  sessions to avoid leaking file descriptors when the integration is unloaded or removed.
+- Thread-local session reuse for CSRF-protected portal calls; each HTTP call uses
+  ``with session.request(..., timeout=API_TIMEOUT_LONG)`` so the response is closed;
+  close() closes all tracked sessions to avoid leaking file descriptors on unload/removal.
+  (Live ``requestAllData`` uses Basic Auth ``requests.get`` per optimizer, not thread-local
+  sessions; tracked sessions are for lifetime energy / history / alerts via ``_doRequest``.)
 - Caching for panels (PANELS_CACHE_TTL_LEGACY) and lifetime energy (LIFETIME_ENERGY_CACHE_TTL)
 - Unicode normalization for measurement keys (handles various dash/space variants)
 - Timezone-aware date parsing for lastMeasurementDate
 - Inactive/replaced optimizers (v2.4.19+): layout status passed into SolarEdgeOptimizerData;
   empty measurements for inactive units log at DEBUG only in _normalize_measurements_dict
-- Session close(): optional log_summary=False when called from dual API (single INFO at wrapper)
+- Session close(): optional log_summary=False when called from dual API (single INFO at wrapper);
+  waits for in-flight HTTP calls (up to ~30s) before closing tracked sessions
+- v2.4.21+: ``decodeResult`` uses ``SE.systemData`` extraction then stdlib
+  ``json.JSONDecoder.raw_decode`` (jsonfinder removed; ``manifest.json`` ``requirements`` is empty)
 """
 import time
 import threading
@@ -72,8 +77,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from requests import Session
 from datetime import datetime, timedelta
-from jsonfinder import jsonfinder
-
 from .const import (
     API_TIMEOUT_SHORT,
     API_TIMEOUT_LONG,
@@ -313,9 +316,9 @@ def _apply_measurements_to_optimizer_data(instance, measurements, json_object, p
 def _site_lifetime_kwh_from_layout_energy(lifetime_energy_data):
     """Compute site total lifetime energy (kWh) from layout/energy API response.
 
-    Sums unscaledEnergy (Wh) across all entries in the response. Works when the
-    response contains per-optimizer data (sum = site total) or a mix of panel and
-    inverter/string entries (inverter entries dominate; panel values are negligible).
+    Sums unscaledEnergy (Wh) across entries. Callers that have dashboard production
+    should prefer that over this sum: mixed inverter+optimizer payloads can inflate
+    the total. Used primarily as a legacy-only fallback.
     """
     if not lifetime_energy_data or not isinstance(lifetime_energy_data, dict):
         return None
@@ -329,7 +332,7 @@ def _site_lifetime_kwh_from_layout_energy(lifetime_energy_data):
                 total_wh += float(raw)
             except (TypeError, ValueError):
                 pass
-    if total_wh == 0.0 and lifetime_energy_data:
+    if total_wh == 0.0:
         return None
     return round(total_wh / 1000.0, 3)
 
@@ -357,6 +360,9 @@ class solaredgeoptimizers:
         self._all_sessions: set = set()
         self._sessions_lock = threading.Lock()
         self._closed = False
+        self._inflight = 0
+        self._inflight_cond = threading.Condition()
+        self._close_wait_sec = 30.0
         # Cache for requestListOfAllPanels() result
         self._panels_cache = None
         self._panels_cache_time = None
@@ -446,12 +452,16 @@ class solaredgeoptimizers:
             )
 
         try:
-            with requests.get(url, **kwargs) as r:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers (legacy): Login check status: %s", r.status_code)
-                    _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response headers: %s", dict(r.headers))
-                    _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response body length: %s bytes", len(r.text))
-                return r.status_code
+            self._begin_request()
+            try:
+                with requests.get(url, **kwargs) as r:
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("SolarEdge Optimizers (legacy): Login check status: %s", r.status_code)
+                        _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response headers: %s", dict(r.headers))
+                        _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response body length: %s bytes", len(r.text))
+                    return r.status_code
+            finally:
+                self._end_request()
         except requests.exceptions.Timeout as e:
             _LOGGER.error(
                 "SolarEdge Optimizers: Login check timed out (timeout=%ss): %s",
@@ -471,17 +481,21 @@ class solaredgeoptimizers:
 
     def _fetch_logical_layout(self, url: str, kwargs: dict) -> str:
         """Perform GET for logical layout; return response text. Caller handles exceptions."""
-        with requests.get(url, **kwargs) as r:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout URL: %s", url)
-                _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout status: %s", r.status_code)
-                _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout response headers: %s", dict(r.headers))
-                _LOGGER.debug(
-                    "SolarEdge Optimizers (legacy): requestLogicalLayout response (status %s): %s",
-                    r.status_code,
-                    r.text[:2000] if len(r.text) > 2000 else r.text,
-                )
-            return r.text
+        self._begin_request()
+        try:
+            with requests.get(url, **kwargs) as r:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout URL: %s", url)
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout status: %s", r.status_code)
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout response headers: %s", dict(r.headers))
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): requestLogicalLayout response (status %s): %s",
+                        r.status_code,
+                        r.text[:2000] if len(r.text) > 2000 else r.text,
+                    )
+                return r.text
+        finally:
+            self._end_request()
 
     def _log_layout_request_error(self, e: Exception) -> None:
         """Log logical layout request error by exception type."""
@@ -596,17 +610,21 @@ class solaredgeoptimizers:
             "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
             "timeout": API_TIMEOUT_SHORT,
         }
-        with requests.get(url, **kwargs) as r:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Response from systemData (optimizer %s, status %s)", itemId, r.status_code)
-            if r.status_code != 200:
-                _raise_for_system_data_http_error(r, itemId)
-            json_object = self.decodeResult(r.text)
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Decoded JSON object for optimizer %s: %s", itemId, json_object)
-            return _parse_system_data_json(
-                json_object, itemId, self._timezone, layout_status=layout_status
-            )
+        self._begin_request()
+        try:
+            with requests.get(url, **kwargs) as r:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Response from systemData (optimizer %s, status %s)", itemId, r.status_code)
+                if r.status_code != 200:
+                    _raise_for_system_data_http_error(r, itemId)
+                json_object = self.decodeResult(r.text)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Decoded JSON object for optimizer %s: %s", itemId, json_object)
+                return _parse_system_data_json(
+                    json_object, itemId, self._timezone, layout_status=layout_status
+                )
+        finally:
+            self._end_request()
 
     def _parse_lifetime_energy_response(self, response: str) -> dict:
         """Parse getLifeTimeEnergy response string to dict. Returns {} on error or ERROR001."""
@@ -698,8 +716,8 @@ class solaredgeoptimizers:
         :param itemId: itemId of the item (panel, string, inverter)
         :param starttime: starttime as datetime or unix timestamp in ms, or None for start of today
         :param endtime: endtime as datetime or unix timestamp in ms, or None for 24 hour after starttime
-        :param parameter: the measurement parameter to return
-            a list of available parameters can be obtained using: https://monitoring.solaredge.com/solaredge-web/p/chartParamsList?fieldId={}reporterId={}&format=form
+        :param parameter: the measurement parameter to return; available parameters from the portal
+            chartParamsList endpoint (fieldId / reporterId / format=form)
         :return: dictionary with datetime (keys), value (values) pairs
             Note, time resolution of the result depends on the time range spanned by start- and endtime
         """
@@ -838,9 +856,22 @@ class solaredgeoptimizers:
         if self.GetThecsrfToken(session.cookies.get_dict()) is None:
             _LOGGER.warning("CSRF token still not found in cookies after logout/login bootstrap")
 
+    def _begin_request(self):
+        """Mark an in-flight HTTP call so close() can wait for it to finish."""
+        with self._inflight_cond:
+            if self._closed:
+                raise RuntimeError("SolarEdge legacy API client is closed")
+            self._inflight += 1
+
+    def _end_request(self):
+        """Clear an in-flight HTTP call and wake close() waiters."""
+        with self._inflight_cond:
+            self._inflight = max(0, self._inflight - 1)
+            self._inflight_cond.notify_all()
+
     def _get_session(self):
         """Get or create a thread-local session for reuse.
-        
+
         Each thread gets its own session to avoid conflicts when using ThreadPoolExecutor.
         Sessions are reused within the same thread to reduce login overhead.
         All sessions are tracked so close() can close them and avoid leaking file descriptors.
@@ -857,7 +888,7 @@ class solaredgeoptimizers:
             with self._sessions_lock:
                 self._all_sessions.add(session)
             self._thread_local.session = session
-        
+
         return self._thread_local.session
 
     def _request_headers(self, cookie: str, csrf_token: str) -> dict:
@@ -888,55 +919,60 @@ class solaredgeoptimizers:
         Uses 'with session.request(...) as response' so the response body is consumed and the
         connection is released back to the pool (or closed); no file descriptors are left open.
         """
-        session = self._get_session()
-        therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
-        thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
-        if thecrsftoken is None:
-            _LOGGER.warning("CSRF token not found in cookies; refreshing legacy session bootstrap")
-            self._prime_session_cookies(session)
+        self._begin_request()
+        try:
+            session = self._get_session()
             therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
             thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
             if thecrsftoken is None:
-                _LOGGER.warning("CSRF token still not found in cookies after refresh")
-                thecrsftoken = ""
-        csrf_token_missing_locally = thecrsftoken == ""
+                _LOGGER.warning("CSRF token not found in cookies; refreshing legacy session bootstrap")
+                self._prime_session_cookies(session)
+                therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
+                thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
+                if thecrsftoken is None:
+                    _LOGGER.warning("CSRF token still not found in cookies after refresh")
+                    thecrsftoken = ""
+            csrf_token_missing_locally = thecrsftoken == ""
 
-        with session.request(
-            method=method,
-            url=request_url,
-            headers=self._request_headers(therightcookie, thecrsftoken),
-            data=data,
-        ) as response:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                response_preview = response.text[:2000] if len(response.text) > 2000 else response.text
-                _LOGGER.debug(
-                    "Endpoint: %s %s | Status: %s | Response (preview): %s",
-                    method,
-                    request_url,
-                    response.status_code,
-                    response_preview,
-                )
-            response_text = response.text
-            status_code = response.status_code
+            with session.request(
+                method=method,
+                url=request_url,
+                headers=self._request_headers(therightcookie, thecrsftoken),
+                data=data,
+                timeout=API_TIMEOUT_LONG,
+            ) as response:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    response_preview = response.text[:2000] if len(response.text) > 2000 else response.text
+                    _LOGGER.debug(
+                        "Endpoint: %s %s | Status: %s | Response (preview): %s",
+                        method,
+                        request_url,
+                        response.status_code,
+                        response_preview,
+                    )
+                response_text = response.text
+                status_code = response.status_code
 
-        if status_code == 200:
-            return response_text
-        if status_code == 498:
-            if csrf_token_missing_locally:
-                _LOGGER.warning(
-                    "SolarEdge Optimizers (legacy): HTTP 498 from %s %s; request was sent without a local "
-                    "CSRF token after bootstrap refresh, so SolarEdge likely rejected the legacy session/CSRF bootstrap",
-                    method,
-                    request_url,
-                )
-            else:
-                _LOGGER.warning(
-                    "SolarEdge Optimizers (legacy): HTTP 498 from %s %s; SolarEdge likely rejected an "
-                    "invalid or expired CSRF token / legacy web session",
-                    method,
-                    request_url,
-                )
-        return f"ERROR001 - HTTP CODE: {status_code}"
+            if status_code == 200:
+                return response_text
+            if status_code == 498:
+                if csrf_token_missing_locally:
+                    _LOGGER.warning(
+                        "SolarEdge Optimizers (legacy): HTTP 498 from %s %s; request was sent without a local "
+                        "CSRF token after bootstrap refresh, so SolarEdge likely rejected the legacy session/CSRF bootstrap",
+                        method,
+                        request_url,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "SolarEdge Optimizers (legacy): HTTP 498 from %s %s; SolarEdge likely rejected an "
+                        "invalid or expired CSRF token / legacy web session",
+                        method,
+                        request_url,
+                    )
+            return f"ERROR001 - HTTP CODE: {status_code}"
+        finally:
+            self._end_request()
 
     def getLifeTimeEnergy(self):
         # Use f-string instead of .format() for better performance
@@ -949,15 +985,27 @@ class solaredgeoptimizers:
         """Close all sessions (all threads) to prevent file descriptor leaks.
 
         Call when the API client is no longer needed (e.g. integration unload/removal).
-        No requests should be in progress when close() is called. Sets _closed so any
-        subsequent _get_session() raises. Closes every tracked Session so connection
-        pools and file descriptors are released. Idempotent; safe to call multiple times.
+        Waits briefly for in-flight ``_doRequest`` calls, then sets ``_closed`` so any
+        subsequent ``_get_session()`` / ``_begin_request()`` raises. Closes every tracked
+        Session so connection pools and file descriptors are released. Idempotent; safe to
+        call multiple times.
 
         When called from SolarEdgeDualAPI, pass log_summary=False so unload logs once at INFO.
         """
-        if self._closed:
-            return
-        self._closed = True
+        with self._inflight_cond:
+            if self._closed:
+                return
+            self._closed = True
+            deadline = time.monotonic() + self._close_wait_sec
+            while self._inflight > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _LOGGER.warning(
+                        "SolarEdge Optimizers (legacy): Closing with %d in-flight request(s) still active",
+                        self._inflight,
+                    )
+                    break
+                self._inflight_cond.wait(timeout=remaining)
         if hasattr(self._thread_local, "session"):
             self._thread_local.session = None
         with self._sessions_lock:
@@ -1026,8 +1074,13 @@ class solaredgeoptimizers:
         return "".join(cookie_parts)
 
     def decodeResult(self, result):
+        """Extract JSON from a legacy portal response body.
+
+        Prefers ``SE.systemData = {...};`` when present; otherwise scans for the first
+        embedded JSON object/array with stdlib ``json.JSONDecoder.raw_decode`` (no
+        third-party jsonfinder dependency; ``manifest.json`` requirements are empty).
+        """
         # First try to extract JSON from SE.systemData = {...}; line (more specific and reliable)
-        # Moved import to module level for better performance
         # Find SE.systemData = and extract the JSON object (handles nested braces)
         se_systemdata_match = re.search(r'SE\.systemData\s*=\s*', result)
         if se_systemdata_match:
@@ -1049,23 +1102,37 @@ class solaredgeoptimizers:
                             try:
                                 json_result = json.loads(json_str)
                                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                                    _LOGGER.debug("Extracted JSON from SE.systemData line")
+                                    _LOGGER.debug(
+                                        "SolarEdge Optimizers (legacy): Extracted JSON from SE.systemData line"
+                                    )
                                 return json_result
                             except json.JSONDecodeError as e:
                                 _LOGGER.warning("Failed to parse JSON from SE.systemData line: %s", e)
-                                # Fall through to jsonfinder method
+                                # Fall through to stdlib JSON scan
                             break
                     i += 1
-        
-        # Fallback to jsonfinder method for backwards compatibility
-        json_result = ""
-        for _, __, obj in jsonfinder(result, json_only=True):
-            json_result = obj
-            break
-        else:
-            raise ValueError("data not found")
 
-        return json_result
+        # Fallback: scan for the first embedded JSON object/array (stdlib; no third-party deps)
+        return self._first_embedded_json(result)
+
+    @staticmethod
+    def _first_embedded_json(text):
+        """Return the first JSON object or array embedded in text, or raise ValueError."""
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char not in "{[":
+                continue
+            try:
+                obj, _ = decoder.raw_decode(text, index)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): Extracted embedded JSON via stdlib raw_decode "
+                        "(fallback; no SE.systemData match)"
+                    )
+                return obj
+            except json.JSONDecodeError:
+                continue
+        raise ValueError("data not found")
 
 class SolarEdgeSite:
     def __init__(self, json_obj):
