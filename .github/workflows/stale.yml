@@ -1,0 +1,46 @@
+name: Close inactive issues
+
+on:
+  schedule:
+    - cron: "30 1 * * *"   # run daily at 01:30 UTC
+  workflow_dispatch:
+
+jobs:
+  close-inactive-issues:
+    runs-on: ubuntu-latest
+
+    permissions:
+      issues: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/stale@v11
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+          # --- Issue timing ---
+          days-before-issue-stale: 60
+          days-before-issue-close: 14
+
+          # --- PRs disabled ---
+          days-before-pr-stale: -1
+          days-before-pr-close: -1
+
+          # --- Labels ---
+          stale-issue-label: "stale"
+          close-issue-label: "closed-not-planned"
+
+          # --- Messages ---
+          stale-issue-message: >
+            This issue has been automatically marked as stale because it has had
+            no activity for 60 days. It will be closed in 14 days if no further
+            activity occurs. If this is still relevant, a comment will remove the
+            stale label and keep it open.
+
+          close-issue-message: >
+            This issue has been automatically closed after 14 days of inactivity
+            since being marked stale. If this is still an issue, feel free to
+            reopen it or open a new one with updated details.
+
+          # --- Close reason ---
+          close-issue-reason: "not_planned"
