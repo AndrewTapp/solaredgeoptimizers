@@ -1,61 +1,20 @@
-"""
-SolarEdge Optimizers Integration - Entry Point (__init__.py)
+"""Set up and tear down the SolarEdge Optimizers Home Assistant integration.
 
-This module serves as the main entry point for the Home Assistant integration. It handles:
+This module creates the dual One/legacy API client and data coordinator, performs
+the first refresh, pre-registers the site hierarchy, and forwards the sensor
+platform. Setup failures always close temporary API resources.
 
-- Config entry setup and teardown (async_setup_entry, async_unload_entry)
-- API client initialization using the dual API wrapper (SolarEdge One + legacy fallback)
-- Data coordinator creation for polling optimizer data at regular intervals
-- Platform registration (sensor platform) for exposing optimizer data as HA entities
-- Migration of legacy configuration options (use_solaredge_one default; repair unformatted
-  config entry titles containing literal ``%(siteid)s``)
-- Entity and device registry cleanup when the integration is removed or reloaded
-- Timezone configuration for proper date/time parsing of API responses
+Unload shuts down coordinator activity before platform teardown and then closes
+both API backends in a ``finally`` path. The shared shutdown/close helpers are
+also used by ``config_flow.async_remove_entry`` so thread-local sessions,
+transient responses, executor work, and OAuth state are not left behind.
 
-The integration authenticates with the SolarEdge Monitoring Portal using site credentials,
-retrieves the site layout (inverters, strings, optimizers), and creates sensor entities
-for power, voltage, current, maximum daily optimizer temperature, energy, and status at optimizer, string,
-inverter, and site levels. Site level includes installation date and peak power when
-using the SolarEdge One API; inverter level includes max active power (kW) from the
-layout. The coordinator aggregates lifetime energy with portal overrides (dashboard /
-by-inverter) and guards string- and inverter-level overrides when portal Wh is 0-agg or
-far exceeds optimizer/string sums; last-measurement rollups at string/inverter/site use
-active devices only. On unload or config entry removal, ``async_unload_entry`` /
-``async_remove_entry`` call ``api.close()`` so legacy thread-local sessions and dual API
-clients release connections (file descriptors).
+Site, inverter, and string devices are created before entities. Registry parent
+links use ``via_device_id``; entities link to pre-registered devices by
+identifier only. Optimizer devices are created by the sensor platform after
+their string parents exist.
 
-Device registry: ``coordinator.ensure_devices_registered()`` runs after the first coordinator
-refresh and again before the sensor platform is forwarded, so site/inverter/string devices
-exist before entities are added. Entities link to those devices by identifier only
-(``device_ids.link_device_info``), avoiding ``via_device`` warnings on startup.
-
-The sensor platform registers per-optimizer entities with ``has_entity_name`` disabled so
-``entity_id`` matches the path-based ``suggested_object_id`` (e.g. ``sensor.power_1_1_1``)
-without Home Assistant prepending the optimizer device slug; friendly names use short
-translated sensor labels only (device name shows optimizer position). Optimizer devices are
-created in the sensor platform before entities are added; ``via_device`` uses the same string
-device identifier as the coordinator (including duplicate/portal suffixes on string keys).
-On large sites, entities are added
-in batches (``ENTITY_ADD_BATCH_SIZE``) with event-loop yields so startup does not flood the
-entity registry or websocket bus; ``coordinator.async_update_listeners()`` (sync) runs after
-the last batch; optimizer sensors reapply coordinator data in ``async_added_to_hass`` when
-the coordinator already has data so sensors are not stuck at **unknown** until the next poll.
-Missing-optimizer backfill at setup prefers One batch API and otherwise caps concurrency.
-
-v2.4.19+: inactive/replaced optimizers with empty portal measurements log at DEBUG only;
-lightweight polling samples active optimizers only. Unload/removal logs a single INFO when
-the dual API closes both backends (backend close summaries are DEBUG when invoked via dual API).
-
-v2.4.20+: re-authentication UX — user-initiated credential update via config-flow Reconfigure;
-runtime auth failures during coordinator polling raise ConfigEntryAuthFailed (not only at setup);
-credential validation and removal paths still close temporary dual API clients in finally blocks.
-
-v2.4.21+: light-check auth failures also raise ConfigEntryAuthFailed; light-check samples rotate;
-legacy ``_doRequest`` timeouts; OAuth DEBUG URL redaction + refresh_token; setup fan-out cap;
-float hardening; inverter/zero-agg lifetime guards; dashboard-preferred site lifetime;
-``manifest.json`` ``requirements`` emptied (jsonfinder removed; legacy decode is stdlib-only);
-unload calls coordinator ``async_shutdown`` before API ``close()`` so in-flight refreshes finish;
-legacy close waits for in-flight HTTP before releasing sessions.
+See ``miscellaneous/20260904 Changes v2.4.22.md`` for release history.
 """
 import logging
 from typing import Any
@@ -164,7 +123,10 @@ def _validate_login_status(http_result_code: int) -> None:
         LOGGER.error("SolarEdge Optimizers: Authentication failed (401); please re-authenticate")
         raise ConfigEntryAuthFailed("Invalid or expired credentials; please re-authenticate")
     if http_result_code != 200:
-        LOGGER.error("SolarEdge Optimizers: Missing details data in SolarEdge response (status: %s)", http_result_code)
+        LOGGER.error(
+            "SolarEdge Optimizers: Login check failed (status: %s)",
+            http_result_code,
+        )
         raise ConfigEntryNotReady
 
 
@@ -376,50 +338,71 @@ def remove_entities_and_devices_for_entry(hass: HomeAssistant, entry: ConfigEntr
     _log_removal_result(to_remove, dev_ids, entry_id)
 
 
+async def async_shutdown_coordinator(coordinator: Any, context: str) -> None:
+    """Stop coordinator work before its API clients are closed."""
+    if coordinator is None or not hasattr(coordinator, "async_shutdown"):
+        return
+    try:
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug(
+                "SolarEdge Optimizers: Shutting down coordinator before %s",
+                context,
+            )
+        await coordinator.async_shutdown()
+    except Exception as err:  # pylint: disable=broad-except
+        LOGGER.warning(
+            "SolarEdge Optimizers: Error shutting down coordinator during %s: %s",
+            context,
+            err,
+        )
+
+
+async def async_close_coordinator_api(
+    hass: HomeAssistant, coordinator: Any, context: str
+) -> None:
+    """Close coordinator API clients without raising from a cleanup path."""
+    if coordinator is None or not hasattr(coordinator, "my_api"):
+        return
+    try:
+        if LOGGER.isEnabledFor(logging.DEBUG):
+            LOGGER.debug(
+                "SolarEdge Optimizers: Closing API clients during %s",
+                context,
+            )
+        await hass.async_add_executor_job(coordinator.my_api.close)
+    except Exception as err:  # pylint: disable=broad-except
+        LOGGER.warning(
+            "SolarEdge Optimizers: Error closing API clients during %s "
+            "(file descriptors may remain open): %s",
+            context,
+            err,
+        )
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry. Always closes API (releases file descriptors) and pops coordinator."""
     if LOGGER.isEnabledFor(logging.DEBUG):
         LOGGER.debug("SolarEdge Optimizers: Unloading config entry %s", entry.entry_id)
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-
-    # Prefer shutdown before close so an in-flight coordinator refresh finishes first
     coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if coordinator is not None and hasattr(coordinator, "async_shutdown"):
-        try:
-            if LOGGER.isEnabledFor(logging.DEBUG):
-                LOGGER.debug(
-                    "SolarEdge Optimizers: Shutting down coordinator before API close for entry %s",
-                    entry.entry_id,
-                )
-            await coordinator.async_shutdown()
-        except Exception as e:  # pylint: disable=broad-except
-            LOGGER.warning(
-                "SolarEdge Optimizers: Error shutting down coordinator during unload: %s",
-                e,
-            )
-
-    # Always pop coordinator and close API so file descriptors are released even if platform unload failed
-    coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+    await async_shutdown_coordinator(coordinator, f"unload of entry {entry.entry_id}")
+    unload_ok = False
     try:
+        unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
         if unload_ok:
             try:
                 remove_entities_and_devices_for_entry(hass, entry)
-            except Exception as e:  # pylint: disable=broad-except
+            except Exception as err:  # pylint: disable=broad-except
                 LOGGER.warning(
                     "SolarEdge Optimizers: Error cleaning registries during unload: %s",
-                    e,
+                    err,
                 )
     finally:
-        if coordinator is not None and hasattr(coordinator, "my_api"):
-            if LOGGER.isEnabledFor(logging.DEBUG):
-                LOGGER.debug(
-                    "SolarEdge Optimizers: Unload finally: closing API sessions for entry %s",
-                    entry.entry_id,
-                )
-            try:
-                await hass.async_add_executor_job(coordinator.my_api.close)
-            except Exception as e:  # pylint: disable=broad-except
-                LOGGER.warning("SolarEdge Optimizers: Error closing API sessions: %s", e)
+        stored_coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        await async_close_coordinator_api(
+            hass,
+            stored_coordinator or coordinator,
+            f"unload of entry {entry.entry_id}",
+        )
 
     if not unload_ok and LOGGER.isEnabledFor(logging.DEBUG):
         LOGGER.debug(
