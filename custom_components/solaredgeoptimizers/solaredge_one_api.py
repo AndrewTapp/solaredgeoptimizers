@@ -61,18 +61,20 @@ Key Features:
   `_token_lock` serializes token obtain/clear under ThreadPoolExecutor.
 - Parallel lifetime-energy fetches use `with ThreadPoolExecutor(...) as executor` so workers
   shut down cleanly.
-- `close()` clears OAuth tokens under the lock and sets `_closed` (idempotent); logs at
-  **info** when log_summary=True (dual API passes False for a single unload INFO).
-  Subsequent token obtain raises if the client is closed. Pair with dual API ``close()``
-  and HA unload ``async_shutdown`` so in-flight coordinator work finishes first.
+- `_get`/`_post` track in-flight operations. `close()` prevents new work, waits
+  within a bounded timeout, and then clears OAuth tokens under the lock; it is
+  idempotent and the dual wrapper suppresses child INFO summaries.
 - DEBUG never logs OAuth authorization codes (URLs redacted via `_redact_url_for_log`);
-  204 Location hosts are allowlisted to `*.solaredge.com`.
+  full optimizer payloads are summarized and 204 Location hosts are allowlisted
+  to `*.solaredge.com`.
 - Inactive/replaced optimizers (v2.4.19+): layout status from site structure passed into
   SolarEdgeOptimizerData; empty live measurements for inactive units log at DEBUG only.
 - Lightweight checks use active optimizers only (coordinator); full refresh still includes
   inactive layout entries.
 - v2.4.21+: no extra PyPI packages in ``manifest.json`` (``requirements: []``); HA provides
   ``requests`` / ``pytz``. Legacy fallback JSON parsing is stdlib-only (see legacy client).
+- v2.4.22+: lifetime-energy HTTP 403 is WARNING once per optimizer serial, then DEBUG
+  (inverter-information 403 remains a one-time WARNING as before).
 """
 import math
 import base64
@@ -82,11 +84,12 @@ import logging
 import os
 import secrets
 import threading
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 from html.parser import HTMLParser
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 from requests.sessions import Session
@@ -108,6 +111,7 @@ from .const import (
     LIFETIME_ENERGY_CACHE_TTL,
     TEMPERATURE_CACHE_TTL,
     is_status_active,
+    redact_url_for_log,
 )
 from .solaredgeoptimizers import (
     SolarEdgeSite,
@@ -125,13 +129,8 @@ TOKEN_URL = f"{LOGIN_BASE}{TOKEN_PATH}"
 
 
 def _redact_url_for_log(url: str) -> str:
-    """Strip query/fragment (may contain OAuth authorization codes) for safe DEBUG logging."""
-    if not url:
-        return url
-    parsed = urlparse(url)
-    if not parsed.query and not parsed.fragment:
-        return url
-    return urlunparse(parsed._replace(query="***", fragment=""))
+    """Compatibility wrapper for the shared safe URL formatter."""
+    return redact_url_for_log(url)
 
 
 def _pkce_verifier_and_challenge():
@@ -193,7 +192,10 @@ def _oauth_get_login_page(session: Session, login_params: dict) -> tuple[str, st
         login_page_html = r.text
         login_page_url = r.url
     if not login_page_url.startswith(LOGIN_BASE):
-        _LOGGER.warning("SolarEdge One: login page not on login.solaredge.com: %s", login_page_url)
+        _LOGGER.warning(
+            "SolarEdge One: login page not on login.solaredge.com: %s",
+            _redact_url_for_log(login_page_url),
+        )
         raise requests.RequestException("Login page redirect failed")
     return login_page_html, login_page_url
 
@@ -401,11 +403,6 @@ def _v2_build_optimizer_logical_node(opt_node: dict, resolved_name: str = None) 
     opt_order = opt_node.get("order") or 0
     status_raw = opt_props.get("status") or ""
     status = status_raw.capitalize() if status_raw else ""
-    if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug(
-            "SolarEdge One: Building optimizer node serial=%s name=%s status=%s",
-            opt_serial, opt_name, status or "(none)",
-        )
     return {
         "data": {
             "id": opt_serial,
@@ -434,7 +431,7 @@ def _make_duplicate_sort_key(get_status, get_serial, get_position):
 
 def _resolve_duplicate_names_with_suffix(items: list, get_name, get_status, get_serial, get_position) -> dict:
     """Resolve duplicate names by adding suffixes (a, b, c...) based on status and serial/position.
-    
+
     Returns dict mapping item index -> resolved name.
     Active items come first (sorted by serial/position), then other statuses (sorted by serial/position).
     First active item keeps original name, subsequent get 'a', 'b', etc. suffixes.
@@ -443,17 +440,17 @@ def _resolve_duplicate_names_with_suffix(items: list, get_name, get_status, get_
     for idx, item in enumerate(items):
         name = get_name(item)
         name_groups[name].append(idx)
-    
+
     resolved = {}
     sort_key = _make_duplicate_sort_key(get_status, get_serial, get_position)
     for name, indices in name_groups.items():
         if len(indices) == 1:
             resolved[indices[0]] = name
             continue
-        
+
         group_items = [(idx, items[idx]) for idx in indices]
         sorted_items = sorted(group_items, key=sort_key)
-        
+
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge One: Resolving %d duplicate names for '%s': %s",
@@ -461,7 +458,7 @@ def _resolve_duplicate_names_with_suffix(items: list, get_name, get_status, get_
                 name,
                 [(get_status(items[idx]) or "unknown", get_serial(items[idx]) if get_serial else idx) for idx, _ in sorted_items],
             )
-        
+
         suffix_idx = 0
         for i, (idx, item) in enumerate(sorted_items):
             if i == 0:
@@ -474,14 +471,14 @@ def _resolve_duplicate_names_with_suffix(items: list, get_name, get_status, get_
                     resolved[idx] = f"{parts[0]}.{parts[1]}{suffix}"
                 else:
                     resolved[idx] = f"{name}{suffix}"
-        
+
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge One: Resolved names for '%s': %s",
                 name,
                 {idx: resolved[idx] for idx, _ in sorted_items},
             )
-    
+
     return resolved
 
 
@@ -495,7 +492,7 @@ def _v2_build_string_logical_children(str_node: dict) -> list:
             if (opt_node.get("type") or "").upper() != "OPTIMIZER":
                 continue
             raw_optimizers.append(opt_node)
-    
+
     resolved_names = _resolve_duplicate_names_with_suffix(
         raw_optimizers,
         get_name=lambda o: o.get("name") or o.get("serial") or "",
@@ -503,7 +500,7 @@ def _v2_build_string_logical_children(str_node: dict) -> list:
         get_serial=lambda o: o.get("serial") or "",
         get_position=None,
     )
-    
+
     opt_children = []
     for idx, opt_node in enumerate(raw_optimizers):
         resolved_name = resolved_names.get(idx)
@@ -521,11 +518,6 @@ def _v2_build_string_logical_node(str_node: dict, resolved_name: str = None) -> 
     str_order = str_node.get("order") or 0
     status_raw = str_props.get("status") or ""
     status = status_raw.capitalize() if status_raw else ""
-    if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug(
-            "SolarEdge One: Building string node id=%s name=%s status=%s",
-            str_identifier, str_name, status or "(none)",
-        )
     opt_children = _v2_build_string_logical_children(str_node)
     return {
         "data": {
@@ -552,7 +544,7 @@ def _v2_build_inverter_logical_children(inv_node: dict) -> list:
             if (str_node.get("type") or "").upper() != "STRING":
                 continue
             raw_strings.append(str_node)
-    
+
     resolved_names = _resolve_duplicate_names_with_suffix(
         raw_strings,
         get_name=lambda s: s.get("name") or "",
@@ -560,7 +552,7 @@ def _v2_build_inverter_logical_children(inv_node: dict) -> list:
         get_serial=None,
         get_position=lambda s: s.get("order") or 0,
     )
-    
+
     string_children = []
     for idx, str_node in enumerate(raw_strings):
         resolved_name = resolved_names.get(idx)
@@ -583,11 +575,6 @@ def _v2_build_inverter_logical_node(inv_node: dict, resolved_name: str = None) -
     # maxActivePower from API is in watts; store as kW for display (same as site peak_power)
     max_active_w = inv_props.get("maxActivePower")
     max_active_kw = (float(max_active_w) / 1000.0) if max_active_w is not None else None
-    if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug(
-            "SolarEdge One: Building inverter node serial=%s name=%s status=%s manufacturer=%s model=%s maxActivePower=%s kW",
-            inv_serial, inv_name, status or "(none)", manufacturer, model or "(none)", max_active_kw,
-        )
     string_children = _v2_build_inverter_logical_children(inv_node)
     data = {
         "id": inv_identifier,
@@ -619,7 +606,7 @@ def _v2_build_logical_children(structure: dict) -> list:
             if (inv_node.get("type") or "").upper() != "INVERTER":
                 continue
             raw_inverters.append(inv_node)
-    
+
     resolved_names = _resolve_duplicate_names_with_suffix(
         raw_inverters,
         get_name=lambda i: i.get("name") or "",
@@ -627,7 +614,7 @@ def _v2_build_logical_children(structure: dict) -> list:
         get_serial=lambda i: i.get("serial") or "",
         get_position=None,
     )
-    
+
     logical_children = []
     for idx, inv_node in enumerate(raw_inverters):
         resolved_name = resolved_names.get(idx)
@@ -660,9 +647,14 @@ class solaredge_one:
         self._site_info_cache = None
         self._site_info_cache_time = None
         self._site_info_cache_ttl = SITE_INFO_CACHE_TTL
+        self._dashboard_production_cache = None
+        self._dashboard_production_cache_key = None
+        self._by_inverter_energy_cache = None
+        self._by_inverter_energy_cache_key = None
         self._lifetime_energy_cache = None
         self._lifetime_energy_cache_time = None
         self._lifetime_energy_cache_ttl = LIFETIME_ENERGY_CACHE_TTL
+        self._lifetime_403_logged: set[str] = set()
         self._temperature_cache = None
         self._temperature_cache_time = None
         self._temperature_cache_ttl = TEMPERATURE_CACHE_TTL
@@ -670,6 +662,22 @@ class solaredge_one:
         self._refresh_token = None
         self._token_lock = threading.Lock()
         self._closed = False
+        self._inflight = 0
+        self._inflight_cond = threading.Condition()
+        self._close_wait_sec = float(API_TIMEOUT_LONG + 5)
+
+    def _begin_request(self) -> None:
+        """Mark an in-flight API operation so close can wait for it."""
+        with self._inflight_cond:
+            if self._closed:
+                raise RuntimeError("SolarEdge One API client is closed")
+            self._inflight += 1
+
+    def _end_request(self) -> None:
+        """Clear an in-flight API operation and wake close waiters."""
+        with self._inflight_cond:
+            self._inflight = max(0, self._inflight - 1)
+            self._inflight_cond.notify_all()
 
     def _ensure_token(self) -> str:
         """Obtain OAuth access_token via refresh grant or PKCE login. Returns access_token.
@@ -764,37 +772,47 @@ class solaredge_one:
 
     def _get(self, path: str, params: dict | None = None, timeout: int = API_TIMEOUT_LONG):
         """GET JSON; on 401 close the first response before token refresh and one retry."""
-        url = f"{BASE_URL}{path}"
-        kwargs = {"headers": self._request_headers(), "timeout": timeout}
-        if params:
-            kwargs["params"] = params
-        with requests.get(url, **kwargs) as r:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: GET %s -> %s", path, r.status_code)
-            if r.status_code != 401:
-                r.raise_for_status()
-                return r.json()
-        # First response closed before refresh/PKCE so sockets are not held during login.
-        return self._handle_401_and_retry_json("GET", path, url, params=params, timeout=timeout)
+        self._begin_request()
+        try:
+            url = f"{BASE_URL}{path}"
+            kwargs = {"headers": self._request_headers(), "timeout": timeout}
+            if params:
+                kwargs["params"] = params
+            with requests.get(url, **kwargs) as r:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge One: GET %s -> %s", path, r.status_code)
+                if r.status_code != 401:
+                    r.raise_for_status()
+                    return r.json()
+            # First response is closed before refresh/PKCE so its socket is not held.
+            return self._handle_401_and_retry_json(
+                "GET", path, url, params=params, timeout=timeout
+            )
+        finally:
+            self._end_request()
 
     def _post(self, path: str, json_data, timeout: int = API_TIMEOUT_LONG):
         """POST JSON; on 401 close the first response before token refresh and one retry."""
-        url = f"{BASE_URL}{path}"
-        with requests.post(
-            url,
-            headers=self._request_headers(),
-            json=json_data,
-            timeout=timeout,
-        ) as r:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: POST %s -> %s", path, r.status_code)
-            if r.status_code != 401:
-                r.raise_for_status()
-                return r.json()
-        # First response closed before refresh/PKCE so sockets are not held during login.
-        return self._handle_401_and_retry_json(
-            "POST", path, url, json_data=json_data, timeout=timeout
-        )
+        self._begin_request()
+        try:
+            url = f"{BASE_URL}{path}"
+            with requests.post(
+                url,
+                headers=self._request_headers(),
+                json=json_data,
+                timeout=timeout,
+            ) as r:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge One: POST %s -> %s", path, r.status_code)
+                if r.status_code != 401:
+                    r.raise_for_status()
+                    return r.json()
+            # First response is closed before refresh/PKCE so its socket is not held.
+            return self._handle_401_and_retry_json(
+                "POST", path, url, json_data=json_data, timeout=timeout
+            )
+        finally:
+            self._end_request()
 
     def get_site_info_cached(self) -> dict:
         """
@@ -1236,9 +1254,12 @@ class solaredge_one:
         }
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge One: Decoded data for optimizer %s: %s",
+                "SolarEdge One: Decoded optimizer %s (measurements=%d, "
+                "last_measurement=%s, description=%s)",
                 item_id,
-                json_object,
+                len(measurements),
+                bool(last_measurement),
+                bool(desc),
             )
         try:
             opt_data = SolarEdgeOptimizerData(
@@ -1395,8 +1416,8 @@ class solaredge_one:
         for info in data_list:
             oid = info.panel_id
             energy_data = lifetimeenergy.get(str(oid)) or lifetimeenergy.get(oid) or {}
-            kWh = _lifetime_energy_to_kwh(energy_data)
-            info.lifetime_energy = round(kWh, 3) if kWh is not None else 0.0
+            energy_kwh = _lifetime_energy_to_kwh(energy_data)
+            info.lifetime_energy = round(energy_kwh, 3) if energy_kwh is not None else 0.0
             if oid in temperature_map:
                 info.temperature = temperature_map[oid]
 
@@ -1443,7 +1464,27 @@ class solaredge_one:
             if total_wh is not None:
                 return (str(serial), {"unscaledEnergy": float(total_wh)})
         except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.warning("SolarEdge One: Lifetime energy for %s failed: %s", serial, e)
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            serial_key = str(serial)
+            logged_403 = getattr(self, "_lifetime_403_logged", None)
+            if logged_403 is None:
+                self._lifetime_403_logged = set()
+                logged_403 = self._lifetime_403_logged
+            if status == 403:
+                if serial_key not in logged_403:
+                    _LOGGER.warning(
+                        "SolarEdge One: Lifetime energy for %s failed: 403 Forbidden "
+                        "(insufficient permissions; further failures for this serial at DEBUG)",
+                        serial,
+                    )
+                    logged_403.add(serial_key)
+                elif _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge One: Lifetime energy for %s failed: 403 Forbidden",
+                        serial,
+                    )
+            else:
+                _LOGGER.warning("SolarEdge One: Lifetime energy for %s failed: %s", serial, e)
         return (str(serial), None)
 
     def _fetch_lifetime_energy_uncached(self) -> dict:
@@ -1466,10 +1507,9 @@ class solaredge_one:
                 if entry is not None:
                     result[serial] = entry
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: Refreshed lifetime energy cache (%d optimizers)", len(result))
             _LOGGER.debug(
-                "SolarEdge One: Decoded lifetime energy data (by optimizer serial): %s",
-                result,
+                "SolarEdge One: Refreshed lifetime energy cache (%d optimizers)",
+                len(result),
             )
         return result
 
@@ -1504,18 +1544,30 @@ class solaredge_one:
         return self._lifetime_energy_cache or {}
 
     def close(self, log_summary: bool = True):
-        """Clear OAuth tokens and mark client closed. Idempotent; safe to call multiple times.
+        """Wait for active operations, clear OAuth tokens, and mark the client closed.
 
         Routine GET/POST use ``with requests.get/post(...)`` so responses and pooled connections
         are released after each call. The PKCE login uses ``with Session() as session`` so that
         session is closed before normal API traffic. Parallel energy-graph fetches use
         ``with ThreadPoolExecutor(...)`` so executor threads finish and shutdown. This method
-        prevents token reuse after unload; pair with dual API ``close()`` so legacy sessions
-        are also closed. When called from SolarEdgeDualAPI, pass log_summary=False.
+        prevents new work and waits for tracked operations before clearing tokens. Pair with
+        dual API ``close()`` so legacy sessions are also closed. When called from
+        SolarEdgeDualAPI, pass log_summary=False.
         """
-        if self._closed:
-            return
-        self._closed = True
+        with self._inflight_cond:
+            if self._closed:
+                return
+            self._closed = True
+            deadline = time.monotonic() + self._close_wait_sec
+            while self._inflight > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _LOGGER.warning(
+                        "SolarEdge One: Closing with %d in-flight operation(s) still active",
+                        self._inflight,
+                    )
+                    break
+                self._inflight_cond.wait(timeout=remaining)
         with self._token_lock:
             if self._access_token and _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge One: close() clearing access token")

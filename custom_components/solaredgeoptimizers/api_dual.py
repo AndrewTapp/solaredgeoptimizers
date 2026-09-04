@@ -21,10 +21,10 @@ Methods Implemented:
 - get_site_info_cached(): One API only; returns installationDate, peakPower (kW) from layout/information/site
 - get_dashboard_site_production_cached(installation_date): One API only; returns site production (Wh) from dashboard/energy
 - get_layout_energy_by_inverter_cached(installation_date): One API only; returns inverter/string energy (Wh) from layout/energy by-inverter
-- close(): Closes both API backends (legacy closes all thread-local sessions; One clears tokens);
-  idempotent via _closed flag; both backends closed even if one raises; single **info** summary here
-  when both succeed; **warning** if either backend close fails (child clients use log_summary=False
-  to avoid stacked unload messages)
+- close(): Closes both API backends after their tracked work drains; idempotent
+  via _closed flag; both backends are attempted even if one raises. One **INFO**
+  summary is emitted when both succeed and **WARNING** when either fails.
+- Public delegate methods reject work after close before reaching a backend.
 
 Tracking:
 - _last_used_api: Tracks which API ("one" or "legacy") provided the last data
@@ -84,8 +84,14 @@ class SolarEdgeDualAPI:
         if not self._use_solaredge_one:
             self.requestSystemDataBatch = None  # type: ignore[assignment]
 
+    def _ensure_open(self) -> None:
+        """Reject API work after integration cleanup has closed both backends."""
+        if self._closed:
+            raise RuntimeError("SolarEdge Dual API client is closed")
+
     def check_login(self) -> int:
         """Return 200 if either backend authenticates, else best-available status code."""
+        self._ensure_open()
         if not self._use_solaredge_one:
             return self._legacy.check_login()
         code_one = self._one.check_login()
@@ -118,6 +124,7 @@ class SolarEdgeDualAPI:
 
     def requestListOfAllPanels(self) -> Any:
         """Prefer One for layout (unless use_solaredge_one is False); fall back to legacy on failure."""
+        self._ensure_open()
         if not self._use_solaredge_one:
             return self._legacy.requestListOfAllPanels()
         try:
@@ -142,6 +149,7 @@ class SolarEdgeDualAPI:
         When use_solaredge_one is False, always use legacy. Otherwise try One first;
         if One returns no valid measurements or fails, use legacy and set _obtained_from to Legacy API.
         """
+        self._ensure_open()
         previous_api = self._last_used_api
         if not self._use_solaredge_one:
             data_list = self._legacy.requestAllData()
@@ -198,40 +206,47 @@ class SolarEdgeDualAPI:
 
     def get_lifetime_energy_cached(self) -> dict[str, Any]:
         """Return lifetime energy from the API that was last used for requestAllData."""
+        self._ensure_open()
         if not self._use_solaredge_one or self._last_used_api == "legacy":
             return self._legacy.get_lifetime_energy_cached()
         return self._one.get_lifetime_energy_cached()
 
     def requestSystemData(self, item_id: str) -> Any:
         """Delegate to the API we last used for full data (for lightweight check in legacy mode)."""
+        self._ensure_open()
         if not self._use_solaredge_one or self._last_used_api == "legacy":
             return self._legacy.requestSystemData(item_id)
         return self._one.requestSystemData(item_id)
 
     def requestSystemDataBatch(self, item_ids: list) -> list[Any]:
         """Use One for batch (only One supports it); used to detect when One has new data. Set to None when use_solaredge_one is False."""
+        self._ensure_open()
         return self._one.requestSystemDataBatch(item_ids)
 
     def get_inverter_models(self, serials: list) -> dict[str, str]:
         """Only One provides inverter models; when use_solaredge_one is False return empty."""
+        self._ensure_open()
         if not self._use_solaredge_one:
             return {}
         return self._one.get_inverter_models(serials)
 
     def get_site_info_cached(self) -> dict:
         """Site info (installation date, peak power) from One API; when legacy-only return empty."""
+        self._ensure_open()
         if not self._use_solaredge_one:
             return {}
         return self._one.get_site_info_cached()
 
     def get_dashboard_site_production_cached(self, installation_date: str | None) -> float | None:
         """Site lifetime production (Wh) from dashboard/energy; when legacy-only return None."""
+        self._ensure_open()
         if not self._use_solaredge_one:
             return None
         return self._one.get_dashboard_site_production_cached(installation_date)
 
     def get_layout_energy_by_inverter_cached(self, installation_date: str | None) -> dict:
         """Inverter/string lifetime energy from layout/energy by-inverter; when legacy-only return empty."""
+        self._ensure_open()
         if not self._use_solaredge_one:
             return {}
         return self._one.get_layout_energy_by_inverter_cached(installation_date)
