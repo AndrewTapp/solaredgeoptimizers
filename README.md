@@ -63,7 +63,7 @@ attribute on optimizer sensors.
 (`requirements: []`). The integration uses Home Assistant’s bundled `requests` and `pytz`.
 Legacy portal `systemData` parsing uses stdlib `json` only (the old `jsonfinder` requirement
 was removed in v2.4.21 after Home Assistant Core 2026.8.1 could not install it).
-See [`miscellaneous/20260904 Changes v2.4.22.md`](https://github.com/AndrewTapp/solaredgeoptimizers/miscellaneous/20260904%20Changes%20v2.4.22.md)
+See [`miscellaneous/20260904 Changes v2.4.22.md`](miscellaneous/20260904%20Changes%20v2.4.22.md)
 for the consolidated changes since v2.4.21.
 
 To set up the integration you will need:
