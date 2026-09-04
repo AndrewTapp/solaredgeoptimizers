@@ -60,23 +60,25 @@ Key Features:
 - Inactive/replaced optimizers (v2.4.19+): layout status passed into SolarEdgeOptimizerData;
   empty measurements for inactive units log at DEBUG only in _normalize_measurements_dict
 - Session close(): optional log_summary=False when called from dual API (single INFO at wrapper);
-  waits for in-flight HTTP calls (up to ~30s) before closing tracked sessions
+  waits longer than API_TIMEOUT_LONG for in-flight calls before closing tracked sessions
+- DEBUG logs response status/size/count summaries only; headers, cookies, full payloads,
+  and query values are not logged
 - v2.4.21+: ``decodeResult`` uses ``SE.systemData`` extraction then stdlib
   ``json.JSONDecoder.raw_decode`` (jsonfinder removed; ``manifest.json`` ``requirements`` is empty)
 """
-import time
-import threading
-import re
-import os
-
-import requests
 import json
 import logging
-import pytz
+import os
+import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, timezone as datetime_timezone
 
+import pytz
+import requests
 from requests import Session
-from datetime import datetime, timedelta
+
 from .const import (
     API_TIMEOUT_SHORT,
     API_TIMEOUT_LONG,
@@ -86,6 +88,7 @@ from .const import (
     LIFETIME_ENERGY_CACHE_TTL,
     MEASUREMENT_KEYS,
     is_status_active,
+    redact_url_for_log,
 )
 from .exceptions import SolarEdgeAPIError
 
@@ -172,8 +175,6 @@ def _parse_system_data_json(json_object, item_id, timezone, layout_status=None):
         json_object = json_object[0]
     if not isinstance(json_object, dict):
         _LOGGER.error("Unexpected data type returned for optimizer %s: %s", item_id, type(json_object))
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers (legacy): Response data: %s", json_object)
         return None
     if json_object.get("lastMeasurementDate") == "":
         if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -186,11 +187,19 @@ def _parse_system_data_json(json_object, item_id, timezone, layout_status=None):
     except KeyError as e:
         _LOGGER.error("Missing expected key in response for optimizer %s: %s", item_id, e)
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers (legacy): Response data: %s", json_object)
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Response keys for optimizer %s: %s",
+                item_id,
+                sorted(json_object),
+            )
         return None
     except Exception as e:  # pylint: disable=broad-except
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers (legacy): Response data: %s", json_object)
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Failed response keys for optimizer %s: %s",
+                item_id,
+                sorted(json_object),
+            )
         raise SolarEdgeAPIError("Error while processing data") from e
 
 
@@ -198,9 +207,9 @@ def _apply_lifetime_energy_to_optimizer_info(info, optimizer_id, lifetimeenergy)
     """Set lifetime_energy on optimizer info from lifetimeenergy dict (by string or int key)."""
     optimizer_id_str = str(optimizer_id)
     energy_data = lifetimeenergy.get(optimizer_id_str) or lifetimeenergy.get(optimizer_id) or {}
-    kWh = _lifetime_energy_to_kwh(energy_data)
-    if kWh is not None:
-        info.lifetime_energy = kWh
+    energy_kwh = _lifetime_energy_to_kwh(energy_data)
+    if energy_kwh is not None:
+        info.lifetime_energy = energy_kwh
     else:
         _LOGGER.warning("Lifetime energy data missing for optimizer %s, setting to 0", optimizer_id)
         info.lifetime_energy = 0.0
@@ -214,11 +223,19 @@ def _raise_for_system_data_http_error(response, item_id):
             response.status_code,
         )
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Server error response body for optimizer %s: %s", item_id, response.text)
+            _LOGGER.debug(
+                "Server error response size for optimizer %s: %d bytes",
+                item_id,
+                len(response.text),
+            )
         raise SolarEdgeAPIError(f"Temporary server error from SolarEdge (HTTP {response.status_code})")
     _LOGGER.error("Error sending request to SolarEdge. Status code: %s", response.status_code)
     if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug("Error response body for optimizer %s: %s", item_id, response.text)
+        _LOGGER.debug(
+            "Error response size for optimizer %s: %d bytes",
+            item_id,
+            len(response.text),
+        )
     raise SolarEdgeAPIError(f"Problem sending request to SolarEdge (HTTP {response.status_code})")
 
 
@@ -290,12 +307,14 @@ def _normalize_measurements_dict(json_object, panelid, expected_inactive=False):
         if _LOGGER.isEnabledFor(logging.WARNING) and isinstance(json_object, dict)
         else "N/A"
     )
-    _LOGGER.warning(
-        "Missing or invalid measurements for optimizer %s (panel_id: %s). Available keys: %s",
-        panelid,
-        serial,
-        available_keys,
-    )
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "Missing or invalid measurements for optimizer %s (panel_id: %s). "
+            "Available keys: %s",
+            panelid,
+            serial,
+            available_keys,
+        )
     return {}
 
 
@@ -308,8 +327,10 @@ def _apply_measurements_to_optimizer_data(instance, measurements, json_object, p
     if instance.current == 0.0 and instance.power == 0.0 and instance.voltage == 0.0 and instance.optimizer_voltage == 0.0:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "All measurements are zero for optimizer %s (serial: %s). Measurements dict: %s",
-                panelid, json_object.get("serialNumber", "unknown"), measurements,
+                "All measurements are zero for optimizer %s (serial: %s; %d fields)",
+                panelid,
+                json_object.get("serialNumber", "unknown"),
+                len(measurements),
             )
 
 
@@ -362,7 +383,8 @@ class solaredgeoptimizers:
         self._closed = False
         self._inflight = 0
         self._inflight_cond = threading.Condition()
-        self._close_wait_sec = 30.0
+        # Let the longest configured request finish before closing its Session.
+        self._close_wait_sec = float(API_TIMEOUT_LONG + 5)
         # Cache for requestListOfAllPanels() result
         self._panels_cache = None
         self._panels_cache_time = None
@@ -412,10 +434,6 @@ class solaredgeoptimizers:
                         "SolarEdge Optimizers (legacy): Refreshed lifetime energy cache (%d entries)",
                         len(self._lifetime_energy_cache) if isinstance(self._lifetime_energy_cache, dict) else 0,
                     )
-                    _LOGGER.debug(
-                        "SolarEdge Optimizers (legacy): Decoded lifetime energy data (by optimizer/string ID): %s",
-                        self._lifetime_energy_cache,
-                    )
             except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
                 # Transient DNS/network errors: keep previous cache, do not update cache time
                 _LOGGER.warning(
@@ -439,7 +457,10 @@ class solaredgeoptimizers:
     def check_login(self):
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers (legacy): Login check URL: %s", url)
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Login check URL: %s",
+                redact_url_for_log(url),
+            )
 
         kwargs = {}
         kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
@@ -457,7 +478,6 @@ class solaredgeoptimizers:
                 with requests.get(url, **kwargs) as r:
                     if _LOGGER.isEnabledFor(logging.DEBUG):
                         _LOGGER.debug("SolarEdge Optimizers (legacy): Login check status: %s", r.status_code)
-                        _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response headers: %s", dict(r.headers))
                         _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response body length: %s bytes", len(r.text))
                     return r.status_code
             finally:
@@ -485,13 +505,16 @@ class solaredgeoptimizers:
         try:
             with requests.get(url, **kwargs) as r:
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout URL: %s", url)
-                    _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout status: %s", r.status_code)
-                    _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout response headers: %s", dict(r.headers))
                     _LOGGER.debug(
-                        "SolarEdge Optimizers (legacy): requestLogicalLayout response (status %s): %s",
+                        "SolarEdge Optimizers (legacy): Logical layout URL: %s",
+                        redact_url_for_log(url),
+                    )
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout status: %s", r.status_code)
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): Logical layout response size "
+                        "(status %s): %d bytes",
                         r.status_code,
-                        r.text[:2000] if len(r.text) > 2000 else r.text,
+                        len(r.text),
                     )
                 return r.text
         finally:
@@ -516,7 +539,10 @@ class solaredgeoptimizers:
         """Request logical layout JSON for the site. Returns raw response text."""
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers (legacy): requestLogicalLayout URL: %s", url)
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): requestLogicalLayout URL: %s",
+                redact_url_for_log(url),
+            )
             _LOGGER.debug(
                 "SolarEdge Optimizers (legacy): Making logical layout request (timeout=%ss)",
                 API_TIMEOUT_LONG,
@@ -604,7 +630,10 @@ class solaredgeoptimizers:
         url = f"{base}?{params}"
 
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Endpoint (single optimizer systemData): %s", url)
+            _LOGGER.debug(
+                "Endpoint (single optimizer systemData): %s",
+                redact_url_for_log(url),
+            )
 
         kwargs = {
             "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
@@ -619,7 +648,11 @@ class solaredgeoptimizers:
                     _raise_for_system_data_http_error(r, itemId)
                 json_object = self.decodeResult(r.text)
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("Decoded JSON object for optimizer %s: %s", itemId, json_object)
+                    _LOGGER.debug(
+                        "Decoded optimizer %s response (%d top-level keys)",
+                        itemId,
+                        len(json_object) if isinstance(json_object, dict) else 0,
+                    )
                 return _parse_system_data_json(
                     json_object, itemId, self._timezone, layout_status=layout_status
                 )
@@ -634,7 +667,10 @@ class solaredgeoptimizers:
         try:
             data = json.loads(response)
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("Parsed lifetime energy data (by optimizer/string ID): %s", data)
+                _LOGGER.debug(
+                    "Parsed lifetime energy data (%d optimizer/string entries)",
+                    len(data) if isinstance(data, dict) else 0,
+                )
             return data
         except json.JSONDecodeError as e:
             _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
@@ -651,8 +687,8 @@ class solaredgeoptimizers:
             response = self.getLifeTimeEnergy()
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "Response from lifetime energy endpoint: %s",
-                    response[:2000] if len(response) > 2000 else response,
+                    "Lifetime energy endpoint response size: %d bytes",
+                    len(response),
                 )
             lifetimeenergy = self._parse_lifetime_energy_response(response)
             self._lifetime_energy_cache = lifetimeenergy
@@ -686,6 +722,7 @@ class solaredgeoptimizers:
                 len(optimizer_ids), max_workers,
             )
         data = []
+        missing_active_measurements = 0
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_id = {
                 executor.submit(
@@ -698,11 +735,22 @@ class solaredgeoptimizers:
                 try:
                     info = future.result()
                     if info is not None:
+                        if (
+                            not getattr(info, "_has_valid_measurements", False)
+                            and is_status_active(status_lookup.get(optimizer_id))
+                        ):
+                            missing_active_measurements += 1
                         _apply_lifetime_energy_to_optimizer_info(info, optimizer_id, lifetimeenergy)
                         data.append(info)
                 except Exception as e:  # pylint: disable=broad-except
                     _LOGGER.error("Error fetching data for optimizer %s: %s", optimizer_id, e)
 
+        if missing_active_measurements:
+            _LOGGER.warning(
+                "SolarEdge Optimizers (legacy): %d active optimizer(s) returned "
+                "missing or invalid measurements in this refresh",
+                missing_active_measurements,
+            )
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers (legacy): requestAllData complete, %d optimizers with data",
@@ -742,9 +790,9 @@ class solaredgeoptimizers:
 
         json_object = self.decodeResult(r)
         try:
-            # Note: the timestamp provided by SolarEdge is not a pure POSIX timestamp, but in fact contains a timezone offset.
+            # SolarEdge chart timestamps are milliseconds; treat as UTC epoch.
             return {
-                datetime.utcfromtimestamp(pair['date'] / 1000).astimezone(pytz.utc): pair['value']
+                datetime.fromtimestamp(pair['date'] / 1000, tz=datetime_timezone.utc): pair['value']
                 for pair in json_object['dateValuePairs']
             }
         except Exception as e:  # pylint: disable=broad-except
@@ -801,7 +849,7 @@ class solaredgeoptimizers:
         """
         # Use f-string instead of % formatting for better performance
         last_error = SolarEdgeAPIError(f"Could not perform request within {n_retries} retries")
-        for i in range(n_retries):
+        for _ in range(n_retries):
             try:
                 time.sleep(wait_sec)
                 res = self._doRequest(method=method, request_url=request_url, data=data)
@@ -942,13 +990,12 @@ class solaredgeoptimizers:
                 timeout=API_TIMEOUT_LONG,
             ) as response:
                 if _LOGGER.isEnabledFor(logging.DEBUG):
-                    response_preview = response.text[:2000] if len(response.text) > 2000 else response.text
                     _LOGGER.debug(
-                        "Endpoint: %s %s | Status: %s | Response (preview): %s",
+                        "Endpoint: %s %s | Status: %s | Response size: %d bytes",
                         method,
-                        request_url,
+                        redact_url_for_log(request_url),
                         response.status_code,
-                        response_preview,
+                        len(response.text),
                     )
                 response_text = response.text
                 status_code = response.status_code
@@ -978,7 +1025,10 @@ class solaredgeoptimizers:
         # Use f-string instead of .format() for better performance
         url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy?timeUnit=ALL"
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("Endpoint (lifetime energy, whole site): %s", url)
+            _LOGGER.debug(
+                "Endpoint (lifetime energy, whole site): %s",
+                redact_url_for_log(url),
+            )
         return self._doRequest("POST", url)
 
     def close(self, log_summary: bool = True):
@@ -1134,6 +1184,7 @@ class solaredgeoptimizers:
                 continue
         raise ValueError("data not found")
 
+
 class SolarEdgeSite:
     def __init__(self, json_obj):
         if _LOGGER.isEnabledFor(logging.DEBUG):
@@ -1215,7 +1266,9 @@ class SolarEdgeInverter:
             self.model = data.get("model", "")
             self.maxActivePower = data.get("maxActivePower")  # kW (One API) or None
 
-            self.strings = self.__GetStringInformation(json_obj["logicalTree"]["children"][index]["children"][index2]["children"], index2)
+            self.strings = self.__GetStringInformation(
+                json_obj["logicalTree"]["children"][index]["children"][index2]["children"]
+            )
         else:
             data = json_obj["logicalTree"]["children"][index]["data"]
             self.inverterId = data["id"]
@@ -1230,10 +1283,11 @@ class SolarEdgeInverter:
             self.model = data.get("model", "")
             self.maxActivePower = data.get("maxActivePower")  # kW (One API) or None
 
-            self.strings = self.__GetStringInformation(json_obj["logicalTree"]["children"][index]["children"], index)
+            self.strings = self.__GetStringInformation(
+                json_obj["logicalTree"]["children"][index]["children"]
+            )
 
-
-    def __GetStringInformation(self, json_obj, index):
+    def __GetStringInformation(self, json_obj):
         strings = []
 
         for i in range(len(json_obj)):
