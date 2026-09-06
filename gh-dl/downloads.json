@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1",
+  "owner": "AndrewTapp",
+  "repo": "solaredgeoptimizers",
+  "visibility": "public",
+  "generatedAt": "2026-09-06T07:32:19.569Z",
+  "stats": {
+    "total": 0,
+    "day": 0,
+    "week": 0,
+    "month": 0
+  },
+  "partial": {
+    "day": true,
+    "week": true,
+    "month": true
+  },
+  "snapshots": {
+    "windowDays": 45,
+    "count": 1,
+    "firstDate": "2026-09-06",
+    "lastDate": "2026-09-06",
+    "series": {
+      "2026-09-06": 0
+    }
+  },
+  "profile": {
+    "defaultMode": "daily",
+    "hourlyEnabled": false
+  }
+}
