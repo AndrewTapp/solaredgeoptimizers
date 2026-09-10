@@ -12,8 +12,6 @@ Each constant is documented below with a full description of what it is used for
   When True, integration uses One API with legacy fallback; when False, legacy only.
 - CONF_ENTITY_PREFIX: Optional prefix for entity_id (e.g. "se_" -> sensor.se_power_...).
 - CONF_INCLUDE_SITE_ID_IN_ENTITY_ID: When True, entity IDs include site ID for multi-site setups.
-- DATA_API_CLIENT: Key used in hass.data for the API client (internal).
-- PANEL_DATA: Key for panel data in coordinator (internal).
 
 === TIMING & POLLING ===
 - UPDATE_DELAY: Coordinator tick interval (how often the coordinator runs its update logic).
@@ -92,6 +90,7 @@ Utility Functions:
 - build_optimizer_tasks(): Optimizer task list for sensor setup and coordinator position indexing
 - resolve_duplicate_indices(): Assign letter suffixes to duplicate positions
 - format_config_entry_title(): Safe substitution of config.title_entry %(siteid)s with fallback
+- redact_url_for_log(): Remove query/fragment values before writing URLs to DEBUG
 - UNFORMATTED_CONFIG_TITLE_MARKER: Detects literal %(siteid)s in stored config entry titles
 - ENTITY_ADD_BATCH_SIZE: Startup batch size for async_add_entities (default 50)
 """
@@ -101,6 +100,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import timedelta
 import logging
+from urllib.parse import urlparse, urlunparse
 
 DOMAIN = "solaredgeoptimizers"
 CONF_SITE_ID = "siteid"
@@ -108,11 +108,19 @@ CONF_USE_SOLAREDGE_ONE = "use_solaredge_one"  # If True, use SolarEdge One porta
 CONF_ENTITY_PREFIX = "entity_id_prefix"  # Optional prefix for entity_id (e.g. "se_" -> sensor.se_power_2065855)
 # If True, entity IDs include site ID (e.g. power_2065855_1_1_1); default False
 CONF_INCLUDE_SITE_ID_IN_ENTITY_ID = "include_site_id_in_entity_id"
-DATA_API_CLIENT = "api_client"
-
-PANEL_DATA = "panel_data"
 
 LOGGER = logging.getLogger(__package__)
+
+
+def redact_url_for_log(url: str) -> str:
+    """Remove query and fragment data before a URL is written to logs."""
+    if not url:
+        return url
+    parsed = urlparse(url)
+    if not parsed.query and not parsed.fragment:
+        return url
+    return urlunparse(parsed._replace(query="***", fragment=""))
+
 
 # Coordinator tick interval. Actual portal load is controlled by adaptive polling in the coordinator.
 UPDATE_DELAY = timedelta(minutes=5)
@@ -221,11 +229,12 @@ def status_display_value(raw_status: str | None) -> str:
 def status_icon(display_value: str | None) -> str:
     """Return icon for status sensor from display value: blank/Active→active icon, Inactive→inactive, else unknown."""
     v = (display_value or "").strip()
-    if v == STATUS_DISPLAY_BLANK or v == "Active":
+    if v in (STATUS_DISPLAY_BLANK, "Active"):
         return ICON_STATUS_ACTIVE
     if v == "Inactive":
         return ICON_STATUS_INACTIVE
     return ICON_STATUS_UNKNOWN
+
 
 # Orientation sensor icons
 ICON_AZIMUTH = "mdi:compass"
@@ -412,7 +421,7 @@ def parse_optimizer_display_name_to_indices(
 
 def make_duplicate_sort_key(item, get_status: Callable, get_serial: Callable) -> tuple[int, str]:
     """Create sort key for duplicate resolution: active first, then alphabetically by serial number.
-    
+
     Used by resolve_duplicate_indices to sort items with the same position key.
     Active devices (blank or status='ACTIVE') sort before inactive ones.
     """
@@ -424,17 +433,17 @@ def make_duplicate_sort_key(item, get_status: Callable, get_serial: Callable) ->
 
 def resolve_duplicate_indices(items: list, get_key: Callable, get_status: Callable, get_serial: Callable, logger=None) -> dict[int, str]:
     """Resolve duplicate position keys by adding letter suffixes.
-    
+
     Args:
         items: List of items to check for duplicates
         get_key: Function to extract the position key from an item
         get_status: Function to extract status from an item (for sorting)
         get_serial: Function to extract serial number from an item (for sorting)
         logger: Optional logger for debug output
-    
+
     Returns:
         dict mapping item index -> suffix (empty string for first, 'a', 'b', etc. for duplicates)
-    
+
     Active devices come first (sorted by serial), then alphabetically by serial.
     First item keeps original key, subsequent get 'a', 'b', etc. suffixes.
     """
@@ -442,19 +451,19 @@ def resolve_duplicate_indices(items: list, get_key: Callable, get_status: Callab
     for idx, item in enumerate(items):
         key = get_key(item)
         key_groups[key].append(idx)
-    
+
     resolved = {}
     for key, indices in key_groups.items():
         if len(indices) == 1:
             resolved[indices[0]] = ""
             continue
-        
+
         group_items = [(idx, items[idx]) for idx in indices]
         sorted_items = sorted(
             group_items,
             key=lambda x: make_duplicate_sort_key(x[1], get_status, get_serial)
         )
-        
+
         if logger and logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "SolarEdge Optimizers: Resolving %d duplicate keys for '%s': %s",
@@ -462,7 +471,7 @@ def resolve_duplicate_indices(items: list, get_key: Callable, get_status: Callab
                 key,
                 [(get_status(items[idx]) or "unknown", get_serial(items[idx]) or "unknown") for idx, _ in sorted_items],
             )
-        
+
         suffix_idx = 0
         for i, (idx, _item) in enumerate(sorted_items):
             if i == 0:
@@ -470,14 +479,14 @@ def resolve_duplicate_indices(items: list, get_key: Callable, get_status: Callab
             else:
                 resolved[idx] = chr(ord('a') + suffix_idx)
                 suffix_idx += 1
-        
+
         if logger and logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "SolarEdge Optimizers: Resolved suffixes for '%s': %s",
                 key,
                 {idx: resolved[idx] or "(none)" for idx, _ in sorted_items},
             )
-    
+
     return resolved
 
 

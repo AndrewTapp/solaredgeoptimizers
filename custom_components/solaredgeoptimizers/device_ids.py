@@ -5,15 +5,15 @@ Shared helpers for device registry identifier strings used by the coordinator wh
 registering site/inverter/string devices and by the sensor platform when linking entities.
 
 link_device_info() returns identifiers-only DeviceInfo so Home Assistant matches pre-registered
-devices without re-applying via_device during async_add_entities (avoids startup warnings from
+devices without re-applying hierarchy during async_add_entities (avoids startup warnings from
 v2.4.17 onward). Optimizer devices are registered in the sensor platform before entities are
-added; registration uses via_device=(DOMAIN, parent_id) as a tuple (not a set).
+added; registration uses via_device_id of the parent DeviceEntry (looked up by identifier).
 
 Path parsers (inv_str_keys_from_entity_id_path, opt_keys_from_entity_id_path, etc.) respect
 include_site_id_in_entity_id so device identifiers stay aligned with entity_id_path tuples,
 including suffixed optimizers (e.g. opt key 1a). string_device_keys_for_registration() and
 build_string_device_key_lookup() mirror coordinator string device registration (duplicate and
-portal suffixes on str_key) so optimizer via_device links to the correct parent string.
+portal suffixes on str_key) so optimizer via_device_id links to the correct parent string.
 Large sites rely on batched entity registration in the sensor platform (v2.4.18+).
 """
 
@@ -49,7 +49,6 @@ def string_device_identifier(entry_id: str, inv_key: str | int, str_key: str | i
 def string_device_keys_for_registration(
     string,
     *,
-    inv_idx: int,
     str_idx: int,
     inv_idx_str: str,
     str_suffix: str = "",
@@ -80,8 +79,8 @@ def build_string_device_key_lookup(site, logger=None) -> dict[Any, tuple[str | i
         indexed_strings = list(enumerate(inverter.strings, start=1))
         str_suffix_map = resolve_duplicate_indices(
             indexed_strings,
-            get_key=lambda t: string_position_key_from_display_name(
-                getattr(t[1], "displayName", "") or "", inv_idx, t[0]
+            get_key=lambda t, current_inv_idx=inv_idx: string_position_key_from_display_name(
+                getattr(t[1], "displayName", "") or "", current_inv_idx, t[0]
             ),
             get_status=lambda t: getattr(t[1], "status", "") or "",
             get_serial=lambda t: getattr(
@@ -93,7 +92,6 @@ def build_string_device_key_lookup(site, logger=None) -> dict[Any, tuple[str | i
             str_suffix = str_suffix_map.get(list_idx, "")
             inv_key, str_key = string_device_keys_for_registration(
                 string,
-                inv_idx=inv_idx,
                 str_idx=str_idx,
                 inv_idx_str=inv_idx_str,
                 str_suffix=str_suffix,
@@ -157,9 +155,9 @@ def opt_keys_from_entity_id_path(
 
 
 def link_device_info(device_identifier: str) -> DeviceInfo:
-    """DeviceInfo that links an entity to a pre-registered device without re-stating via_device.
+    """DeviceInfo that links an entity to a pre-registered device without re-stating hierarchy.
 
     Home Assistant classifies this as a link-type device info (identifiers only), so entity
-    setup does not call async_get_or_create with via_device and trigger parent-order warnings.
+    setup does not call async_get_or_create with via_device_id and trigger parent-order warnings.
     """
     return DeviceInfo(identifiers={(DOMAIN, device_identifier)})

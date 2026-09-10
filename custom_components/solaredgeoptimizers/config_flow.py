@@ -42,10 +42,9 @@ Cleanup:
   sessions are not left open when the user cancels or validation fails (DEBUG on success).
 - Config entry title: `format_config_entry_title()` substitutes `%(siteid)s` with fallback
   when the translation template is malformed.
-- async_remove_entry: Pops coordinator if present, awaits executor `api.close()` (dual API
-  emits one INFO close summary; WARNING if a backend close fails; child backends use
-  log_summary=False), then removes entities and devices via the shared helper in `__init__.py`.
-  Normal unload in `__init__.py` shuts down the coordinator before closing the API.
+- async_remove_entry: Uses shared helpers from `__init__.py` to stop coordinator
+  work, pop stored state, close both API backends, and then remove registry
+  entities/devices.
 """
 from __future__ import annotations
 
@@ -64,9 +63,14 @@ from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import dt as dt_util
 
 from .const import CONF_SITE_ID, CONF_USE_SOLAREDGE_ONE, DOMAIN, format_config_entry_title
-from . import remove_entities_and_devices_for_entry
+from . import (
+    async_close_coordinator_api,
+    async_shutdown_coordinator,
+    remove_entities_and_devices_for_entry,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
 
 def _normalized_prefix(value: str | None) -> str:
     """Normalize entity_id_prefix consistently with sensor setup."""
@@ -308,7 +312,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
 
-    async def async_step_reauth(self, entry_data: dict[str, Any]) -> FlowResult:
+    async def async_step_reauth(self, _entry_data: dict[str, Any]) -> FlowResult:
         """Perform reauth when authentication has failed (e.g. 401)."""
         entry = self._get_reauth_entry()
         if entry is not None:
@@ -406,27 +410,22 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_remove_entry(
         self, hass: HomeAssistant, entry: ConfigEntry
     ) -> None:
-        """Clean up when the integration is removed: close API (release file descriptors), then remove entities/devices."""
+        """Shut down polling, close API resources, then remove entities and devices."""
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
                 "SolarEdge Optimizers: async_remove_entry for entry %s",
                 entry.entry_id,
             )
-        # Close API so all sessions/connection pools are released (in case unload did not run or did not close)
-        coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
-        if coordinator is not None and hasattr(coordinator, "my_api"):
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Optimizers config: Closing API on config entry removal for entry %s",
-                    entry.entry_id,
-                )
-            try:
-                await hass.async_add_executor_job(coordinator.my_api.close)
-            except Exception as e:  # pylint: disable=broad-except
-                _LOGGER.warning(
-                    "SolarEdge Optimizers: Error closing API on removal (file descriptors may leak): %s",
-                    e,
-                )
+        coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+        await async_shutdown_coordinator(
+            coordinator, f"removal of entry {entry.entry_id}"
+        )
+        stored_coordinator = hass.data.get(DOMAIN, {}).pop(entry.entry_id, None)
+        await async_close_coordinator_api(
+            hass,
+            stored_coordinator or coordinator,
+            f"removal of entry {entry.entry_id}",
+        )
         remove_entities_and_devices_for_entry(hass, entry)
 
     @staticmethod
@@ -487,9 +486,11 @@ class SolarEdgeOptimizersOptionsFlowHandler(config_entries.OptionsFlow):
             if should_rebuild_entities:
                 rebuild_set = self.hass.data.setdefault(DOMAIN, {}).setdefault("_rebuild_entity_registry", set())
                 rebuild_set.add(entry_id)
+
             async def _reload_after_save() -> None:
                 await self.hass.async_block_till_done()
                 await self.hass.config_entries.async_reload(entry_id)
+
             self.hass.async_create_task(_reload_after_save())
             return result
 
