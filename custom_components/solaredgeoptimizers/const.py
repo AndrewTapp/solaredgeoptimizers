@@ -89,6 +89,8 @@ Utility Functions:
 - string_position_key_from_display_name(): (inv, str) key for string duplicate resolution
 - build_optimizer_tasks(): Optimizer task list for sensor setup and coordinator position indexing
 - resolve_duplicate_indices(): Assign letter suffixes to duplicate positions
+- collapse_duplicate_inverter_slots(): Drop portal phantom/replaced inverter peers
+  that share the same displayOrder/slot (keep ACTIVE / richest tree)
 - format_config_entry_title(): Safe substitution of config.title_entry %(siteid)s with fallback
 - redact_url_for_log(): Remove query/fragment values before writing URLs to DEBUG
 - UNFORMATTED_CONFIG_TITLE_MARKER: Detects literal %(siteid)s in stored config entry titles
@@ -429,6 +431,89 @@ def make_duplicate_sort_key(item, get_status: Callable, get_serial: Callable) ->
     is_active = 0 if is_status_active(status) else 1  # 0 sorts before 1
     serial = get_serial(item) or ""
     return (is_active, serial)
+
+
+def _inverter_slot_key(inverter) -> str:
+    """Logical inverter slot key (displayName / displayOrder), falling back to inverter id."""
+    return str(
+        getattr(inverter, "displayName", "")
+        or getattr(inverter, "inverterId", "")
+        or ""
+    )
+
+
+def _inverter_optimizer_count(inverter) -> int:
+    """Return total optimizer count under an inverter (all strings)."""
+    total = 0
+    for string in getattr(inverter, "strings", None) or []:
+        total += len(getattr(string, "optimizers", None) or [])
+    return total
+
+
+def _pick_canonical_inverter(group: list):
+    """Choose one inverter from a same-slot group (ACTIVE alone, else richest tree)."""
+    if len(group) == 1:
+        return group[0]
+    active = [
+        inv
+        for inv in group
+        if is_status_active(getattr(inv, "status", "") or "")
+    ]
+    if len(active) == 1:
+        return active[0]
+    candidates = active if active else group
+    return max(
+        candidates,
+        key=lambda inv: (
+            _inverter_optimizer_count(inv),
+            1 if is_status_active(getattr(inv, "status", "") or "") else 0,
+            str(getattr(inv, "serialNumber", "") or ""),
+        ),
+    )
+
+
+def collapse_duplicate_inverter_slots(inverters: list, logger=None) -> list:
+    """Drop competing portal inverter rows that share the same logical display slot.
+
+    SolarEdge may leave a replaced/phantom inverter in the layout with the same
+    displayOrder as the live unit (often INACTIVE and empty). Previously those
+    peers became suffixed HA devices (e.g. Inverter 1a). This keeps one inverter
+    per slot: the sole ACTIVE peer when unambiguous, otherwise the richest
+    optimizer tree. Distinct displayOrders (true multi-inverter sites) are unchanged.
+    """
+    if not inverters or len(inverters) < 2:
+        return inverters
+
+    log = logger or LOGGER
+    groups: dict[str, list] = defaultdict(list)
+    order: list[str] = []
+    for inv in inverters:
+        key = _inverter_slot_key(inv)
+        if key not in groups:
+            order.append(key)
+        groups[key].append(inv)
+
+    kept: list = []
+    for key in order:
+        group = groups[key]
+        if len(group) == 1:
+            kept.append(group[0])
+            continue
+        winner = _pick_canonical_inverter(group)
+        kept.append(winner)
+        for inv in group:
+            if inv is winner:
+                continue
+            log.info(
+                "SolarEdge Optimizers: Dropping duplicate inverter for display slot %r "
+                "(serial=%s status=%s optimizers=%d); keeping serial=%s",
+                key,
+                getattr(inv, "serialNumber", "") or "?",
+                getattr(inv, "status", "") or "(none)",
+                _inverter_optimizer_count(inv),
+                getattr(winner, "serialNumber", "") or "?",
+            )
+    return kept
 
 
 def resolve_duplicate_indices(items: list, get_key: Callable, get_status: Callable, get_serial: Callable, logger=None) -> dict[int, str]:

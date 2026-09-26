@@ -59,12 +59,12 @@ attribute on optimizer sensors.
 
 ## What You Need
 
-**Current release:** **2.4.22** (`manifest.json`). No third-party Python packages are declared
+**Current release:** **2.5.0** (`manifest.json`). No third-party Python packages are declared
 (`requirements: []`). The integration uses Home Assistant’s bundled `requests` and `pytz`.
 Legacy portal `systemData` parsing uses stdlib `json` only (the old `jsonfinder` requirement
 was removed in v2.4.21 after Home Assistant Core 2026.8.1 could not install it).
-See [`miscellaneous/20260904 Changes v2.4.22.md`](https://github.com/AndrewTapp/solaredgeoptimizers/blob/main/custom_components/solaredgeoptimizers/miscellaneous/20260904%20Changes%20v2.4.22.md)
-for the consolidated changes since v2.4.21.
+See [`miscellaneous/20260925 Changes v2.5.0.md`](miscellaneous/20260925%20Changes%20v2.5.0.md)
+for this release (duplicate inverter-slot collapse and removable devices).
 
 To set up the integration you will need:
 
@@ -243,11 +243,15 @@ When an optimizer, string, or inverter is marked as **Inactive** in the SolarEdg
 
 When the SolarEdge API returns multiple inverters, strings, or optimizers with the same name (e.g. two "Inverter 1" entries after a hardware replacement), the integration resolves duplicates automatically:
 
-- **Inverters**: Active (including blank status) inverters come first (sorted by serial number), then other statuses. The first active inverter keeps the original name (e.g. "Inverter 1"); subsequent duplicates get alphabetical suffixes ("Inverter 1a", "Inverter 1b", etc.).
+- **Inverters (v2.5.0+):** Portal rows that share the **same display slot** (`displayOrder` / `displayName`, e.g. both `"1"`) are collapsed to **one** inverter before devices are created. The integration keeps the sole **ACTIVE** peer when that is unambiguous, otherwise the row with the **most optimizers**. A replaced/phantom inverter that is INACTIVE and empty therefore no longer becomes `Inverter 1a`. True multi-inverter sites with distinct slots (`1` and `2`) are unchanged. If more than one inverter still shares a name after that (unusual), active-first suffix rules still apply.
 - **Strings**: Active (including blank status) strings come first (sorted by their position in the API response), then other statuses. The first active string keeps the original name; duplicates get suffixes.
-- **Optimizers**: Active (including blank status) optimizers come first (sorted by serial number), then other statuses. The first active optimizer keeps the original name; duplicates get suffixes. If the portal already names a unit **1.1.1a**, that letter is preserved.
+- **Optimizers**: Active (including blank status) optimizers come first (sorted by serial number), then other statuses. The first active optimizer keeps the original name; duplicates get suffixes. If the portal already names a unit **1.1.1a**, that letter is preserved. Replaced panels at the same slot are **not** collapsed away (lifetime history is retained).
 
 This ensures each device and sensor has a unique name and entity ID, even when the API returns duplicate names.
+
+### Removing ghost devices (v2.5.0+)
+
+After upgrading, reload the integration. Extra inverter/string/optimizer devices from earlier portal duplicates can be deleted in **Settings → Devices & services → Devices** (open the device → **Delete**). The site parent device cannot be removed while the integration is configured. Deleted ghosts should not reappear on the next poll once the layout collapse is in effect.
 
 ## Replacing optimizers or inverters (hardware swap)
 
