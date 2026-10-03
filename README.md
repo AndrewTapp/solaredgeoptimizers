@@ -318,6 +318,7 @@ Until this integration is part of Home Assistant Core, installing via HACS is re
 
 2. **Install the integration**
    - In HACS, open **SolarEdge Optimizers** (or **SolarEdge Optimizers Data**) and click **Download**.
+   - Versioned releases after this `hacs.json` change install from `solaredgeoptimizers.zip` on the GitHub Release (so HACS can count downloads). **v2.5.0 and earlier** still install from the repository tree.
 
 3. **Restart Home Assistant.**
 
