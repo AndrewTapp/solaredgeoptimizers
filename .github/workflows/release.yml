@@ -1,0 +1,43 @@
+# Attach solaredgeoptimizers.zip to GitHub Releases so HACS zip_release installs (and download counts) work.
+# On GitHub this file must live at the repository root: .github/workflows/release.yml
+name: Attach HACS zip to release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to attach solaredgeoptimizers.zip
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  attach-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+
+      - name: Build solaredgeoptimizers.zip
+        run: |
+          set -euo pipefail
+          if [ -d custom_components/solaredgeoptimizers ]; then
+            SRC=custom_components/solaredgeoptimizers
+          else
+            SRC=.
+          fi
+          test -f "$SRC/manifest.json"
+          # Files at zip root: HACS extractall targets custom_components/solaredgeoptimizers
+          (cd "$SRC" && zip -r "$GITHUB_WORKSPACE/solaredgeoptimizers.zip" . \
+            -x "*.pyc" -x "*__pycache__*" -x "*.git*")
+
+      - name: Upload zip to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          gh release upload "$TAG" solaredgeoptimizers.zip --clobber
