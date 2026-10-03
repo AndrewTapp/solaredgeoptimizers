@@ -87,6 +87,7 @@ from .const import (
     PANELS_CACHE_TTL_LEGACY,
     LIFETIME_ENERGY_CACHE_TTL,
     MEASUREMENT_KEYS,
+    collapse_duplicate_inverter_slots,
     is_status_active,
     redact_url_for_log,
 )
@@ -1193,8 +1194,16 @@ class SolarEdgeSite:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug("SolarEdge Optimizers: Getting all inverters for site %s", self.siteId)
         self.inverters = self.__GetAllInverters(json_obj)
+        before_count = len(self.inverters)
+        self.inverters = collapse_duplicate_inverter_slots(self.inverters, logger=_LOGGER)
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers: Site %s initialized with %d inverters", self.siteId, len(self.inverters))
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Site %s initialized with %d inverters"
+                " (from %d portal rows after slot collapse)",
+                self.siteId,
+                len(self.inverters),
+                before_count,
+            )
 
     def __GetAllInverters(self, json_obj):
         if _LOGGER.isEnabledFor(logging.DEBUG):

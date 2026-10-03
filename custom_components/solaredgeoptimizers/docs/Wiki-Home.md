@@ -90,8 +90,9 @@ The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitorin
 ### Requirements
 
 - **Home Assistant** (tested with recent versions; Core **2026.8.1+** supported).
-- **Current version:** **2.4.22** (`manifest.json`), consolidating all hardening
-  since 2.4.21; see `miscellaneous/20260904 Changes v2.4.22.md`.
+- **Current version:** **2.5.0** (`manifest.json`); see `miscellaneous/20260925 Changes v2.5.0.md`
+  (duplicate inverter-slot collapse + removable devices). Prior hardening in
+  `miscellaneous/20260904 Changes v2.4.22.md`.
 - **SolarEdge monitoring account**: Site ID, username (email), password.
 - **Network**: Outbound HTTPS to `monitoring.solaredge.com` (legacy and SolarEdge One both use this host; SolarEdge One also uses `login.solaredge.com` for OAuth).
 - **Python dependency**: none declared in `manifest.json` (legacy decode uses stdlib `json` only; `requests` / `pytz` come from the Home Assistant environment). Older builds that listed `jsonfinder==0.4.2` can fail setup on Core 2026.8.1+ with `Requirements for solaredgeoptimizers not found` — upgrade to **v2.4.21+**.
@@ -702,6 +703,7 @@ logger:
 | Setup error `no attribute 'async_setup_entry'` or `too many values to unpack` | Usually a **partial deploy**: copy the **entire** integration folder together. `sensor.py` must be ~1,800 lines with `async_setup_entry` and must use `build_optimizer_tasks` from `const.py` (not a local 3-tuple parser). |
 | Duplicate entity IDs (e.g. sensor.power_2) | Use a unique Entity ID prefix per site, or ensure you’re on a version that uses path-based entity IDs. Trailing `_2` on an otherwise correct path (e.g. `power_1_0_1_2`) is HA registry disambiguation — remove/re-add if stale. |
 | Duplicate sensors/devices after optimizer or inverter swap | The integration uses position-based identity; after an update you should see one sensor per position. If you still have duplicates from before that change, **remove the integration** (Settings → Integrations → Delete) and **add it again** so the registry is cleaned and recreated with position-based devices. |
+| Extra inverter devices for one physical unit (e.g. `Inverter 1` + `1a`, Issue #66) | **v2.5.0+** collapses portal inverter rows that share the same display slot (ACTIVE / richest tree). Reload after upgrade, then **Delete** leftover ghost devices in the device UI (site parent cannot be removed). |
 | Two inverters (one with sensors, one with strings) | Usually caused by mismatched device IDs from an older release. **Remove the integration** and **add it again** so devices and entities are recreated with position/display-name IDs from the coordinator. |
 | “references a non existing via_device” on every startup | Fixed from **v2.4.17**: coordinator registers site/inverter/string devices before entities; entities link with identifiers-only `device_info` (`device_ids.link_device_info`). Update via HACS and restart; re-add the integration only if warnings persist on 2.4.17+. |
 | 403 Forbidden on inverter information | Non-fatal. The integration logs a warning; inverter and optimizer devices use position-based identity so model names may be missing but all sensors and devices work. |
@@ -730,7 +732,7 @@ solaredgeoptimizers/
 ├── api_dual.py            # SolarEdgeDualAPI: use_solaredge_one; when True tries One first then legacy, when False legacy only; exposes _obtained_from; close() both backends
 ├── config_flow.py         # Config flow, validation (dual API), format_config_entry_title, async_remove_entry (close API + shared cleanup helper)
 ├── device_ids.py          # Shared device registry identifiers; string_device_keys_for_registration, build_string_device_key_lookup; link_device_info (identifiers-only entity device_info)
-├── const.py               # DOMAIN, ENTITY_ADD_BATCH_SIZE, intervals, cache TTLs, sensor types, status helpers, parse_string/optimizer display names (incl. 1.1.1a suffix), build_optimizer_tasks, resolve_duplicate_indices, format_config_entry_title
+├── const.py               # DOMAIN, ENTITY_ADD_BATCH_SIZE, intervals, cache TTLs, sensor types, status helpers, parse_string/optimizer display names (incl. 1.1.1a suffix), build_optimizer_tasks, collapse_duplicate_inverter_slots, resolve_duplicate_indices, format_config_entry_title
 ├── exceptions.py          # SolarEdgeAPIError: custom exception for API/processing errors (used by legacy client)
 ├── coordinator.py         # DataUpdateCoordinator, adaptive polling, revert-to-One retry (30 min when from legacy), aggregation, _obtained_from, AggregationContext namedtuple, uses resolve_duplicate_indices from const.py
 ├── hacs.json              # HACS metadata
@@ -783,6 +785,7 @@ solaredgeoptimizers/
 | `build_optimizer_tasks()` | Build optimizer task list for sensor setup and coordinator position indexing (shared). |
 | `string_position_key_from_display_name()` | (inv, str) key for string duplicate resolution (ignores suffix). |
 | `make_duplicate_sort_key()` | Sort key for duplicate resolution: active first, then by serial. |
+| `collapse_duplicate_inverter_slots()` | Keep one inverter per display slot (ACTIVE / richest tree); drop portal phantoms (v2.5.0+). |
 | `resolve_duplicate_indices()` | Letter suffixes (a, b, c...) for duplicate positions. |
 
 ### Device registry helpers (`device_ids.py`)

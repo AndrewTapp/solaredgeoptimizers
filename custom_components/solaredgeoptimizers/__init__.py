@@ -14,7 +14,7 @@ links use ``via_device_id``; entities link to pre-registered devices by
 identifier only. Optimizer devices are created by the sensor platform after
 their string parents exist.
 
-See ``miscellaneous/20260904 Changes v2.4.22.md`` for release history.
+See ``miscellaneous/20260925 Changes v2.5.0.md`` for release history.
 """
 import logging
 from typing import Any
@@ -23,7 +23,11 @@ from requests import ConnectTimeout, HTTPError, RequestException
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    ConfigEntryNotReady,
+    HomeAssistantError,
+)
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.util import dt as dt_util
 
@@ -37,8 +41,55 @@ from .const import (
     format_config_entry_title,
 )
 from .coordinator import MyCoordinator
+from .device_ids import site_device_identifier
 
 PLATFORMS: list[Platform] = [Platform.SENSOR]
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    device_entry: dr.DeviceEntry,
+) -> bool:
+    """Allow deleting non-site devices (ghost inverters/strings/optimizers).
+
+    Raises HomeAssistantError for the site parent so the UI can show a clear
+    message. Returning True lets Home Assistant detach this config entry from
+    the device (and delete the device when it has no other entries).
+    """
+    site_id = (config_entry.data.get(CONF_SITE_ID) or config_entry.data.get("siteid") or "").strip()
+    site_identifier = site_device_identifier(site_id) if site_id else None
+    for domain, identifier in device_entry.identifiers:
+        if domain != DOMAIN:
+            continue
+        if site_identifier and identifier == site_identifier:
+            LOGGER.debug(
+                "SolarEdge Optimizers: Refusing to remove site device %s for entry %s",
+                identifier,
+                config_entry.entry_id,
+            )
+            raise HomeAssistantError(
+                "The site device cannot be removed while the integration is configured. "
+                "Delete the integration instead if you want to remove all devices."
+            )
+        if str(identifier).startswith("site_"):
+            LOGGER.debug(
+                "SolarEdge Optimizers: Refusing to remove site-like device %s for entry %s",
+                identifier,
+                config_entry.entry_id,
+            )
+            raise HomeAssistantError(
+                "The site device cannot be removed while the integration is configured. "
+                "Delete the integration instead if you want to remove all devices."
+            )
+        LOGGER.info(
+            "SolarEdge Optimizers: Allowing removal of device %s (%s) for entry %s",
+            device_entry.id,
+            identifier,
+            config_entry.entry_id,
+        )
+        return True
+    return False
 
 
 async def _migrate_config_entry_title(hass: HomeAssistant, entry: ConfigEntry) -> None:
