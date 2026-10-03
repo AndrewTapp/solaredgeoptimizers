@@ -368,7 +368,7 @@ cache expires (30 min, `TEMPERATURE_CACHE_TTL`).
 ### Via HACS (recommended)
 
 1. **HACS** → **Custom repositories** → add `https://github.com/AndrewTapp/solaredgeoptimizers` as **Integration**.  
-2. **Integrations** → find **SolarEdge Optimizers** → **Download**.  
+2. **Integrations** → find **SolarEdge Optimizers** → **Download**. Versioned releases after `hacs.json` `zip_release` install from `solaredgeoptimizers.zip` on the GitHub Release; **v2.5.0 and earlier** still use the repository tree.  
 3. **Restart Home Assistant.**  
 4. **Settings** → **Devices & services** → **Add Integration** → search **SolarEdge Optimizers**.
 
@@ -735,7 +735,8 @@ solaredgeoptimizers/
 ├── const.py               # DOMAIN, ENTITY_ADD_BATCH_SIZE, intervals, cache TTLs, sensor types, status helpers, parse_string/optimizer display names (incl. 1.1.1a suffix), build_optimizer_tasks, collapse_duplicate_inverter_slots, resolve_duplicate_indices, format_config_entry_title
 ├── exceptions.py          # SolarEdgeAPIError: custom exception for API/processing errors (used by legacy client)
 ├── coordinator.py         # DataUpdateCoordinator, adaptive polling, revert-to-One retry (30 min when from legacy), aggregation, _obtained_from, AggregationContext namedtuple, uses resolve_duplicate_indices from const.py
-├── hacs.json              # HACS metadata
+├── hacs.json              # HACS metadata (zip_release + filename solaredgeoptimizers.zip)
+
 ├── info.md                # Integration info (e.g. for HACS)
 ├── manifest.json         # Domain, version, requirements (empty; stdlib-only decode)
 ├── sensor.py              # Sensor entities; build_optimizer_tasks; _register_optimizer_devices; batched async_add_entities; capped/batch missing-optimizer backfill; async_added_to_hass reapply; _lookup_optimizer_data_item
