@@ -3,7 +3,7 @@
   "owner": "AndrewTapp",
   "repo": "solaredgeoptimizers",
   "visibility": "public",
-  "generatedAt": "2026-10-25T08:03:06.455Z",
+  "generatedAt": "2026-10-26T08:26:24.602Z",
   "stats": {
     "total": 0,
     "day": 0,
@@ -18,10 +18,9 @@
   "snapshots": {
     "windowDays": 45,
     "count": 45,
-    "firstDate": "2026-09-11",
-    "lastDate": "2026-10-25",
+    "firstDate": "2026-09-12",
+    "lastDate": "2026-10-26",
     "series": {
-      "2026-09-11": 0,
       "2026-09-12": 0,
       "2026-09-13": 0,
       "2026-09-14": 0,
@@ -65,7 +64,8 @@
       "2026-10-22": 0,
       "2026-10-23": 0,
       "2026-10-24": 0,
-      "2026-10-25": 0
+      "2026-10-25": 0,
+      "2026-10-26": 0
     }
   },
   "profile": {
