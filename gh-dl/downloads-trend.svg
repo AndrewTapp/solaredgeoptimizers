@@ -19,7 +19,7 @@
   </defs>
   <rect class="bg" x="0" y="0" width="1000" height="360" rx="16" />
   <text class="title" x="64" y="34">AndrewTapp/solaredgeoptimizers release downloads</text>
-  <text class="sub" x="64" y="352">Generated 2026-10-29</text>
+  <text class="sub" x="64" y="352">Generated 2026-10-30</text>
   <line x1="64" y1="52.00" x2="976" y2="52.00" class="grid"/>
   <text x="56" y="56.00" text-anchor="end" class="axis">1</text>
   <line x1="64" y1="94.00" x2="976" y2="94.00" class="grid"/>
@@ -38,12 +38,12 @@
   <polyline class="line" points="64.00,304.00 84.73,304.00 105.45,304.00 126.18,304.00 146.91,304.00 167.64,304.00 188.36,304.00 209.09,304.00 229.82,304.00 250.55,304.00 271.27,304.00 292.00,304.00 312.73,304.00 333.45,304.00 354.18,304.00 374.91,304.00 395.64,304.00 416.36,304.00 437.09,304.00 457.82,304.00 478.55,304.00 499.27,304.00 520.00,304.00 540.73,304.00 561.45,304.00 582.18,304.00 602.91,304.00 623.64,304.00 644.36,304.00 665.09,304.00 685.82,304.00 706.55,304.00 727.27,304.00 748.00,304.00 768.73,304.00 789.45,304.00 810.18,304.00 830.91,304.00 851.64,304.00 872.36,304.00 893.09,304.00 913.82,304.00 934.55,304.00 955.27,304.00 976.00,304.00"/>
   <circle class="dot" cx="976.00" cy="304.00" r="4.5"/>
   
-  <text class="axis" x="64.00" y="336" text-anchor="start">2026-09-15</text>
-  <text class="axis" x="229.82" y="336" text-anchor="middle">2026-09-23</text>
-  <text class="axis" x="395.64" y="336" text-anchor="middle">2026-10-01</text>
-  <text class="axis" x="561.45" y="336" text-anchor="middle">2026-10-09</text>
-  <text class="axis" x="727.27" y="336" text-anchor="middle">2026-10-17</text>
-  <text class="axis" x="893.09" y="336" text-anchor="middle">2026-10-25</text>
-  <text class="axis" x="976.00" y="336" text-anchor="end">2026-10-29</text>
+  <text class="axis" x="64.00" y="336" text-anchor="start">2026-09-16</text>
+  <text class="axis" x="229.82" y="336" text-anchor="middle">2026-09-24</text>
+  <text class="axis" x="395.64" y="336" text-anchor="middle">2026-10-02</text>
+  <text class="axis" x="561.45" y="336" text-anchor="middle">2026-10-10</text>
+  <text class="axis" x="727.27" y="336" text-anchor="middle">2026-10-18</text>
+  <text class="axis" x="893.09" y="336" text-anchor="middle">2026-10-26</text>
+  <text class="axis" x="976.00" y="336" text-anchor="end">2026-10-30</text>
   <text class="latest" x="976" y="34" text-anchor="end">Latest total: 0</text>
 </svg>
