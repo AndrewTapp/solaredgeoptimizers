@@ -90,7 +90,7 @@ The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitorin
 ### Requirements
 
 - **Home Assistant** (tested with recent versions; Core **2026.8.1+** supported).
-- **Current version:** **2.5.0** (`manifest.json`); see `miscellaneous/20260925 Changes v2.5.0.md`
+- **Current version:** **2.5.1** (`manifest.json`); see `miscellaneous/20261111 Changes v2.5.1.md`
   (duplicate inverter-slot collapse + removable devices). Prior hardening in
   `miscellaneous/20260904 Changes v2.4.22.md`.
 - **SolarEdge monitoring account**: Site ID, username (email), password.
@@ -687,6 +687,8 @@ logger:
 |--------|----------------|
 | Setup error `Requirements for solaredgeoptimizers not found: ['jsonfinder==0.4.2']` | Upgrade to **v2.4.21+** via HACS and restart. `manifest.json` `requirements` is `[]`; legacy `decodeResult` uses stdlib `json` only. |
 | “Invalid authentication” | Correct Site ID, email, password; account can log in at monitoring.solaredge.com. The integration tries SolarEdge One first and falls back to the legacy API; login succeeds if either returns 200. |
+| Login check **410** / “Legacy layout … Gone” / empty layout JSON | Legacy `…/layout/logical` is retired for many accounts (**v2.5.1+** logs this clearly). Dual login only surfaces 410 when **SolarEdge One also failed**. Enable **Use SolarEdge One**, confirm optimizers in the current portal UI, then re-authenticate / reload. |
+| `max_workers must be greater than 0` on lifetime energy | Fixed in **v2.5.1**: empty optimizer layouts skip the thread pool. Upgrade and reload; if data is still missing, One layout/auth is the real issue (see 410 row). |
 | “Failed to connect” | Network, firewall, DNS; outbound HTTPS to monitoring.solaredge.com. |
 | Config entry not loading | Logs for `ConfigEntryNotReady`; first refresh may fail if API is slow or returns errors. |
 | Sensors stay 0 | Last measurement age: 1 h when Obtained from is One API, 2 h when Legacy API. Check “Last measurement”, Last polled, and Obtained from; debug logs for API responses. If using a non-English HA language, ensure you’re on a version that supports locale-aware measurement keys (e.g. “Leistung [W]” for German). |
