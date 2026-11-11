@@ -19,11 +19,11 @@ same cache as layout).
 
 ## Upgrading from an earlier version
 
-As with previous versions you may need to delete and re-add this integration after updating through HACS.
+As with previous versions you may need to delete and re-add this integration after updating through the **Home Assistant Marketplace** (Home Assistant **2026.11+**; earlier versions used HACS, which the Marketplace replaces).
 
 If you are on a version prior to v2.4.0 (or want a clean registry after any upgrade), the steps below ensure entities and devices are recreated correctly:
 
-1. **Update the integration via HACS** so the new code (including cleanup) is installed.
+1. **Update the integration via the Marketplace** (`Settings` → `Marketplace`) so the new code (including cleanup) is installed.
 2. **Restart Home Assistant** (optional but recommended).
 3. **Remove the integration from Home Assistant:** **Settings → Devices & services → Integrations**
    → SolarEdge Optimizers → **Delete**. This runs `async_remove_entry` and cleans entity
@@ -308,33 +308,38 @@ Removing the integration is still useful for registry cleanup (for example dupli
 - If the **lifetime-energy** energy-graph API returns **403 Forbidden** for an optimizer serial, that is also non-fatal (lifetime may stay unknown for that panel). From **v2.4.22** the first 403 per serial is WARNING; later 403s for the same serial are DEBUG so logs are not flooded every hour.
 - A full refresh can take several minutes on sites with many optimizers. When using **SolarEdge One**, optimizer live data is fetched in **one batch POST** (all serials) per full refresh, reducing portal load; if that batch fails, the integration falls back to per-optimizer requests. When the lifetime-energy cache is cold, the integration fetches it **in parallel** (thread pool, up to `MAX_PARALLEL_WORKERS` = 10 concurrent requests) instead of one request per optimizer, so large sites complete much faster. The integration allows up to **30 minutes** for a full refresh before timing out (configurable via `COORDINATOR_REFRESH_TIMEOUT_SEC` in `const.py`), so slow API connections or sites with many optimizers can complete. API requests use configurable timeouts (`API_TIMEOUT_SHORT` = 30s for quick requests, `API_TIMEOUT_LONG` = 60s for longer operations).
 - All API sessions and connections are released when the integration is removed or reloaded. The **legacy** client tracks every thread-local `requests.Session`; each response uses a context manager, and `close()` waits longer than the longest configured request timeout before releasing session pools. Failed cookie/CSRF bootstrap closes its temporary session immediately. The **SolarEdge One** client context-manages responses, OAuth sessions, and thread pools; closes a 401 response before token refresh/retry; tracks in-flight `_get`/`_post` work; and blocks new work while `close()` waits and clears tokens. Both unload and config-entry removal shut down coordinator activity before closing the dual API. Setup failures close temporary clients in `finally`. The dual wrapper attempts both backend closes, emits one INFO summary on success, and warns if either backend fails. This prevents persistent sockets/file descriptors during long Home Assistant uptime.
-- If setup fails with `Requirements for solaredgeoptimizers not found: ['jsonfinder==0.4.2']`, update to **v2.4.21+** via HACS and restart Home Assistant. That package is no longer required (`manifest.json` `requirements` is empty; legacy decode uses stdlib `json`).
+- If setup fails with `Requirements for solaredgeoptimizers not found: ['jsonfinder==0.4.2']`, update to **v2.4.21+** via the Marketplace (or manually) and restart Home Assistant. That package is no longer required (`manifest.json` `requirements` is empty; legacy decode uses stdlib `json`).
 - **Replaced/inactive optimizers (v2.4.19+):** SolarEdge may keep old serials in layout with empty live measurements. Individual empty responses are DEBUG only; a legacy full refresh emits one count-based warning when active optimizers are missing measurements. Inactive serials are excluded from lightweight checks but remain in full refreshes for status/history.
-- When you **delete the integration** (remove the config entry), the integration removes all associated entities and devices from the registries via a shared cleanup routine (used by both the config flow and unload), so no leftover entries remain. Delete from **Settings → Devices & services → Integrations** (not only from HACS) so that this cleanup runs.
+- When you **delete the integration** (remove the config entry), the integration removes all associated entities and devices from the registries via a shared cleanup routine (used by both the config flow and unload), so no leftover entries remain. Delete from **Settings → Devices & services → Integrations** (not only uninstalling the Marketplace package) so that this cleanup runs.
 - **Large sites (many optimizers):** If startup previously flooded Home Assistant with hundreds of entity-registry updates or triggered “Client unable to keep up with pending messages” in the browser, update to **v2.4.18+**, which registers sensors in batches instead of one bulk `async_add_entities` call. Tune `ENTITY_ADD_BATCH_SIZE` in `const.py` if needed (lower = gentler on HA, higher = faster setup). From **v2.4.21**, missing-optimizer backfill at setup prefers One batch API and otherwise caps concurrency at `MAX_PARALLEL_WORKERS`. After reload, per-optimizer values usually appear within seconds (coordinator listener notify + `async_added_to_hass` reapply when coordinator data is already loaded) or within the next coordinator refresh (a few minutes on a slow first full fetch); **unknown** on many sensors right after setup is often normal until data arrives.
 - **Entity ID ending in `_2` (e.g. `sensor.power_1_0_1_2`):** The integration builds three-segment optimizer paths (e.g. `power_1_0_1`). A four-segment id with `_2` at the end is usually Home Assistant registry disambiguation when a stale entity kept the base `entity_id`. Check **Settings → Entities** for both `power_1_0_1` and `power_1_0_1_2`, compare `unique_id`, then **remove and re-add** the integration if a stale row persists after upgrading.
 
 ## Installation
 
-Until this integration is part of Home Assistant Core, installing via HACS is recommended.
+Until this integration is part of Home Assistant Core, install it from the **Home Assistant Marketplace** (built into Home Assistant **2026.11+**; it replaces HACS). See the [Marketplace documentation](https://www.home-assistant.io/integrations/marketplace/).
 
-1. **Add the repository in HACS**
-   - Go to **HACS** → click the three dots (top right) → **Custom repositories**.
-   - Repository URL: `https://github.com/AndrewTapp/solaredgeoptimizers`
-   - Category: **Integration** → **Add**.
+1. **Add the repository (if it is not already in the catalog)**
+   - Go to **Settings** → **Marketplace**.
+   - Accept the Marketplace warning the first time you open it (required before install/update).
+   - Upper right → **Add from link**.
+   - Enter `https://github.com/AndrewTapp/solaredgeoptimizers` (or `AndrewTapp/solaredgeoptimizers`). Connecting GitHub is required for custom repositories.
+   - Open the repository page when it appears in the list.
 
 2. **Install the integration**
-   - In HACS, open **SolarEdge Optimizers** (or **SolarEdge Optimizers Data**) and click **Download**.
-   - Versioned releases after this `hacs.json` change install from `solaredgeoptimizers.zip` on the GitHub Release (so HACS can count downloads). **v2.5.0 and earlier** still install from the repository tree.
+   - Select **Install** (or search the catalog for **SolarEdge Optimizers** / **SolarEdge Optimizers Data** if it is listed).
+   - Versioned releases use `solaredgeoptimizers.zip` from the GitHub Release (`hacs.json` `zip_release`; packaging format unchanged for the Marketplace). **v2.5.0 and earlier** still install from the repository tree.
+   - Updates appear under **Settings** → **Updates**.
 
-3. **Restart Home Assistant.**
+3. **Restart Home Assistant** if the Marketplace / Repairs UI asks you to (not always required for integrations that load immediately).
 
 4. **Configure**
-   - **Settings** → **Devices & services** → **Add Integration** → search for **SolarEdge Optimizers**.
+   - If setup did not open automatically: **Settings** → **Devices & services** → **Add Integration** → search for **SolarEdge Optimizers**.
    - Enter your **Site ID**, **Username**, and **Password**.
   - Optionally set **Entity ID prefix** (e.g. `se_`) so all entity IDs start with that prefix; leave blank for no prefix.
   - Optionally enable **Include Site ID in Entity ID** (default off) to include the site ID in inverter/string/optimizer entity IDs; site-level entities always show the site ID.
   - **Use SolarEdge One** (default on): when **Yes**, the integration tries SolarEdge One first and falls back to legacy when needed; when **No**, it always uses the legacy portal only.
+
+**Home Assistant 2026.10 or older:** use HACS with the same GitHub URL as a custom Integration repository, then Download. On upgrade to 2026.11+, HACS installs migrate automatically to the Marketplace.
 
 The **Obtained from** sensor on the site device shows "One API" or "Legacy API".
 
