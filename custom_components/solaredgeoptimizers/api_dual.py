@@ -8,6 +8,8 @@ API Selection Strategy:
 - When use_solaredge_one=True (default): Tries One API first, falls back to legacy
 - When use_solaredge_one=False: Uses legacy API exclusively
 - Fallback triggered when One API fails or returns no valid optimizer measurements
+- Legacy layout HTTP 410 / empty / non-JSON is treated as a retired endpoint (WARNING),
+  not as a confusing JSON parse ERROR (v2.5.1+)
 
 Methods Implemented:
 - check_login(): Succeeds if either API authenticates successfully
@@ -61,6 +63,20 @@ def _is_auth_related_error(err: BaseException) -> bool:
         return err.response.status_code in (401, 498)
     message = str(err)
     return "ERROR001" in message and ("401" in message or "498" in message)
+
+
+def _is_legacy_gone_error(err: BaseException) -> bool:
+    """Return True when legacy layout looks retired (HTTP 410 / empty / non-JSON)."""
+    if isinstance(err, requests.HTTPError) and err.response is not None:
+        if err.response.status_code == 410:
+            return True
+    message = str(err).lower()
+    return (
+        "410" in message
+        or "gone" in message
+        or "legacy layout" in message
+        or "expecting value" in message
+    )
 
 
 class SolarEdgeDualAPI:
@@ -131,7 +147,17 @@ class SolarEdgeDualAPI:
             return self._one.requestListOfAllPanels()
         except Exception as e:  # pylint: disable=broad-except
             _LOGGER.warning("SolarEdge Dual API: One requestListOfAllPanels failed (%s), trying legacy", e)
-            return self._legacy.requestListOfAllPanels()
+            try:
+                return self._legacy.requestListOfAllPanels()
+            except Exception as legacy_err:  # pylint: disable=broad-except
+                if _is_legacy_gone_error(legacy_err):
+                    _LOGGER.warning(
+                        "SolarEdge Dual API: Legacy layout API unavailable (%s). "
+                        "SolarEdge has retired this endpoint for many accounts; "
+                        "ensure SolarEdge One is enabled and working.",
+                        legacy_err,
+                    )
+                raise
 
     def _one_has_valid_measurements(self, data_list: list) -> bool:
         """Return True if at least one optimizer from One had a non-empty measurements dict."""
@@ -194,7 +220,15 @@ class SolarEdgeDualAPI:
                 )
             return data_list or []
         except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.error("SolarEdge Dual API: Legacy requestAllData also failed: %s", e)
+            if _is_legacy_gone_error(e):
+                _LOGGER.warning(
+                    "SolarEdge Dual API: Legacy requestAllData unavailable (%s). "
+                    "SolarEdge has retired the legacy layout endpoint for many accounts; "
+                    "ensure SolarEdge One is enabled and working.",
+                    e,
+                )
+            else:
+                _LOGGER.error("SolarEdge Dual API: Legacy requestAllData also failed: %s", e)
             if _is_auth_related_error(e) or (one_error is not None and _is_auth_related_error(one_error)):
                 self.verify_authentication()
             # Return One result if we have it (even if invalid) so UI doesn't break
