@@ -1,1057 +1,598 @@
 """
-SolarEdge Optimizers Integration - SolarEdge One API Client (solaredge_one_api.py)
+SolarEdge Optimizers Integration - Legacy Monitoring API Client (solaredgeoptimizers.py)
 
-This module implements the client for the modern SolarEdge One portal API, which provides
-richer data and better performance compared to the legacy Monitoring API.
+This module implements the client for the legacy SolarEdge Monitoring Portal API. It serves
+as a fallback when the SolarEdge One API is unavailable or returns no valid data.
 
 Authentication:
-- Uses OAuth 2.0 with PKCE (Proof Key for Code Exchange) flow
-- Authenticates via login.solaredge.com, exchanges authorization code for access token
-- Stores refresh_token and prefers refresh_token grant before a full PKCE password login
-- Bearer token used for all /services/ API calls
+- Uses HTTP Basic Authentication with site credentials
+- Session-based with CSRF token handling for subsequent requests
+- Legacy session bootstrap falls back to ``/solaredge-web/p/logout/slo`` then
+  ``/solaredge-web/p/login`` when SolarEdge stops issuing ``CSRF-TOKEN`` from
+  the login page alone
+- Logs legacy HTTP ``498`` responses explicitly as likely rejected/missing/expired
+  CSRF token or legacy web-session failures
+- Thread-local sessions for safe concurrent access in ThreadPoolExecutor
 
-API Endpoints (monitoring.solaredge.com/services/...):
+API Endpoints (monitoring.solaredge.com/solaredge-apigw/api/...):
 
-1. Site Structure:
-   GET .../layout/logical/generic/v2/site/{siteId}?include-optimizers=true
-   Returns hierarchical site layout with inverters, strings, and optimizers
+1. Login Check:
+   GET .../sites/{siteId}/layout/logical
+   Validates credentials and returns HTTP status code (HTTP 410 = endpoint retired)
 
-2. Optimizer Live Data:
-   POST .../layout/information/optimizers (body: list of serials)
-   Returns basicInformationList (serial, model) and serialToLiveData (power, voltage, current)
-   Full refresh: one batch POST with all optimizer serials. Lightweight checks: one batch with up to 5 representative serials.
+2. Site Structure (Logical Layout):
+   GET .../sites/{siteId}/layout/logical
+   Returns JSON with inverters, strings, and optimizers hierarchy.
+   Empty body / HTTP 410 raises SolarEdgeAPIError (endpoint retired for many accounts).
 
-3. Inverter Information:
-   GET .../layout/information/inverters?inverter-serials=...
-   Returns fullModel (e.g. SE5000H-RW000BNN4) for device registry
+3. Optimizer Live Data (System Data):
+   GET .../solaredge-web/p/systemData?reporterId={optimizerId}&...
+   Returns power, voltage, current, optimizer voltage for one optimizer
+   Locale-aware measurement keys (supports multiple languages)
 
-4. Site Information:
-   GET .../layout/information/site/{siteId}
-   Returns installationDate, peakPower (kW), etc. Cached per SITE_INFO_CACHE_TTL (e.g. 2 h).
+4. Lifetime Energy:
+   POST .../sites/{siteId}/layout/energy?timeUnit=ALL
+   Returns lifetime energy data keyed by optimizer/string ID
 
-5. Optimizer Temperatures:
-   GET .../layout/energy/site/{siteId}/by-inverter?include-max-temperature=true
-   Returns per-optimizer maximum daily temperature (auto-converts Fahrenheit to Celsius)
-   Cached per TEMPERATURE_CACHE_TTL (e.g. 30 min)
+5. Historical Data:
+   GET .../solaredge-web/p/chartData?reporterId={id}&...
+   Returns time-series data for power, current, voltage, energy
 
-6. Lifetime Energy (per-optimizer):
-   GET .../layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...
-   Fetches per-optimizer lifetime energy in parallel (thread pool).
-   Skips the pool when the layout has no optimizer serials (avoids max_workers=0).
-   Cached per LIFETIME_ENERGY_CACHE_TTL (e.g. 1 hour)
-
-7. Dashboard Site Production:
-   GET .../dashboard/energy/sites/{siteId}?start-date=...&measurement-types=production,yield
-   Returns summary.production in Wh for site lifetime when > aggregated.
-
-8. Layout Energy by Inverter:
-   GET .../layout/energy/site/{siteId}/by-inverter?start-date=...
-   Returns inverter and string lifetime energy (Wh) for portal-override when > aggregated.
+Data Classes Defined:
+- SolarEdgeSite: Root container with site ID and list of inverters
+- SolarEdgeInverter: Inverter with serial, name, status, maxActivePower (kW when from One API), and list of strings
+- SolarEdgeString: String with ID, name, status, and list of optimizers
+- SolarlEdgeOptimizer: Optimizer with ID, serial, name, display name, status
+- SolarEdgeOptimizerData: Live measurement data (power, voltage, current, energy, etc.)
+- SolarEdgeAggregatedData: Aggregated data for string/inverter/site levels; site level has
+  installation_date and peak_power when provided by One API (layout/information/site);
+  inverter level has max_active_power (kW) when provided by One API (layout logical v2).
 
 Key Features:
-- Automatic retry on timeout for optimizer data requests
-- Maximum daily temperature unit normalization (F to C conversion)
-- Duplicate name resolution with letter suffixes for same-position devices
-- Azimuth and tilt extraction from optimizer module data (radians to degrees)
-- Inverter nodes include maxActivePower (API watts → stored as kW) from layout for inverter-level sensor
-- Panel cache (PANELS_CACHE_TTL_ONE), site info (SITE_INFO_CACHE_TTL), temperature (TEMPERATURE_CACHE_TTL), lifetime (LIFETIME_ENERGY_CACHE_TTL)
-- No persistent HTTP session for /services/ calls: `requests.get`/`post` use response
-  context managers so connections are released; on HTTP 401 the first response is closed
-  *before* token refresh/PKCE and a single retry (avoids holding sockets during login).
-- OAuth uses a short-lived `Session()` inside `with` for PKCE login and refresh_token grant;
-  `_token_lock` serializes token obtain/clear under ThreadPoolExecutor.
-- Parallel lifetime-energy fetches use `with ThreadPoolExecutor(...) as executor` so workers
-  shut down cleanly.
-- `_get`/`_post` track in-flight operations. `close()` prevents new work, waits
-  within a bounded timeout, and then clears OAuth tokens under the lock; it is
-  idempotent and the dual wrapper suppresses child INFO summaries.
-- DEBUG never logs OAuth authorization codes (URLs redacted via `_redact_url_for_log`);
-  full optimizer payloads are summarized and 204 Location hosts are allowlisted
-  to `*.solaredge.com`.
-- Inactive/replaced optimizers (v2.4.19+): layout status from site structure passed into
-  SolarEdgeOptimizerData; empty live measurements for inactive units log at DEBUG only.
-- Lightweight checks use active optimizers only (coordinator); full refresh still includes
-  inactive layout entries.
-- v2.4.21+: no extra PyPI packages in ``manifest.json`` (``requirements: []``); HA provides
-  ``requests`` / ``pytz``. Legacy fallback JSON parsing is stdlib-only (see legacy client).
-- v2.4.22+: lifetime-energy HTTP 403 is WARNING once per optimizer serial, then DEBUG
-  (inverter-information 403 remains a one-time WARNING as before).
+- Locale-aware measurement key parsing (supports EN, DE, FR, ES, IT, NL, etc.)
+- Thread-local session reuse for CSRF-protected portal calls; each HTTP call uses
+  ``with session.request(..., timeout=API_TIMEOUT_LONG)`` so the response is closed;
+  close() closes all tracked sessions to avoid leaking file descriptors on unload/removal.
+  (Live ``requestAllData`` uses Basic Auth ``requests.get`` per optimizer, not thread-local
+  sessions; tracked sessions are for lifetime energy / history / alerts via ``_doRequest``.)
+- Caching for panels (PANELS_CACHE_TTL_LEGACY) and lifetime energy (LIFETIME_ENERGY_CACHE_TTL)
+- Unicode normalization for measurement keys (handles various dash/space variants)
+- Timezone-aware date parsing for lastMeasurementDate
+- Inactive/replaced optimizers (v2.4.19+): layout status passed into SolarEdgeOptimizerData;
+  empty measurements for inactive units log at DEBUG only in _normalize_measurements_dict
+- Session close(): optional log_summary=False when called from dual API (single INFO at wrapper);
+  waits longer than API_TIMEOUT_LONG for in-flight calls before closing tracked sessions
+- DEBUG logs response status/size/count summaries only; headers, cookies, full payloads,
+  and query values are not logged
+- v2.4.21+: ``decodeResult`` uses ``SE.systemData`` extraction then stdlib
+  ``json.JSONDecoder.raw_decode`` (jsonfinder removed; ``manifest.json`` ``requirements`` is empty)
 """
-import math
-import base64
-import hashlib
 import json
 import logging
 import os
-import secrets
+import re
 import threading
 import time
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
-from html.parser import HTMLParser
-from urllib.parse import parse_qs, urlencode, urlparse
+from datetime import datetime, timedelta, timezone as datetime_timezone
 
-import requests
-from requests.sessions import Session
 import pytz
+import requests
+from requests import Session
 
 from .const import (
-    USER_AGENT,
     API_TIMEOUT_SHORT,
     API_TIMEOUT_LONG,
     MAX_PARALLEL_WORKERS,
-    BASE_URL_MONITORING,
-    LOGIN_BASE,
-    SOLAREDGE_ONE_CLIENT_ID,
-    MFE_AUTH_PATH,
-    MFE_AUTH_CALLBACK_PATH,
-    TOKEN_PATH,
-    PANELS_CACHE_TTL_ONE,
-    SITE_INFO_CACHE_TTL,
+    USER_AGENT,
+    PANELS_CACHE_TTL_LEGACY,
     LIFETIME_ENERGY_CACHE_TTL,
-    TEMPERATURE_CACHE_TTL,
+    MEASUREMENT_KEYS,
+    collapse_duplicate_inverter_slots,
     is_status_active,
     redact_url_for_log,
 )
-from .solaredgeoptimizers import (
-    SolarEdgeSite,
-    SolarEdgeOptimizerData,
-    _lifetime_energy_to_kwh,
-    optimizer_status_lookup_from_site,
-)
+from .exceptions import SolarEdgeAPIError
 
+# Added logger setup to replace print statements with proper logging
 _LOGGER = logging.getLogger(__name__)
 
-BASE_URL = BASE_URL_MONITORING
-MFE_AUTH_URL = f"{BASE_URL_MONITORING}{MFE_AUTH_PATH}"
-MFE_AUTH_CALLBACK = f"{BASE_URL_MONITORING}{MFE_AUTH_CALLBACK_PATH}"
-TOKEN_URL = f"{LOGIN_BASE}{TOKEN_PATH}"
+
+def _normalize_measurement_key(key):
+    """Normalize measurement key so API keys with Unicode variants (dash, space) match our key list."""
+    if not key or not isinstance(key, str):
+        return key
+    # Replace common Unicode variants with ASCII so API keys match MEASUREMENT_KEYS
+    key = key.replace("\u2013", "-").replace("\u2014", "-").replace("\u2212", "-")  # en/em dash, minus
+    key = key.replace("\u2010", "-").replace("\u2011", "-")  # hyphen, non-breaking hyphen
+    key = key.replace("\u00a0", " ")  # non-breaking space
+    return key.strip()
 
 
-def _redact_url_for_log(url: str) -> str:
-    """Compatibility wrapper for the shared safe URL formatter."""
-    return redact_url_for_log(url)
+def _get_measurement_value(measurements, key_list):
+    """Return the first value found for any of the given keys. Used for locale-independent API parsing.
+    Keys are normalized so API responses with Unicode variants (e.g. de_DE returning different hyphen)
+    still match our known key names."""
+    if not measurements or not isinstance(measurements, dict):
+        return None
+    # Build normalized key -> value mapping so locale/Unicode variants match
+    norm_to_value = {}
+    for k, v in measurements.items():
+        norm_to_value[_normalize_measurement_key(k)] = v
+    for key in key_list:
+        norm_key = _normalize_measurement_key(key)
+        if norm_key in norm_to_value:
+            return norm_to_value[norm_key]
+    return None
 
 
-def _pkce_verifier_and_challenge():
-    """Return (code_verifier, code_challenge) for S256 PKCE."""
-    verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b"=").decode("ascii")
-    digest = hashlib.sha256(verifier.encode()).digest()
-    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-    return verifier, challenge
+def _lifetime_energy_to_kwh(energy_data):
+    """Convert layout/energy API entry to kWh.
 
-
-class _FormParser(HTMLParser):
-    """Extract first form action and all input name/value from HTML."""
-
-    def __init__(self):
-        super().__init__()
-        self.form_action = None
-        self.form_method = "GET"
-        self.inputs = {}
-        self._in_form = False
-        self._form_depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        attrs_d = dict(attrs)
-        if tag == "form":
-            if not self._in_form:
-                self.form_action = attrs_d.get("action", "")
-                self.form_method = (attrs_d.get("method") or "GET").upper()
-            self._in_form = True
-            self._form_depth += 1
-        if self._in_form and tag == "input":
-            name = attrs_d.get("name")
-            if name:
-                self.inputs[name] = attrs_d.get("value", "")
-
-    def handle_endtag(self, tag):
-        if tag == "form" and self._in_form:
-            self._form_depth -= 1
-            if self._form_depth <= 0:
-                self._in_form = False
-
-
-def _parse_login_form(html: str):
-    """Return form_action, form_method, dict of input name->value."""
-    parser = _FormParser()
+    Uses unscaledEnergy (always in Wh) so lifetime energy updates correctly.
+    The 'units' field applies only to the display values 'energy' and 'moduleEnergy';
+    unscaledEnergy is the raw accumulating value in Wh.
+    """
+    if not energy_data or not isinstance(energy_data, dict):
+        return None
     try:
-        parser.feed(html)
+        raw = energy_data.get("unscaledEnergy")
+        if raw is not None:
+            return round(float(raw) / 1000.0, 3)  # Wh -> kWh
+        # Fallback if API omits unscaledEnergy: derive from energy + units
+        units = energy_data.get("units") or "Wh"
+        energy = energy_data.get("energy")
+        if energy is None:
+            return None
+        energy = float(energy)
+        if units == "kWh":
+            return round(energy, 3)
+        if units == "MWh":
+            return round(energy * 1000.0, 3)
+        # Wh
+        return round(energy / 1000.0, 3)
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def optimizer_status_lookup_from_site(site) -> dict[str, str]:
+    """Map optimizer serial/id from cached layout to layout status (e.g. Active, Inactive)."""
+    lookup: dict[str, str] = {}
+    for inv in site.inverters:
+        for string in inv.strings:
+            for opt in getattr(string, "optimizers") or ():
+                lookup[opt.optimizerId] = getattr(opt, "status", "") or ""
+    return lookup
+
+
+def _parse_system_data_json(json_object, item_id, timezone, layout_status=None):
+    """Parse and validate systemData JSON into SolarEdgeOptimizerData or None.
+    Handles list/dict types, missing lastMeasurementDate, and KeyError.
+    """
+    if isinstance(json_object, list):
+        if len(json_object) == 0:
+            _LOGGER.warning("Empty list returned for optimizer %s", item_id)
+            return None
+        json_object = json_object[0]
+    if not isinstance(json_object, dict):
+        _LOGGER.error("Unexpected data type returned for optimizer %s: %s", item_id, type(json_object))
+        return None
+    if json_object.get("lastMeasurementDate") == "":
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Skipping optimizer %s without measurements", item_id)
+        return None
+    try:
+        return SolarEdgeOptimizerData(
+            item_id, json_object, timezone, layout_status=layout_status
+        )
+    except KeyError as e:
+        _LOGGER.error("Missing expected key in response for optimizer %s: %s", item_id, e)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Response keys for optimizer %s: %s",
+                item_id,
+                sorted(json_object),
+            )
+        return None
     except Exception as e:  # pylint: disable=broad-except
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: HTML form parse error (non-fatal): %s", e)
-    return parser.form_action, parser.form_method, parser.inputs
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Failed response keys for optimizer %s: %s",
+                item_id,
+                sorted(json_object),
+            )
+        raise SolarEdgeAPIError("Error while processing data") from e
 
 
-def _oauth_get_login_page(session: Session, login_params: dict) -> tuple[str, str]:
-    """GET login page; return (html, final_url). Raises if not on login.solaredge.com."""
-    login_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
-    with session.get(login_url, timeout=API_TIMEOUT_SHORT) as r:
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: GET login page -> %s", r.status_code)
-        login_page_html = r.text
-        login_page_url = r.url
-    if not login_page_url.startswith(LOGIN_BASE):
+def _apply_lifetime_energy_to_optimizer_info(info, optimizer_id, lifetimeenergy):
+    """Set lifetime_energy on optimizer info from lifetimeenergy dict (by string or int key)."""
+    optimizer_id_str = str(optimizer_id)
+    energy_data = lifetimeenergy.get(optimizer_id_str) or lifetimeenergy.get(optimizer_id) or {}
+    energy_kwh = _lifetime_energy_to_kwh(energy_data)
+    if energy_kwh is not None:
+        info.lifetime_energy = energy_kwh
+    else:
+        _LOGGER.warning("Lifetime energy data missing for optimizer %s, setting to 0", optimizer_id)
+        info.lifetime_energy = 0.0
+
+
+def _raise_for_system_data_http_error(response, item_id):
+    """Raise an appropriate exception for non-200 systemData HTTP response."""
+    if 500 <= response.status_code < 600:
         _LOGGER.warning(
-            "SolarEdge One: login page not on login.solaredge.com: %s",
-            _redact_url_for_log(login_page_url),
+            "Temporary server error from SolarEdge (HTTP %s). Will retry on next update.",
+            response.status_code,
         )
-        raise requests.RequestException("Login page redirect failed")
-    return login_page_html, login_page_url
-
-
-def _oauth_post_credentials_and_follow(
-    session: Session, login_params: dict, post_body: dict, login_page_url: str
-) -> str:
-    """POST credentials, follow redirects/204 Location; return final URL."""
-    post_url = f"{LOGIN_BASE}/login?{urlencode(login_params)}"
-    post_headers = {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        "Accept": "*/*",
-        "Origin": LOGIN_BASE,
-        "Referer": login_page_url,
-    }
-    with session.post(post_url, data=post_body, headers=post_headers, timeout=API_TIMEOUT_SHORT, allow_redirects=True) as r:
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge One: POST login -> %s, URL: %s",
-                r.status_code,
-                _redact_url_for_log(r.url),
+                "Server error response size for optimizer %s: %d bytes",
+                item_id,
+                len(response.text),
             )
-        if r.status_code >= 400 and _LOGGER.isEnabledFor(logging.DEBUG):
-            # Avoid logging response bodies (may echo form fields); status is enough.
-            _LOGGER.debug("SolarEdge One: login POST %s (body omitted)", r.status_code)
-        final_url = r.url
-        if r.status_code == 204 and "Location" in r.headers:
-            callback_url = r.headers["Location"]
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge One: 204 response, following Location: %s",
-                    _redact_url_for_log(callback_url),
-                )
-            # Only follow redirects back to SolarEdge monitoring hosts (defense in depth).
-            parsed_loc = urlparse(callback_url)
-            if parsed_loc.scheme not in ("https",) or not (
-                parsed_loc.netloc.endswith("solaredge.com")
-                or parsed_loc.netloc == "monitoring.solaredge.com"
-                or parsed_loc.netloc == "login.solaredge.com"
-            ):
-                _LOGGER.warning(
-                    "SolarEdge One: refusing to follow OAuth Location to unexpected host: %s",
-                    parsed_loc.netloc or "(empty)",
-                )
-                raise requests.RequestException("OAuth redirect host not allowed")
-            with session.get(callback_url, timeout=API_TIMEOUT_SHORT, allow_redirects=True) as r2:
-                final_url = r2.url
-    return final_url
-
-
-def _oauth_extract_code_from_callback(final_url: str) -> str:
-    """Extract authorization code from callback URL. Raises if missing."""
-    if MFE_AUTH_CALLBACK not in final_url:
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: did not reach callback (final URL: %s)",
-                _redact_url_for_log(final_url),
-            )
-        raise requests.RequestException("OAuth callback failed")
-    parsed_cb = urlparse(final_url)
-    q = parse_qs(parsed_cb.query)
-    code = (q.get("code") or [None])[0]
-    if not code:
-        _LOGGER.warning("SolarEdge One: no code in callback URL")
-        raise requests.RequestException("OAuth callback missing code")
-    return code
-
-
-def _oauth_exchange_code_for_tokens(
-    session: Session, code: str, code_verifier: str
-) -> tuple[str, str | None]:
-    """Exchange authorization code for access_token and refresh_token."""
-    token_data = {
-        "grant_type": "authorization_code",
-        "code": code,
-        "client_id": SOLAREDGE_ONE_CLIENT_ID,
-        "redirect_uri": MFE_AUTH_CALLBACK,
-        "code_verifier": code_verifier,
-    }
-    token_headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "*/*",
-        "Origin": BASE_URL,
-        "Referer": f"{BASE_URL}/",
-        "User-Agent": session.headers["User-Agent"],
-    }
-    with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=API_TIMEOUT_SHORT) as r:
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: POST oauth2/token -> %s", r.status_code)
-        r.raise_for_status()
-        tok = r.json()
-    access_token = tok.get("access_token")
-    refresh_token = tok.get("refresh_token")
-    if not access_token:
-        _LOGGER.warning("SolarEdge One: token response missing access_token")
-        raise requests.RequestException("No access_token in token response")
-    if _LOGGER.isEnabledFor(logging.DEBUG):
-        _LOGGER.debug("SolarEdge One: OAuth login complete, access token obtained")
-    return access_token, refresh_token
-
-
-def _oauth_refresh_access_token(session: Session, refresh_token: str) -> tuple[str, str | None]:
-    """Exchange refresh_token for a new access_token (and optionally a new refresh_token)."""
-    token_data = {
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-        "client_id": SOLAREDGE_ONE_CLIENT_ID,
-    }
-    token_headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Accept": "*/*",
-        "Origin": BASE_URL,
-        "Referer": f"{BASE_URL}/",
-        "User-Agent": session.headers.get("User-Agent", USER_AGENT),
-    }
-    with session.post(TOKEN_URL, data=token_data, headers=token_headers, timeout=API_TIMEOUT_SHORT) as r:
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: POST oauth2/token (refresh) -> %s", r.status_code)
-        r.raise_for_status()
-        tok = r.json()
-    access_token = tok.get("access_token")
-    new_refresh = tok.get("refresh_token") or refresh_token
-    if not access_token:
-        _LOGGER.warning("SolarEdge One: refresh token response missing access_token")
-        raise requests.RequestException("No access_token in refresh token response")
-    return access_token, new_refresh
-
-
-def _perform_oauth_pkce_login(session: Session, username: str, password: str) -> tuple[str, str | None]:
-    """
-    Perform OAuth PKCE flow: GET login page, POST credentials, extract code from callback, exchange for tokens.
-    Returns (access_token, refresh_token). Caller must use a Session with User-Agent set.
-    """
-    code_verifier, code_challenge = _pkce_verifier_and_challenge()
-    login_params = {
-        "lang": "en",
-        "response_type": "code",
-        "client_id": SOLAREDGE_ONE_CLIENT_ID,
-        "scope": "email openid",
-        "redirect_uri": MFE_AUTH_CALLBACK,
-        "code_challenge_method": "S256",
-        "code_challenge": code_challenge,
-    }
-    login_page_html, login_page_url = _oauth_get_login_page(session, login_params)
-    _, _, form_inputs = _parse_login_form(login_page_html)
-    form_inputs = form_inputs or {}
+        raise SolarEdgeAPIError(f"Temporary server error from SolarEdge (HTTP {response.status_code})")
+    _LOGGER.error("Error sending request to SolarEdge. Status code: %s", response.status_code)
     if _LOGGER.isEnabledFor(logging.DEBUG):
         _LOGGER.debug(
-            "SolarEdge One: Parsed login form fields: %s",
-            sorted(form_inputs.keys()) or "(none)",
+            "Error response size for optimizer %s: %d bytes",
+            item_id,
+            len(response.text),
         )
-    if not form_inputs:
-        _LOGGER.warning(
-            "SolarEdge One: No login form fields parsed from HTML; posting credentials only "
-            "(login may fail if the portal requires hidden fields)"
-        )
-    post_body = {
-        k: v
-        for k, v in form_inputs.items()
-        if k not in ("username", "password", "email")
-    }
-    # Cognito hosted UI may use name=username, name=email, or both; set whichever the form declares.
-    if "email" in form_inputs:
-        post_body["email"] = username
-    if "username" in form_inputs:
-        post_body["username"] = username
-    if "username" not in post_body and "email" not in post_body:
-        post_body["username"] = username
-    post_body["password"] = password
-
-    final_url = _oauth_post_credentials_and_follow(
-        session, login_params, post_body, login_page_url
-    )
-    code = _oauth_extract_code_from_callback(final_url)
-    return _oauth_exchange_code_for_tokens(session, code, code_verifier)
+    raise SolarEdgeAPIError(f"Problem sending request to SolarEdge (HTTP {response.status_code})")
 
 
-def _parse_site_id_from_uuid(uuid_str: str) -> str | None:
-    """Extract numeric site ID from v2 uuid e.g. a0000000-0000-0000-0000-000002065855 -> 2065855."""
-    if not uuid_str:
+def _safe_float(value, default=0.0):
+    """Safely convert value to float, handling None, empty strings, comma decimals, and invalid types."""
+    if value is None or value == "":
+        return default
+    if isinstance(value, str):
+        value = value.replace(",", ".")
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _parse_last_measurement_date(rawdate, panelid, timezone):
+    """Parse lastMeasurementDate string (ISO or SolarEdge format) to timezone-aware UTC datetime.
+    Returns None when rawdate is empty (e.g. inactive optimizers with no lastMeasurement from API).
+    """
+    if not rawdate:
         return None
     try:
-        # Last segment is zero-padded decimal site ID (e.g. 000002065855 -> 2065855)
-        segment = uuid_str.split("-")[-1]
-        return str(int(segment, 10))
-    except (ValueError, TypeError, IndexError):
-        return None
+        if "T" in rawdate and ("Z" in rawdate or "+" in rawdate or (len(rawdate) >= 6 and rawdate[-6] in "+-")):
+            iso_str = rawdate.strip().replace("Z", "+00:00")
+            return datetime.fromisoformat(iso_str).astimezone(pytz.UTC)
+        raise ValueError("Not ISO format")
+    except (ValueError, TypeError):
+        pass
+    try:
+        date_str = re.sub(r'\s+(?:GMT|UTC|EST|CST|PST|EDT|CDT|PDT|[A-Z]{3})\s+', ' ', rawdate)
+        naive_dt = datetime.strptime(date_str.strip(), "%a %b %d %H:%M:%S %Y")
+        if naive_dt.tzinfo is None:
+            local_dt = timezone.localize(naive_dt) if hasattr(timezone, 'localize') else naive_dt.replace(tzinfo=timezone)
+        else:
+            local_dt = naive_dt
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Timezone conversion for optimizer %s: raw='%s' | cleaned='%s' | naive=%s | local=%s (%s) | UTC=%s",
+                panelid, rawdate, date_str.strip(), naive_dt, local_dt, str(timezone), local_dt.astimezone(pytz.UTC)
+            )
+        return local_dt.astimezone(pytz.UTC)
+    except (ValueError, IndexError) as e:
+        _LOGGER.error("Failed to parse date '%s' for optimizer %s: %s", rawdate, panelid, e)
+        return datetime.now(pytz.UTC)
 
 
-def _v2_find_children_by_type(parent: dict, node_type: str) -> list:
-    """Return list of child nodes whose type matches node_type (case-insensitive)."""
-    out = []
-    for c in (parent.get("children") or []):
-        if (c.get("type") or "").upper() == node_type.upper():
-            out.append(c)
-    return out
+def _normalize_measurements_dict(json_object, panelid, expected_inactive=False):
+    """Extract and validate measurements dict from optimizer json_object; return {} if invalid."""
+    has_measurements_key = isinstance(json_object, dict) and "measurements" in json_object
+    measurements = json_object.get("measurements", {}) if isinstance(json_object, dict) else {}
+    if isinstance(measurements, dict) and measurements:
+        return measurements
+    serial = json_object.get("serialNumber", "unknown") if isinstance(json_object, dict) else "unknown"
+    if (
+        isinstance(measurements, dict)
+        and measurements == {}
+        and has_measurements_key
+        and expected_inactive
+    ):
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Empty measurements for inactive/replaced optimizer %s (panel_id: %s); expected from portal",
+                panelid,
+                serial,
+            )
+        return {}
+    available_keys = (
+        list(json_object.keys())
+        if _LOGGER.isEnabledFor(logging.WARNING) and isinstance(json_object, dict)
+        else "N/A"
+    )
+    if _LOGGER.isEnabledFor(logging.DEBUG):
+        _LOGGER.debug(
+            "Missing or invalid measurements for optimizer %s (panel_id: %s). "
+            "Available keys: %s",
+            panelid,
+            serial,
+            available_keys,
+        )
+    return {}
 
 
-def _v2_build_optimizer_logical_node(opt_node: dict, resolved_name: str = None) -> dict:
-    """Build one optimizer logical node (data only, no children) for SolarEdgeSite."""
-    opt_props = opt_node.get("properties") or {}
-    opt_serial = opt_node.get("serial") or opt_props.get("identifier") or opt_node.get("uuid", "")
-    opt_name = resolved_name if resolved_name else (opt_node.get("name") or opt_serial)
-    opt_display = opt_node.get("displayOrder") or opt_name
-    opt_order = opt_node.get("order") or 0
-    status_raw = opt_props.get("status") or ""
-    status = status_raw.capitalize() if status_raw else ""
-    return {
-        "data": {
-            "id": opt_serial,
-            "serialNumber": opt_serial,
-            "name": opt_name,
-            "displayName": opt_display,
-            "relativeOrder": opt_order,
-            "type": "OPTIMIZER",
-            "operationsKey": opt_node.get("uuid") or "",
-            "status": status,
-        }
-    }
+def _apply_measurements_to_optimizer_data(instance, measurements, json_object, panelid):
+    """Set current, optimizer_voltage, power, voltage from measurements and log if all zero."""
+    instance.current = _safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["current"]), 0.0)
+    instance.optimizer_voltage = round(_safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["optimizer_voltage"]), 0.0), 2)
+    instance.power = round(_safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["power"]), 0.0), 2)
+    instance.voltage = round(_safe_float(_get_measurement_value(measurements, MEASUREMENT_KEYS["voltage"]), 0.0), 2)
+    if instance.current == 0.0 and instance.power == 0.0 and instance.voltage == 0.0 and instance.optimizer_voltage == 0.0:
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "All measurements are zero for optimizer %s (serial: %s; %d fields)",
+                panelid,
+                json_object.get("serialNumber", "unknown"),
+                len(measurements),
+            )
 
 
-def _make_duplicate_sort_key(get_status, get_serial, get_position):
-    """Create a sort key function for duplicate name resolution (blank or ACTIVE = active first)."""
-    def sort_key(idx_item):
-        idx, item = idx_item
-        status = get_status(item) or ""
-        is_active = 1 if is_status_active(status) else 0
-        serial = get_serial(item) if get_serial else ""
-        position = get_position(item) if get_position else idx
-        return (-is_active, serial if serial else "", position)
-    return sort_key
+def _site_lifetime_kwh_from_layout_energy(lifetime_energy_data):
+    """Compute site total lifetime energy (kWh) from layout/energy API response.
 
-
-def _resolve_duplicate_names_with_suffix(items: list, get_name, get_status, get_serial, get_position) -> dict:
-    """Resolve duplicate names by adding suffixes (a, b, c...) based on status and serial/position.
-
-    Returns dict mapping item index -> resolved name.
-    Active items come first (sorted by serial/position), then other statuses (sorted by serial/position).
-    First active item keeps original name, subsequent get 'a', 'b', etc. suffixes.
+    Sums unscaledEnergy (Wh) across entries. Callers that have dashboard production
+    should prefer that over this sum: mixed inverter+optimizer payloads can inflate
+    the total. Used primarily as a legacy-only fallback.
     """
-    name_groups = defaultdict(list)
-    for idx, item in enumerate(items):
-        name = get_name(item)
-        name_groups[name].append(idx)
-
-    resolved = {}
-    sort_key = _make_duplicate_sort_key(get_status, get_serial, get_position)
-    for name, indices in name_groups.items():
-        if len(indices) == 1:
-            resolved[indices[0]] = name
+    if not lifetime_energy_data or not isinstance(lifetime_energy_data, dict):
+        return None
+    total_wh = 0.0
+    for _key, entry in lifetime_energy_data.items():
+        if not isinstance(entry, dict):
             continue
-
-        group_items = [(idx, items[idx]) for idx in indices]
-        sorted_items = sorted(group_items, key=sort_key)
-
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: Resolving %d duplicate names for '%s': %s",
-                len(sorted_items),
-                name,
-                [(get_status(items[idx]) or "unknown", get_serial(items[idx]) if get_serial else idx) for idx, _ in sorted_items],
-            )
-
-        suffix_idx = 0
-        for i, (idx, item) in enumerate(sorted_items):
-            if i == 0:
-                resolved[idx] = name
-            else:
-                suffix = chr(ord('a') + suffix_idx)
-                suffix_idx += 1
-                if "." in name:
-                    parts = name.rsplit(".", 1)
-                    resolved[idx] = f"{parts[0]}.{parts[1]}{suffix}"
-                else:
-                    resolved[idx] = f"{name}{suffix}"
-
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: Resolved names for '%s': %s",
-                name,
-                {idx: resolved[idx] for idx, _ in sorted_items},
-            )
-
-    return resolved
+        raw = entry.get("unscaledEnergy")
+        if raw is not None:
+            try:
+                total_wh += float(raw)
+            except (TypeError, ValueError):
+                pass
+    if total_wh == 0.0:
+        return None
+    return round(total_wh / 1000.0, 3)
 
 
-def _v2_build_string_logical_children(str_node: dict) -> list:
-    """Build list of optimizer logical nodes from a v2 STRING node's OPTIMIZER folders."""
-    raw_optimizers = []
-    for opt_folder in (str_node.get("children") or []):
-        if (opt_folder.get("type") or "").upper() != "FOLDER" or (opt_folder.get("name") or "").upper() != "OPTIMIZER":
-            continue
-        for opt_node in (opt_folder.get("children") or []):
-            if (opt_node.get("type") or "").upper() != "OPTIMIZER":
-                continue
-            raw_optimizers.append(opt_node)
-
-    resolved_names = _resolve_duplicate_names_with_suffix(
-        raw_optimizers,
-        get_name=lambda o: o.get("name") or o.get("serial") or "",
-        get_status=lambda o: (o.get("properties") or {}).get("status") or "",
-        get_serial=lambda o: o.get("serial") or "",
-        get_position=None,
-    )
-
-    opt_children = []
-    for idx, opt_node in enumerate(raw_optimizers):
-        resolved_name = resolved_names.get(idx)
-        opt_children.append(_v2_build_optimizer_logical_node(opt_node, resolved_name))
-    return opt_children
-
-
-def _v2_build_string_logical_node(str_node: dict, resolved_name: str = None) -> dict:
-    """Build one string logical node (data + optimizer children) for SolarEdgeSite."""
-    str_props = str_node.get("properties") or {}
-    str_identifier = str_props.get("identifier") or str_node.get("uuid") or str_node.get("name", "")
-    str_serial = str_node.get("serial") or str_identifier
-    str_name = resolved_name if resolved_name else (str_node.get("name") or str_identifier)
-    str_display = str_node.get("displayOrder") or str_name
-    str_order = str_node.get("order") or 0
-    status_raw = str_props.get("status") or ""
-    status = status_raw.capitalize() if status_raw else ""
-    opt_children = _v2_build_string_logical_children(str_node)
-    return {
-        "data": {
-            "id": str_identifier,
-            "serialNumber": str_serial,
-            "name": str_name,
-            "displayName": str_display,
-            "relativeOrder": str_order,
-            "type": "STRING",
-            "operationsKey": str_node.get("uuid") or "",
-            "status": status,
-        },
-        "children": opt_children,
-    }
-
-
-def _v2_build_inverter_logical_children(inv_node: dict) -> list:
-    """Build list of string logical nodes from a v2 INVERTER node's STRING folders."""
-    raw_strings = []
-    for str_folder in (inv_node.get("children") or []):
-        if (str_folder.get("type") or "").upper() != "FOLDER" or (str_folder.get("name") or "").upper() != "STRING":
-            continue
-        for str_node in (str_folder.get("children") or []):
-            if (str_node.get("type") or "").upper() != "STRING":
-                continue
-            raw_strings.append(str_node)
-
-    resolved_names = _resolve_duplicate_names_with_suffix(
-        raw_strings,
-        get_name=lambda s: s.get("name") or "",
-        get_status=lambda s: (s.get("properties") or {}).get("status") or "",
-        get_serial=None,
-        get_position=lambda s: s.get("order") or 0,
-    )
-
-    string_children = []
-    for idx, str_node in enumerate(raw_strings):
-        resolved_name = resolved_names.get(idx)
-        string_children.append(_v2_build_string_logical_node(str_node, resolved_name))
-    return string_children
-
-
-def _v2_build_inverter_logical_node(inv_node: dict, resolved_name: str = None) -> dict:
-    """Build one inverter logical node (data + string children) for SolarEdgeSite."""
-    inv_props = inv_node.get("properties") or {}
-    inv_identifier = inv_props.get("identifier") or inv_node.get("serial") or inv_node.get("uuid", "")
-    inv_serial = inv_node.get("serial") or inv_identifier
-    inv_name = resolved_name if resolved_name else (inv_node.get("name") or f"Inverter {inv_identifier}")
-    inv_display = inv_node.get("displayOrder") or inv_name
-    inv_order = inv_node.get("order") or 0
-    status_raw = inv_props.get("status") or ""
-    status = status_raw.capitalize() if status_raw else ""
-    manufacturer = inv_props.get("manufacturer") or "SolarEdge"
-    model = inv_props.get("model") or inv_props.get("partNumber") or ""
-    # maxActivePower from API is in watts; store as kW for display (same as site peak_power)
-    max_active_w = inv_props.get("maxActivePower")
-    max_active_kw = (float(max_active_w) / 1000.0) if max_active_w is not None else None
-    string_children = _v2_build_inverter_logical_children(inv_node)
-    data = {
-        "id": inv_identifier,
-        "serialNumber": inv_serial,
-        "name": inv_name,
-        "displayName": inv_display,
-        "relativeOrder": inv_order,
-        "type": "INVERTER",
-        "operationsKey": inv_node.get("uuid") or "",
-        "status": status,
-        "manufacturer": manufacturer,
-        "model": model,
-    }
-    if max_active_kw is not None:
-        data["maxActivePower"] = max_active_kw
-    return {
-        "data": data,
-        "children": string_children,
-    }
-
-
-def _v2_build_logical_children(structure: dict) -> list:
-    """Build list of inverter logical nodes from v2 site structure (FOLDER->INVERTER hierarchy)."""
-    raw_inverters = []
-    for inv_folder in _v2_find_children_by_type(structure, "FOLDER"):
-        if (inv_folder.get("name") or "").upper() != "INVERTER":
-            continue
-        for inv_node in (inv_folder.get("children") or []):
-            if (inv_node.get("type") or "").upper() != "INVERTER":
-                continue
-            raw_inverters.append(inv_node)
-
-    resolved_names = _resolve_duplicate_names_with_suffix(
-        raw_inverters,
-        get_name=lambda i: i.get("name") or "",
-        get_status=lambda i: (i.get("properties") or {}).get("status") or "",
-        get_serial=lambda i: i.get("serial") or "",
-        get_position=None,
-    )
-
-    logical_children = []
-    for idx, inv_node in enumerate(raw_inverters):
-        resolved_name = resolved_names.get(idx)
-        logical_children.append(_v2_build_inverter_logical_node(inv_node, resolved_name))
-    return logical_children
-
-
-def _site_structure_v2_to_solar_edge_site(site_id: str, raw: dict) -> SolarEdgeSite:
-    """Convert SolarEdge One v2 siteStructure JSON to SolarEdgeSite (same shape as legacy API)."""
-    structure = raw.get("siteStructure") if "siteStructure" in raw else raw
-    sid = site_id or (structure.get("uuid") and _parse_site_id_from_uuid(structure["uuid"])) or site_id
-    logical_children = _v2_build_logical_children(structure)
-    fake_logical = {"childIds": list(range(len(logical_children))), "children": logical_children}
-    fake_json = {"siteId": sid, "logicalTree": fake_logical}
-    return SolarEdgeSite(fake_json)
-
-
-class solaredge_one:
-    """API client for SolarEdge One portal (services/layout/... endpoints)."""
-
+class solaredgeoptimizers:
     def __init__(self, siteid, username, password, timezone=None, language=None):
-        self.siteid = str(siteid)
+        self.siteid = siteid
         self.username = username
         self.password = password
+        # Store timezone for date parsing (default to UTC if not provided)
         self._timezone = timezone if timezone is not None else pytz.UTC
+        # Language for API locale/accept-language (e.g. "en", "de"); default "en"
         self._language = (language or "en").split("-")[0].lower()
-        self._panels_cache = None
-        self._panels_cache_time = None
-        self._panels_cache_ttl = PANELS_CACHE_TTL_ONE
-        self._site_info_cache = None
-        self._site_info_cache_time = None
-        self._site_info_cache_ttl = SITE_INFO_CACHE_TTL
-        self._dashboard_production_cache = None
-        self._dashboard_production_cache_key = None
-        self._by_inverter_energy_cache = None
-        self._by_inverter_energy_cache_key = None
-        self._lifetime_energy_cache = None
-        self._lifetime_energy_cache_time = None
-        self._lifetime_energy_cache_ttl = LIFETIME_ENERGY_CACHE_TTL
-        self._lifetime_403_logged: set[str] = set()
-        self._temperature_cache = None
-        self._temperature_cache_time = None
-        self._temperature_cache_ttl = TEMPERATURE_CACHE_TTL
-        self._access_token = None
-        self._refresh_token = None
-        self._token_lock = threading.Lock()
+        # Map HA language code to SolarEdge locale (language_COUNTRY)
+        self._locale_map = {
+            "en": "en_US", "nl": "nl_NL", "de": "de_DE", "fr": "fr_FR",
+            "es": "es_ES", "it": "it_IT", "pl": "pl_PL", "pt": "pt_PT",
+            "sv": "sv_SE", "cs": "cs_CZ", "tr": "tr_TR", "el": "el_GR",
+            "hu": "hu_HU", "ru": "ru_RU", "zh": "zh_CN", "ja": "ja_JP",
+            "da": "da_DK", "nb": "nb_NO", "fi": "fi_FI",
+        }
+        # Thread-local storage for session reuse (one session per thread)
+        self._thread_local = threading.local()
+        # Track all sessions so we can close them on unload (thread pool may create many)
+        self._all_sessions: set = set()
+        self._sessions_lock = threading.Lock()
         self._closed = False
         self._inflight = 0
         self._inflight_cond = threading.Condition()
+        # Let the longest configured request finish before closing its Session.
         self._close_wait_sec = float(API_TIMEOUT_LONG + 5)
+        # Cache for requestListOfAllPanels() result
+        self._panels_cache = None
+        self._panels_cache_time = None
+        self._panels_cache_ttl = PANELS_CACHE_TTL_LEGACY
+        # Cache for lifetime energy data (changes slowly)
+        self._lifetime_energy_cache = None
+        self._lifetime_energy_cache_time = None
+        self._lifetime_energy_cache_ttl = LIFETIME_ENERGY_CACHE_TTL
 
-    def _begin_request(self) -> None:
-        """Mark an in-flight API operation so close can wait for it."""
-        with self._inflight_cond:
-            if self._closed:
-                raise RuntimeError("SolarEdge One API client is closed")
-            self._inflight += 1
+    def _locale_from_language(self):
+        """Return SolarEdge locale string for the configured language."""
+        return self._locale_map.get(self._language, "en_US")
 
-    def _end_request(self) -> None:
-        """Clear an in-flight API operation and wake close waiters."""
-        with self._inflight_cond:
-            self._inflight = max(0, self._inflight - 1)
-            self._inflight_cond.notify_all()
+    def _accept_language_header(self):
+        """Return Accept-Language header value for the configured language."""
+        locale = self._locale_from_language()
+        primary = locale.replace("_", "-")
+        return f"{primary},{self._language};q=0.9,en;q=0.8"
 
-    def _ensure_token(self) -> str:
-        """Obtain OAuth access_token via refresh grant or PKCE login. Returns access_token.
-
-        Thread-safe: concurrent workers share one login/refresh under ``_token_lock``.
-        """
-        with self._token_lock:
-            if self._closed:
-                raise RuntimeError("SolarEdge One API client is closed")
-            if self._access_token:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: Using cached access token")
-                return self._access_token
-
-            if self._refresh_token:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: Access token missing; trying refresh_token grant")
-                try:
-                    with Session() as session:
-                        session.headers["User-Agent"] = USER_AGENT
-                        self._access_token, self._refresh_token = _oauth_refresh_access_token(
-                            session, self._refresh_token
-                        )
-                    return self._access_token
-                except Exception as e:  # pylint: disable=broad-except
-                    if _LOGGER.isEnabledFor(logging.DEBUG):
-                        _LOGGER.debug(
-                            "SolarEdge One: refresh_token grant failed (%s); falling back to PKCE login",
-                            e,
-                        )
-                    _LOGGER.info(
-                        "SolarEdge One: Access token refresh failed; re-authenticating via OAuth login"
-                    )
-                    self._refresh_token = None
-
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: No token; starting OAuth PKCE login flow")
-            with Session() as session:
-                session.headers["User-Agent"] = USER_AGENT
-                self._access_token, self._refresh_token = _perform_oauth_pkce_login(
-                    session, self.username, self.password
-                )
-            return self._access_token
-
-    def _clear_access_token(self) -> None:
-        """Clear cached access token under the token lock (keep refresh_token for next ensure)."""
-        with self._token_lock:
-            self._access_token = None
-
-    def _request_headers(self):
-        """Headers for /services/ requests; use Bearer token from OAuth."""
-        token = self._ensure_token()
-        return {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-            "User-Agent": USER_AGENT,
-            "Origin": BASE_URL,
-            "Referer": f"{BASE_URL}/",
-        }
-
-    def _handle_401_and_retry_json(self, method: str, path: str, url: str, *, params=None, json_data=None, timeout=API_TIMEOUT_LONG):
-        """After a closed 401 response: clear access token, refresh/login, retry once; return JSON."""
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: 401 on %s %s, clearing token and retrying once",
-                method,
-                path,
-            )
-        self._clear_access_token()
-        headers = self._request_headers()
-        if method == "GET":
-            kwargs = {"headers": headers, "timeout": timeout}
-            if params:
-                kwargs["params"] = params
-            with requests.get(url, **kwargs) as r2:
-                return self._finalize_json_response(method, path, r2, is_retry=True)
-        with requests.post(url, headers=headers, json=json_data, timeout=timeout) as r2:
-            return self._finalize_json_response(method, path, r2, is_retry=True)
-
-    def _finalize_json_response(self, method: str, path: str, response, *, is_retry: bool = False):
-        """Log status, clear tokens on retry 401, raise_for_status, return JSON."""
-        label = f"{method} {path}" + (" retry" if is_retry else "")
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: %s -> %s", label, response.status_code)
-        if response.status_code == 401 and is_retry:
-            self._clear_access_token()
-            with self._token_lock:
-                self._refresh_token = None
-        response.raise_for_status()
-        return response.json()
-
-    def _get(self, path: str, params: dict | None = None, timeout: int = API_TIMEOUT_LONG):
-        """GET JSON; on 401 close the first response before token refresh and one retry."""
-        self._begin_request()
-        try:
-            url = f"{BASE_URL}{path}"
-            kwargs = {"headers": self._request_headers(), "timeout": timeout}
-            if params:
-                kwargs["params"] = params
-            with requests.get(url, **kwargs) as r:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: GET %s -> %s", path, r.status_code)
-                if r.status_code != 401:
-                    r.raise_for_status()
-                    return r.json()
-            # First response is closed before refresh/PKCE so its socket is not held.
-            return self._handle_401_and_retry_json(
-                "GET", path, url, params=params, timeout=timeout
-            )
-        finally:
-            self._end_request()
-
-    def _post(self, path: str, json_data, timeout: int = API_TIMEOUT_LONG):
-        """POST JSON; on 401 close the first response before token refresh and one retry."""
-        self._begin_request()
-        try:
-            url = f"{BASE_URL}{path}"
-            with requests.post(
-                url,
-                headers=self._request_headers(),
-                json=json_data,
-                timeout=timeout,
-            ) as r:
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: POST %s -> %s", path, r.status_code)
-                if r.status_code != 401:
-                    r.raise_for_status()
-                    return r.json()
-            # First response is closed before refresh/PKCE so its socket is not held.
-            return self._handle_401_and_retry_json(
-                "POST", path, url, json_data=json_data, timeout=timeout
-            )
-        finally:
-            self._end_request()
-
-    def get_site_info_cached(self) -> dict:
-        """
-        Fetch site information (installation date, peak power) from layout/information/site.
-        Returns dict with keys installationDate (str "YYYY-MM-DD"), peakPower (float kW).
-        Cached per SITE_INFO_CACHE_TTL (same as layout cache).
-        """
+    def get_lifetime_energy_cached(self):
+        """Return cached lifetime energy data as dict (refresh at most hourly)."""
         now = datetime.now()
         if (
-            self._site_info_cache is not None
-            and self._site_info_cache_time is not None
-            and (now - self._site_info_cache_time) <= self._site_info_cache_ttl
+            self._lifetime_energy_cache is None
+            or self._lifetime_energy_cache_time is None
+            or (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl
         ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: Using cached site info (age=%s)",
-                    now - self._site_info_cache_time,
+                    "SolarEdge Optimizers (legacy): Lifetime energy cache miss (TTL=%s), fetching",
+                    self._lifetime_energy_cache_ttl,
                 )
-            return self._site_info_cache
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: Site info cache miss (TTL=%s), fetching", self._site_info_cache_ttl)
-        try:
-            path = f"/services/layout/information/site/{self.siteid}"
-            data = self._get(path, timeout=API_TIMEOUT_SHORT)
-            result = {}
-            if data.get("installationDate") is not None:
-                result["installationDate"] = str(data["installationDate"])
-            if data.get("peakPower") is not None:
-                try:
-                    result["peakPower"] = float(data["peakPower"])
-                except (TypeError, ValueError):
-                    pass
-            self._site_info_cache = result
-            self._site_info_cache_time = now
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: Fetched site info: %s", result)
-            return result
-        except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.warning("SolarEdge One: Site info fetch failed: %s. Using previous cache.", e)
-            return self._site_info_cache if self._site_info_cache is not None else {}
-
-    def get_dashboard_site_production_cached(self, installation_date: str | None) -> float | None:
-        """
-        Fetch site lifetime production (Wh) from dashboard/energy summary.production.
-        start-date=installation_date, end-date=today. Cached per LIFETIME_ENERGY_CACHE_TTL.
-        Returns production in watt-hours or None on failure/missing.
-        """
-        if not installation_date:
-            return None
-        now = datetime.now()
-        cache_key = (installation_date, now.strftime("%Y-%m-%d"))
-        if getattr(self, "_dashboard_production_cache_key", None) == cache_key and getattr(self, "_dashboard_production_cache", None) is not None:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: Using cached dashboard production")
-            return self._dashboard_production_cache
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: Dashboard production cache miss (start=%s), fetching",
-                installation_date,
-            )
-        try:
-            end_date = now.strftime("%Y-%m-%d")
-            path = f"/services/dashboard/energy/sites/{self.siteid}"
-            params = {
-                "start-date": installation_date,
-                "end-date": end_date,
-                "chart-time-unit": "years",
-                "measurement-types": "production,yield",
-            }
-            data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
-            summary = data.get("summary") or {}
-            prod = summary.get("production")
-            if prod is not None:
-                # Portal returns production in watt-hours (Wh), e.g. 2.7341768E7
-                val = float(prod)
-                self._dashboard_production_cache = val
-                self._dashboard_production_cache_key = cache_key
-                if _LOGGER.isEnabledFor(logging.DEBUG):
-                    _LOGGER.debug("SolarEdge One: Dashboard production (Wh): %s", val)
-                return val
-        except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.warning("SolarEdge One: Dashboard production fetch failed: %s", e)
-        return getattr(self, "_dashboard_production_cache", None)
-
-    def _parse_inverter_energy_block(self, inv_block: dict) -> tuple[str, float | None, dict] | None:
-        """Parse one inverter block from layout/energy by-inverter response. Returns (serial, energy_wh, strings_map) or None."""
-        serial = (inv_block.get("serial") or "").strip()
-        if not serial:
-            return None
-        inv_energy = inv_block.get("energy")
-        energy_wh = None
-        if isinstance(inv_energy, dict):
-            v = inv_energy.get("value")
-            if v is not None:
-                try:
-                    energy_wh = float(v)
-                except (TypeError, ValueError):
-                    pass
-        strings_map = {}
-        for s in inv_block.get("strings") or []:
-            order = s.get("stringRelativeOrder")
-            if order is None:
-                continue
             try:
-                order = int(order)
-            except (TypeError, ValueError):
-                continue
-            e = s.get("energy")
-            if isinstance(e, dict):
-                v = e.get("value")
-                if v is not None:
+                lifetime_energy_response = self.getLifeTimeEnergy()
+                if lifetime_energy_response.startswith("ERROR001"):
+                    _LOGGER.error("Failed to get lifetime energy data: %s", lifetime_energy_response)
+                    self._lifetime_energy_cache = {}
+                else:
                     try:
-                        strings_map[order] = float(v)
-                    except (TypeError, ValueError):
-                        pass
-        return (serial, energy_wh, strings_map)
-
-    def get_layout_energy_by_inverter_cached(self, installation_date: str | None) -> dict:
-        """
-        Fetch inverter and string lifetime energy (Wh) from layout/energy by-inverter.
-        start-date=installation_date. Returns dict: inv_serial -> {"energy_wh": float, "strings": {string_relative_order: float}}.
-        Cached per LIFETIME_ENERGY_CACHE_TTL.
-        """
-        if not installation_date:
-            return {}
-        now = datetime.now()
-        cache_key = (installation_date, now.strftime("%Y-%m-%d"))
-        if getattr(self, "_by_inverter_energy_cache_key", None) == cache_key and getattr(self, "_by_inverter_energy_cache", None) is not None:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: Using cached by-inverter energy")
-            return self._by_inverter_energy_cache
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: By-inverter energy cache miss (start=%s), fetching",
-                installation_date,
-            )
-        try:
-            site = self.requestListOfAllPanels()
-            inverter_serials = [inv.serialNumber for inv in site.inverters if getattr(inv, "serialNumber", None)]
-            if not inverter_serials:
-                return {}
-            end_date = now.strftime("%Y-%m-%d")
-            path = f"/services/layout/energy/site/{self.siteid}/by-inverter"
-            params = {
-                "start-date": installation_date,
-                "end-date": end_date,
-                "inverter-serials": ",".join(inverter_serials),
-                "include-max-temperature": "false",
-            }
-            data = self._get(path, params=params, timeout=API_TIMEOUT_LONG)
-            result = {}
-            for inv_block in data.get("inverters") or []:
-                parsed = self._parse_inverter_energy_block(inv_block)
-                if parsed:
-                    serial, energy_wh, strings_map = parsed
-                    result[serial] = {"energy_wh": energy_wh, "strings": strings_map}
-            self._by_inverter_energy_cache = result
-            self._by_inverter_energy_cache_key = cache_key
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: By-inverter energy cache refreshed: %d inverters", len(result))
-            return result
-        except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.warning("SolarEdge One: By-inverter energy fetch failed: %s", e)
-        return getattr(self, "_by_inverter_energy_cache", {})
-
-    def get_inverter_models(self, serials: list) -> dict[str, str]:
-        """
-        Fetch inverter information (fullModel) from layout/information/inverters.
-        Returns dict mapping serial -> fullModel (e.g. "SE5000H-RW000BNN4").
-        Used to show inverter model on the inverter device in Home Assistant.
-        """
-        if not serials:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: get_inverter_models called with empty serials, skipping")
-            return {}
-        path = "/services/layout/information/inverters"
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: get_inverter_models requesting %d inverter(s): %s",
-                len(serials),
-                serials,
-            )
-        try:
-            # API accepts comma-separated inverter-serials
-            params = {"inverter-serials": ",".join(str(s).strip() for s in serials if s)}
-            data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
-        except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code == 403:
+                        self._lifetime_energy_cache = json.loads(lifetime_energy_response)
+                    except json.JSONDecodeError as e:
+                        _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
+                        self._lifetime_energy_cache = {}
+                self._lifetime_energy_cache_time = now
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): Refreshed lifetime energy cache (%d entries)",
+                        len(self._lifetime_energy_cache) if isinstance(self._lifetime_energy_cache, dict) else 0,
+                    )
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+                # Transient DNS/network errors: keep previous cache, do not update cache time
                 _LOGGER.warning(
-                    "SolarEdge One: Inverter information returned 403 Forbidden (insufficient permissions). "
-                    "Inverter model names will not be shown; devices still work with position-based identity."
+                    "SolarEdge API unreachable (lifetime energy): %s. Using cached data if available.",
+                    e,
                 )
-            else:
-                _LOGGER.warning("SolarEdge One: Failed to fetch inverter information: %s", e)
-            return {}
-        except requests.RequestException as e:
-            _LOGGER.warning("SolarEdge One: Failed to fetch inverter information: %s", e)
-            return {}
-        result = {}
-        for item in data.get("basicInformationList") or []:
-            serial = (item.get("serial") or "").strip()
-            full_model = (item.get("fullModel") or "").strip()
-            if serial and full_model:
-                result[serial] = full_model
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: get_inverter_models -> %s", result)
-        return result
+                if self._lifetime_energy_cache is None:
+                    self._lifetime_energy_cache = {}
+        else:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                cache = self._lifetime_energy_cache or {}
+                age = now - self._lifetime_energy_cache_time if self._lifetime_energy_cache_time else None
+                _LOGGER.debug(
+                    "SolarEdge Optimizers (legacy): Using cached lifetime energy (age=%s, TTL=%s, %d entries)",
+                    age,
+                    self._lifetime_energy_cache_ttl,
+                    len(cache) if isinstance(cache, dict) else 0,
+                )
+        return self._lifetime_energy_cache or {}
 
     def check_login(self):
-        """Verify credentials by fetching site structure (v2)."""
+        url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: check_login for site %s", self.siteid)
-        path = f"/services/layout/logical/generic/v2/site/{self.siteid}"
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Login check URL: %s",
+                redact_url_for_log(url),
+            )
+
+        kwargs = {}
+        kwargs["auth"] = requests.auth.HTTPBasicAuth(self.username, self.password)
+        kwargs["headers"] = {"user-agent": USER_AGENT}
+        kwargs["timeout"] = API_TIMEOUT_SHORT
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Making login check request (timeout=%ss)",
+                API_TIMEOUT_SHORT,
+            )
+
         try:
-            self._get(path, params={"include-optimizers": "true"}, timeout=API_TIMEOUT_SHORT)
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: check_login succeeded (200)")
-            return 200
-        except requests.HTTPError as e:
-            code = e.response.status_code if e.response is not None else 0
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: check_login failed with HTTP %s", code)
-            return code
+            self._begin_request()
+            try:
+                with requests.get(url, **kwargs) as r:
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("SolarEdge Optimizers (legacy): Login check status: %s", r.status_code)
+                        _LOGGER.debug("SolarEdge Optimizers (legacy): Login check response body length: %s bytes", len(r.text))
+                    return r.status_code
+            finally:
+                self._end_request()
+        except requests.exceptions.Timeout as e:
+            _LOGGER.error(
+                "SolarEdge Optimizers: Login check timed out (timeout=%ss): %s",
+                API_TIMEOUT_SHORT,
+                e,
+            )
+            raise
+        except requests.exceptions.ConnectionError as e:
+            _LOGGER.error("SolarEdge Optimizers: Login check connection error: %s", e)
+            raise
+        except requests.exceptions.RequestException as e:
+            _LOGGER.error("SolarEdge Optimizers: Login check request error: %s", e)
+            raise
         except Exception as e:  # pylint: disable=broad-except
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: check_login failed: %s", e)
-            return 0
+            _LOGGER.error("SolarEdge Optimizers: Login check unexpected error: %s", e)
+            raise
+
+    def _fetch_logical_layout(self, url: str, kwargs: dict) -> str:
+        """Perform GET for logical layout; return response text. Caller handles exceptions."""
+        self._begin_request()
+        try:
+            with requests.get(url, **kwargs) as r:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): Logical layout URL: %s",
+                        redact_url_for_log(url),
+                    )
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Logical layout status: %s", r.status_code)
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): Logical layout response size "
+                        "(status %s): %d bytes",
+                        r.status_code,
+                        len(r.text),
+                    )
+                if r.status_code == 410:
+                    raise SolarEdgeAPIError(
+                        "Legacy layout endpoint returned HTTP 410 Gone "
+                        "(retired by SolarEdge for many accounts)"
+                    )
+                if r.status_code != 200:
+                    raise SolarEdgeAPIError(
+                        f"Legacy layout endpoint returned HTTP {r.status_code}"
+                    )
+                body = r.text or ""
+                if not body.strip():
+                    raise SolarEdgeAPIError(
+                        "Legacy layout response was empty "
+                        "(endpoint likely retired; use SolarEdge One)"
+                    )
+                return body
+        finally:
+            self._end_request()
+
+    def _log_layout_request_error(self, e: Exception) -> None:
+        """Log logical layout request error by exception type."""
+        if isinstance(e, requests.exceptions.Timeout):
+            _LOGGER.error(
+                "SolarEdge Optimizers: Logical layout request timed out (timeout=%ss): %s",
+                API_TIMEOUT_LONG,
+                e,
+            )
+        elif isinstance(e, requests.exceptions.ConnectionError):
+            _LOGGER.error("SolarEdge Optimizers: Logical layout connection error: %s", e)
+        elif isinstance(e, requests.exceptions.RequestException):
+            _LOGGER.error("SolarEdge Optimizers: Logical layout request error: %s", e)
+        else:
+            _LOGGER.error("SolarEdge Optimizers: Logical layout unexpected error: %s", e)
 
     def requestLogicalLayout(self):
-        """Return raw JSON string of site structure (v2) for compatibility with code that parses text."""
+        """Request logical layout JSON for the site. Returns raw response text."""
+        url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/logical"
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: requestLogicalLayout for site %s", self.siteid)
-        path = f"/services/layout/logical/generic/v2/site/{self.siteid}"
-        data = self._get(path, params={"include-optimizers": "true"})
-        return json.dumps(data)
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): requestLogicalLayout URL: %s",
+                redact_url_for_log(url),
+            )
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Making logical layout request (timeout=%ss)",
+                API_TIMEOUT_LONG,
+            )
+        kwargs = {
+            "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
+            "timeout": API_TIMEOUT_LONG,
+        }
+        try:
+            return self._fetch_logical_layout(url, kwargs)
+        except Exception as e:  # pylint: disable=broad-except
+            self._log_layout_request_error(e)
+            raise
+
+    def _parse_and_cache_layout(self, raw_layout: str, now: datetime):
+        """Parse layout JSON, update cache, return SolarEdgeSite. Raises on parse error."""
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Received raw layout data, parsing JSON")
+        json_obj = json.loads(raw_layout)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Parsed logical layout JSON: %s", json_obj)
+            _LOGGER.debug("SolarEdge Optimizers (legacy): Creating SolarEdgeSite object")
+        self._panels_cache = SolarEdgeSite(json_obj)
+        self._panels_cache_time = now
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Refreshed panels cache with %s optimizers",
+                self._panels_cache.returnNumberOfOptimizers(),
+            )
+        return self._panels_cache
 
     def requestListOfAllPanels(self):
-        """Return SolarEdgeSite built from v2 site structure (cached)."""
+        """Return site layout (SolarEdgeSite). Uses cache when valid."""
         now = datetime.now()
         if (
             self._panels_cache is None
@@ -1060,161 +601,39 @@ class solaredge_one:
         ):
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: Panels cache miss (TTL=%s), fetching site structure",
+                    "SolarEdge Optimizers (legacy): Panels cache miss (TTL=%s), fetching fresh layout data",
                     self._panels_cache_ttl,
                 )
-            raw = self._get(
-                f"/services/layout/logical/generic/v2/site/{self.siteid}",
-                params={"include-optimizers": "true"},
-            )
-            self._panels_cache = _site_structure_v2_to_solar_edge_site(self.siteid, raw)
-            self._panels_cache_time = now
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge One: Refreshed panels cache with %s optimizers",
-                    self._panels_cache.returnNumberOfOptimizers(),
+            try:
+                raw_layout = self.requestLogicalLayout()
+                return self._parse_and_cache_layout(raw_layout, now)
+            except SolarEdgeAPIError:
+                raise
+            except json.JSONDecodeError as e:
+                _LOGGER.warning(
+                    "SolarEdge Optimizers: Legacy layout response was not JSON (%s); "
+                    "endpoint may be retired (HTTP 410 / empty body). Prefer SolarEdge One.",
+                    e,
                 )
-        else:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge One: Using cached panels (age=%s, TTL=%s)",
-                    now - self._panels_cache_time,
-                    self._panels_cache_ttl,
-                )
-        return self._panels_cache
-
-    def _parse_temperature_response(self, data: dict) -> tuple[dict[str, float], int]:
-        """
-        Parse layout/energy by-inverter API response into optimizer_serial -> max daily temperature (Celsius).
-        Returns (result_dict, fahrenheit_count) for logging.
-        """
-        result = {}
-        fahrenheit_count = 0
-        for inv_block in data.get("inverters") or []:
-            for opt in inv_block.get("optimizers") or []:
-                serial = (opt.get("serial") or "").strip()
-                temp_obj = opt.get("temperature")
-                if not serial or not isinstance(temp_obj, dict):
-                    continue
-                t = temp_obj.get("temperature")
-                if t is None:
-                    continue
-                try:
-                    temp_val = float(t)
-                    unit = (temp_obj.get("temperatureUnit") or "CELSIUS").strip().upper()
-                    # Portal may send FAHRENHEIT or F (e.g. US). Convert to Celsius for storage.
-                    if unit in ("FAHRENHEIT", "F"):
-                        raw_f = temp_val
-                        temp_val = (temp_val - 32.0) * (5.0 / 9.0)
-                        fahrenheit_count += 1
-                        if _LOGGER.isEnabledFor(logging.DEBUG):
-                            _LOGGER.debug(
-                                "SolarEdge One: Temperature unit %s for optimizer %s: %.1f°F -> %.1f°C",
-                                unit, serial, raw_f, temp_val,
-                            )
-                    result[serial] = round(temp_val, 1)
-                except (TypeError, ValueError):
-                    pass
-        return result, fahrenheit_count
-
-    def get_optimizer_temperatures_cached(self):
-        """
-        Return dict optimizer_serial -> max daily temperature (float, Celsius) from
-        layout/energy/site/.../by-inverter
-        with include-max-temperature=true. Cached per TEMPERATURE_CACHE_TTL.
-        """
-        now = datetime.now()
-        if (
-            self._temperature_cache is not None
-            and self._temperature_cache_time is not None
-            and (now - self._temperature_cache_time) <= self._temperature_cache_ttl
-        ):
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge One: Using cached optimizer temperatures (age=%s, TTL=%s)",
-                    now - self._temperature_cache_time,
-                    self._temperature_cache_ttl,
-                )
-            return self._temperature_cache
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers: Raw layout data: %s",
+                        raw_layout[:1000] if len(raw_layout) > 1000 else raw_layout,
+                    )
+                raise SolarEdgeAPIError(
+                    "Legacy layout response was not JSON "
+                    "(endpoint likely retired; use SolarEdge One)"
+                ) from e
+            except Exception as e:  # pylint: disable=broad-except
+                _LOGGER.error("SolarEdge Optimizers: Unexpected error in requestListOfAllPanels: %s", e)
+                raise
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge One: Temperature cache miss or expired (TTL=%s), fetching",
-                self._temperature_cache_ttl,
+                "SolarEdge Optimizers (legacy): Using cached panels (age=%s, TTL=%s)",
+                now - self._panels_cache_time,
+                self._panels_cache_ttl,
             )
-        try:
-            site = self.requestListOfAllPanels()
-            inverter_serials = [inv.serialNumber for inv in site.inverters if getattr(inv, "serialNumber", None)]
-            if not inverter_serials:
-                self._temperature_cache = {}
-                self._temperature_cache_time = now
-                return self._temperature_cache
-            today = now.strftime("%Y-%m-%d")
-            path = f"/services/layout/energy/site/{self.siteid}/by-inverter"
-            params = {
-                "start-date": today,
-                "end-date": today,
-                "inverter-serials": ",".join(inverter_serials),
-                "include-max-temperature": "true",
-            }
-            data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
-            result, fahrenheit_count = self._parse_temperature_response(data)
-            self._temperature_cache = result
-            self._temperature_cache_time = now
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge One: Refreshed optimizer temperature cache (%d optimizers%s)",
-                    len(result),
-                    f", {fahrenheit_count} in Fahrenheit (converted to °C)" if fahrenheit_count else "",
-                )
-            return result
-        except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.warning("SolarEdge One: Optimizer temperatures fetch failed: %s. Using previous cache.", e)
-            if self._temperature_cache is None:
-                self._temperature_cache = {}
-        return self._temperature_cache or {}
-
-    def _description_from_basic(self, basic: dict, item_id: str) -> str:
-        """Build panel description from basic info modules, or fallback to item_id."""
-        modules = basic.get("modules") or []
-        if modules and isinstance(modules[0], dict):
-            mod = modules[0]
-            return f"{mod.get('manufacturer') or 'Unknown'} {mod.get('model') or ''}".strip() or item_id
-        return item_id
-
-    def _measurements_from_live(self, live: dict) -> dict:
-        """Build measurements dict from live API response (power, current, voltage to 2 dp where applicable)."""
-        measurements = {}
-        if live.get("power_W") is not None:
-            measurements["Power [W]"] = round(float(live["power_W"]), 2)
-        if live.get("current_A") is not None:
-            measurements["Current [A]"] = live["current_A"]
-        if live.get("voltage_V") is not None:
-            measurements["Voltage [V]"] = round(float(live["voltage_V"]), 2)
-        if live.get("optimizerVoltage_V") is not None:
-            measurements["Optimizer Voltage [V]"] = round(float(live["optimizerVoltage_V"]), 2)
-        return measurements
-
-    def _extract_azimuth_tilt_from_basic(self, basic: dict) -> tuple:
-        """Extract azimuth and tilt from basic info modules, converting from radians to degrees."""
-        modules = basic.get("modules") or []
-        if not modules or not isinstance(modules[0], dict):
-            return None, None
-        mod = modules[0]
-        azimuth_rad = mod.get("azimuth")
-        tilt_rad = mod.get("tilt")
-        azimuth_deg = None
-        tilt_deg = None
-        if azimuth_rad is not None:
-            try:
-                azimuth_deg = round(math.degrees(float(azimuth_rad)), 2)
-            except (TypeError, ValueError):
-                pass
-        if tilt_rad is not None:
-            try:
-                tilt_deg = round(math.degrees(float(tilt_rad)), 2)
-            except (TypeError, ValueError):
-                pass
-        return azimuth_deg, tilt_deg
+        return self._panels_cache
 
     def _get_optimizer_status_lookup(self) -> dict[str, str]:
         """Return optimizer-id -> layout status from cached or freshly fetched site structure."""
@@ -1226,340 +645,435 @@ class solaredge_one:
                 return {}
         return optimizer_status_lookup_from_site(site)
 
-    def _build_optimizer_data_from_response(
-        self, item_id: str, live: dict, basic: dict, layout_status: str | None = None
-    ):
-        """Build SolarEdgeOptimizerData from API live/basic dicts for one optimizer. Returns None on error."""
-        last_measurement = live.get("lastMeasurement") or ""
-        model = basic.get("model") or ""
-        # Prefer API description (panel type e.g. 'SunPower SPR-MAX3-400') when present; else build from modules
-        api_desc = (basic.get("description") or live.get("description") or "").strip()
-        desc = api_desc if api_desc else self._description_from_basic(basic, item_id)
+    def requestSystemData(self, itemId, layout_status=None):
+        # Fixed endpoint URL - changed from monitoringpublic.solaredge.com/publicSystemData to monitoring.solaredge.com/systemData,
+        # changed isPublic=true to false, added locale parameter, and added v parameter with timestamp
+        if layout_status is None:
+            layout_status = self._get_optimizer_status_lookup().get(itemId)
+        locale = self._locale_from_language()
+        base = "https://monitoring.solaredge.com/solaredge-web/p/systemData"
+        params = f"reporterId={itemId}&type=panel&activeTab=0&fieldId={self.siteid}&isPublic=false&locale={locale}&v={round(time.time() * 1000)}"
+        url = f"{base}?{params}"
+
         if _LOGGER.isEnabledFor(logging.DEBUG):
             _LOGGER.debug(
-                "SolarEdge One: Building optimizer data for %s model=%r panel_type=%r last_measurement=%s has_live=%s",
-                item_id,
-                model or "(none)",
-                desc or "(none)",
-                last_measurement or "(none)",
-                bool(live),
+                "Endpoint (single optimizer systemData): %s",
+                redact_url_for_log(url),
             )
-        measurements = self._measurements_from_live(live)
-        json_object = {
-            "serialNumber": item_id,
-            "description": desc,
-            "lastMeasurementDate": last_measurement,
-            "model": model,
-            "manufacturer": "SolarEdge",
-            "measurements": measurements,
+
+        kwargs = {
+            "auth": requests.auth.HTTPBasicAuth(self.username, self.password),
+            "timeout": API_TIMEOUT_SHORT,
         }
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: Decoded optimizer %s (measurements=%d, "
-                "last_measurement=%s, description=%s)",
-                item_id,
-                len(measurements),
-                bool(last_measurement),
-                bool(desc),
-            )
+        self._begin_request()
         try:
-            opt_data = SolarEdgeOptimizerData(
-                item_id,
-                json_object,
-                self._timezone,
-                has_valid_measurements=bool(measurements),
-                layout_status=layout_status,
-            )
-            azimuth, tilt = self._extract_azimuth_tilt_from_basic(basic)
-            opt_data.azimuth = azimuth
-            opt_data.tilt = tilt
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge One: Optimizer %s azimuth=%s° tilt=%s°",
-                    item_id, azimuth, tilt,
-                )
-            return opt_data
-        except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.error("SolarEdge One: Error building optimizer data for %s: %s", item_id, e)
-            return None
-
-    def _post_optimizers_with_retry(self, path: str, payload: list, timeout: int = API_TIMEOUT_LONG):
-        """POST to optimizer endpoint with longer timeout and one retry on read/connect timeout."""
-        try:
-            return self._post(path, payload, timeout=timeout)
-        except requests.exceptions.Timeout as e:
-            _LOGGER.warning(
-                "SolarEdge One: Timeout requesting optimizer data (retrying once): %s", e
-            )
-            return self._post(path, payload, timeout=timeout)
-
-    def requestSystemData(self, item_id: str):
-        """
-        Fetch live data for one optimizer by serial (e.g. 130FCCF8-E6).
-        Returns SolarEdgeOptimizerData or None.
-        """
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: requestSystemData for optimizer %s", item_id)
-        path = "/services/layout/information/optimizers"
-        try:
-            data = self._post_optimizers_with_retry(path, [item_id])
-        except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code >= 500:
-                _LOGGER.warning("SolarEdge One: Temporary server error (HTTP %s) for optimizer %s", e.response.status_code, item_id)
-            raise
-        basic_list = data.get("basicInformationList") or []
-        live_map = data.get("serialToLiveData") or {}
-        live = live_map.get(item_id) or {}
-        basic = next((b for b in basic_list if (b.get("serial") or "").strip() == (item_id or "").strip()), None) or {}
-        layout_status = self._get_optimizer_status_lookup().get(item_id)
-        info = self._build_optimizer_data_from_response(item_id, live, basic, layout_status=layout_status)
-        if info is not None:
-            temp_map = self.get_optimizer_temperatures_cached()
-            if item_id in temp_map:
-                info.temperature = temp_map[item_id]
-        return info
-
-    def requestSystemDataBatch(self, item_ids: list, status_lookup: dict[str, str] | None = None):
-        """
-        Fetch live data for multiple optimizers in one API call.
-        Used by the coordinator for lightweight "has any panel updated?" checks so we sample
-        several panels (different orientations) instead of one that might be in shade.
-        Returns list of SolarEdgeOptimizerData (or None for failed items); order matches item_ids.
-        """
-        if not item_ids:
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: requestSystemDataBatch called with empty list")
-            return []
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: requestSystemDataBatch for %d optimizer(s): %s",
-                len(item_ids),
-                item_ids,
-            )
-        path = "/services/layout/information/optimizers"
-        try:
-            data = self._post_optimizers_with_retry(path, list(item_ids))
-        except requests.HTTPError as e:
-            if e.response is not None and e.response.status_code >= 500:
-                _LOGGER.warning(
-                    "SolarEdge One: Temporary server error (HTTP %s) during batch light check",
-                    e.response.status_code,
-                )
-            raise
-        basic_list = data.get("basicInformationList") or []
-        live_map = data.get("serialToLiveData") or {}
-        lookup = status_lookup if status_lookup is not None else self._get_optimizer_status_lookup()
-        result = []
-        for item_id in item_ids:
-            live = live_map.get(item_id) or {}
-            basic = next((b for b in basic_list if (b.get("serial") or "").strip() == (str(item_id) or "").strip()), None) or {}
-            layout_status = lookup.get(item_id)
-            result.append(
-                self._build_optimizer_data_from_response(item_id, live, basic, layout_status=layout_status)
-            )
-        temp_map = self.get_optimizer_temperatures_cached()
-        for i, item_id in enumerate(item_ids):
-            if result[i] is not None and item_id in temp_map:
-                result[i].temperature = temp_map[item_id]
-        return result
-
-    def _fetch_all_optimizer_data(
-        self, optimizer_ids: list, status_lookup: dict[str, str] | None = None
-    ) -> list:
-        """Fetch live data for all optimizers in one batch POST. Returns list of SolarEdgeOptimizerData (successful only)."""
-        if not optimizer_ids:
-            return []
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: requestAllData fetching %d optimizers (single batch)",
-                len(optimizer_ids),
-            )
-        try:
-            result = self.requestSystemDataBatch(optimizer_ids, status_lookup=status_lookup)
-            return [item for item in result if item is not None]
-        except Exception as e:  # pylint: disable=broad-except
-            _LOGGER.warning(
-                "SolarEdge One: Batch optimizer fetch failed (%s), falling back to per-optimizer",
-                e,
-            )
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge One: Per-optimizer fallback: fetching %d optimizers with ThreadPoolExecutor",
-                    len(optimizer_ids),
-                )
-            # Fallback: one request per optimizer if batch fails
-            data = []
-            with ThreadPoolExecutor(
-                max_workers=min(os.cpu_count() or 4, len(optimizer_ids), MAX_PARALLEL_WORKERS)
-            ) as executor:
-                future_to_id = {
-                    executor.submit(self.requestSystemData, oid): oid
-                    for oid in optimizer_ids
-                }
-                for future in as_completed(future_to_id):
-                    oid = future_to_id[future]
-                    try:
-                        info = future.result()
-                        if info is not None:
-                            data.append(info)
-                    except Exception as err:  # pylint: disable=broad-except
-                        _LOGGER.error(
-                            "SolarEdge One: Error fetching data for optimizer %s: %s",
-                            oid,
-                            err,
-                        )
-            return data
-
-    def _attach_lifetime_energy_and_temperatures(
-        self, data_list: list, lifetimeenergy: dict, temperature_map: dict
-    ) -> None:
-        """Attach lifetime_energy and temperature to each optimizer data item in place."""
-        for info in data_list:
-            oid = info.panel_id
-            energy_data = lifetimeenergy.get(str(oid)) or lifetimeenergy.get(oid) or {}
-            energy_kwh = _lifetime_energy_to_kwh(energy_data)
-            info.lifetime_energy = round(energy_kwh, 3) if energy_kwh is not None else 0.0
-            if oid in temperature_map:
-                info.temperature = temperature_map[oid]
-
-    def requestAllData(self):
-        """Fetch live data for all optimizers and attach lifetime energy (same interface as legacy API)."""
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: requestAllData starting")
-        site = self.requestListOfAllPanels()
-        status_lookup = optimizer_status_lookup_from_site(site)
-        optimizer_ids = [
-            opt.optimizerId
-            for inv in site.inverters
-            for s in inv.strings
-            for opt in s.optimizers
-        ]
-        data = self._fetch_all_optimizer_data(optimizer_ids, status_lookup=status_lookup)
-        lifetimeenergy = self.get_lifetime_energy_cached()
-        temperature_map = self.get_optimizer_temperatures_cached()
-        self._attach_lifetime_energy_and_temperatures(data, lifetimeenergy, temperature_map)
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: requestAllData complete, %d optimizers with data", len(data))
-        return data
-
-    def getLifeTimeEnergy(self):
-        """
-        Return lifetime energy data keyed by optimizer serial (same shape as legacy layout/energy).
-        Each entry: { "unscaledEnergy": total_wh }.
-        SolarEdge One has no single "all layout energy" call; we build from energy-graph per optimizer (cached in get_lifetime_energy_cached).
-        """
-        return json.dumps(self.get_lifetime_energy_cached())
-
-    def _fetch_one_optimizer_lifetime(self, serial: str) -> tuple[str, dict | None]:
-        """Fetch lifetime energy for one optimizer. Returns (serial_str, entry or None)."""
-        try:
-            path = f"/services/layout/energy-graph/site/{self.siteid}/optimizers"
-            params = {
-                "chart-time-unit": "years",
-                "start-date": "2010-01-01",
-                "end-date": datetime.now().strftime("%Y-%m-%d"),
-                "optimizer-serials": serial,
-            }
-            data = self._get(path, params=params, timeout=API_TIMEOUT_SHORT)
-            total_wh = data.get("totalEnergy")
-            if total_wh is not None:
-                return (str(serial), {"unscaledEnergy": float(total_wh)})
-        except Exception as e:  # pylint: disable=broad-except
-            status = getattr(getattr(e, "response", None), "status_code", None)
-            serial_key = str(serial)
-            logged_403 = getattr(self, "_lifetime_403_logged", None)
-            if logged_403 is None:
-                self._lifetime_403_logged = set()
-                logged_403 = self._lifetime_403_logged
-            if status == 403:
-                if serial_key not in logged_403:
-                    _LOGGER.warning(
-                        "SolarEdge One: Lifetime energy for %s failed: 403 Forbidden "
-                        "(insufficient permissions; further failures for this serial at DEBUG)",
-                        serial,
-                    )
-                    logged_403.add(serial_key)
-                elif _LOGGER.isEnabledFor(logging.DEBUG):
+            with requests.get(url, **kwargs) as r:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("Response from systemData (optimizer %s, status %s)", itemId, r.status_code)
+                if r.status_code != 200:
+                    _raise_for_system_data_http_error(r, itemId)
+                json_object = self.decodeResult(r.text)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
                     _LOGGER.debug(
-                        "SolarEdge One: Lifetime energy for %s failed: 403 Forbidden",
-                        serial,
+                        "Decoded optimizer %s response (%d top-level keys)",
+                        itemId,
+                        len(json_object) if isinstance(json_object, dict) else 0,
                     )
-            else:
-                _LOGGER.warning("SolarEdge One: Lifetime energy for %s failed: %s", serial, e)
-        return (str(serial), None)
+                return _parse_system_data_json(
+                    json_object, itemId, self._timezone, layout_status=layout_status
+                )
+        finally:
+            self._end_request()
 
-    def _fetch_lifetime_energy_uncached(self) -> dict:
-        """Fetch lifetime energy for all optimizers (no cache). Returns dict serial -> { unscaledEnergy: wh }."""
-        site = self.requestListOfAllPanels()
-        serials = [
-            opt.optimizerId
-            for inv in site.inverters
-            for s in inv.strings
-            for opt in s.optimizers
-        ]
-        if not serials:
+    def _parse_lifetime_energy_response(self, response: str) -> dict:
+        """Parse getLifeTimeEnergy response string to dict. Returns {} on error or ERROR001."""
+        if response.startswith("ERROR001"):
+            _LOGGER.error("Failed to get lifetime energy data: %s", response)
+            return {}
+        try:
+            data = json.loads(response)
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: No optimizers in layout; skipping lifetime energy fetch"
+                    "Parsed lifetime energy data (%d optimizer/string entries)",
+                    len(data) if isinstance(data, dict) else 0,
                 )
+            return data
+        except json.JSONDecodeError as e:
+            _LOGGER.error("Failed to parse lifetime energy JSON: %s", e)
             return {}
-        result = {}
-        max_workers = min(os.cpu_count() or 4, len(serials), MAX_PARALLEL_WORKERS)
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_serial = {
-                executor.submit(self._fetch_one_optimizer_lifetime, s): s for s in serials
-            }
-            for future in as_completed(future_to_serial):
-                serial, entry = future.result()
-                if entry is not None:
-                    result[serial] = entry
-        if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug(
-                "SolarEdge One: Refreshed lifetime energy cache (%d optimizers)",
-                len(result),
-            )
-        return result
 
-    def get_lifetime_energy_cached(self):
-        """Return dict serial -> { unscaledEnergy: wh } (refresh at most hourly)."""
+    def _get_cached_lifetime_energy(self):
+        """Return lifetime energy dict, from cache or by fetching and parsing getLifeTimeEnergy()."""
         now = datetime.now()
         if (
             self._lifetime_energy_cache is None
             or self._lifetime_energy_cache_time is None
             or (now - self._lifetime_energy_cache_time) > self._lifetime_energy_cache_ttl
         ):
+            response = self.getLifeTimeEnergy()
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: Lifetime energy cache miss (TTL=%s), fetching per-optimizer",
-                    self._lifetime_energy_cache_ttl,
+                    "Lifetime energy endpoint response size: %d bytes",
+                    len(response),
                 )
-            try:
-                self._lifetime_energy_cache = self._fetch_lifetime_energy_uncached()
-                self._lifetime_energy_cache_time = now
-            except Exception as e:  # pylint: disable=broad-except
-                _LOGGER.warning("SolarEdge One: Lifetime energy fetch failed: %s. Using previous cache.", e)
-                if self._lifetime_energy_cache is None:
-                    self._lifetime_energy_cache = {}
+            lifetimeenergy = self._parse_lifetime_energy_response(response)
+            self._lifetime_energy_cache = lifetimeenergy
+            self._lifetime_energy_cache_time = now
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Refreshed lifetime energy cache")
         else:
+            lifetimeenergy = self._lifetime_energy_cache
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("Using cached lifetime energy data")
+        return lifetimeenergy
+
+    def requestAllData(self):
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers (legacy): requestAllData starting")
+        solarsite = self.requestListOfAllPanels()
+        status_lookup = optimizer_status_lookup_from_site(solarsite)
+        lifetimeenergy = self._get_cached_lifetime_energy()
+
+        optimizer_ids = [
+            optimizer.optimizerId
+            for inverter in solarsite.inverters
+            for string in inverter.strings
+            for optimizer in string.optimizers
+        ]
+
+        if not optimizer_ids:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug(
-                    "SolarEdge One: Using cached lifetime energy (age=%s, TTL=%s, %d entries)",
-                    now - self._lifetime_energy_cache_time,
-                    self._lifetime_energy_cache_ttl,
-                    len(self._lifetime_energy_cache or {}),
+                    "SolarEdge Optimizers (legacy): requestAllData found no optimizers in layout"
                 )
-        return self._lifetime_energy_cache or {}
+            return []
+
+        max_workers = min(os.cpu_count() or 4, len(optimizer_ids), MAX_PARALLEL_WORKERS)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): requestAllData fetching %d optimizers with max_workers=%d",
+                len(optimizer_ids), max_workers,
+            )
+        data = []
+        missing_active_measurements = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_id = {
+                executor.submit(
+                    self.requestSystemData, opt_id, status_lookup.get(opt_id)
+                ): opt_id
+                for opt_id in optimizer_ids
+            }
+            for future in as_completed(future_to_id):
+                optimizer_id = future_to_id[future]
+                try:
+                    info = future.result()
+                    if info is not None:
+                        if (
+                            not getattr(info, "_has_valid_measurements", False)
+                            and is_status_active(status_lookup.get(optimizer_id))
+                        ):
+                            missing_active_measurements += 1
+                        _apply_lifetime_energy_to_optimizer_info(info, optimizer_id, lifetimeenergy)
+                        data.append(info)
+                except Exception as e:  # pylint: disable=broad-except
+                    _LOGGER.error("Error fetching data for optimizer %s: %s", optimizer_id, e)
+
+        if missing_active_measurements:
+            _LOGGER.warning(
+                "SolarEdge Optimizers (legacy): %d active optimizer(s) returned "
+                "missing or invalid measurements in this refresh",
+                missing_active_measurements,
+            )
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): requestAllData complete, %d optimizers with data",
+                len(data),
+            )
+        return data
+
+    def requestItemHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
+        """
+        Request measurement history of a panel given a time window defined by start- and endtime
+        :param itemId: itemId of the item (panel, string, inverter)
+        :param starttime: starttime as datetime or unix timestamp in ms, or None for start of today
+        :param endtime: endtime as datetime or unix timestamp in ms, or None for 24 hour after starttime
+        :param parameter: the measurement parameter to return; available parameters from the portal
+            chartParamsList endpoint (fieldId / reporterId / format=form)
+        :return: dictionary with datetime (keys), value (values) pairs
+            Note, time resolution of the result depends on the time range spanned by start- and endtime
+        """
+        if starttime is None:
+            now = datetime.now()
+            starttime = datetime(now.year, now.month, now.day)
+        if isinstance(starttime, datetime):
+            starttime = int(starttime.timestamp() * 1000)
+        if endtime is None:
+            endtime = int(starttime + timedelta(days=1).total_seconds() * 1000)
+        if isinstance(endtime, datetime):
+            endtime = int(endtime.timestamp() * 1000)
+
+        # Use f-string instead of .format() for better performance
+        base = "https://monitoring.solaredge.com/solaredge-web/p/chartData"
+        q = f"reporterId={itemId}&fieldId={self.siteid}&reporterType=&startDate={starttime:d}&endDate={endtime:d}&uom=W&parameterName={parameter}"
+        url = f"{base}?{q}"
+
+        r = self._doRequestWithCooldown("GET", url)
+        if r.startswith("ERROR001"):
+            raise SolarEdgeAPIError(f"Error while doing request: {r}")
+
+        json_object = self.decodeResult(r)
+        try:
+            # SolarEdge chart timestamps are milliseconds; treat as UTC epoch.
+            return {
+                datetime.fromtimestamp(pair['date'] / 1000, tz=datetime_timezone.utc): pair['value']
+                for pair in json_object['dateValuePairs']
+            }
+        except Exception as e:  # pylint: disable=broad-except
+            raise SolarEdgeAPIError("Error while processing data") from e
+
+    def requestPanelHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
+        allowed = ("Power", "Current", "Voltage", "Energy", "PowerBox Voltage")
+        if parameter not in allowed:
+            raise ValueError(f"parameter must be one of {allowed}, got {parameter!r}")
+        return self.requestItemHistory(itemId, starttime=starttime, endtime=endtime, parameter=parameter)
+
+    def requestStringHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
+        if parameter not in ("Energy", "Power"):
+            raise ValueError("parameter must be 'Energy' or 'Power'")
+        return self.requestItemHistory(itemId, starttime=starttime, endtime=endtime, parameter=parameter)
+
+    def requestInverterHistory(self, itemId, starttime=None, endtime=None, parameter="Power"):
+        # https://monitoring.solaredge.com/solaredge-web/p/chartParamsList?fieldId={}reporterId={}&format=form
+        allowed = (
+            "AC Energy", "AC Frequency", "AC Frequency P2", "AC Frequency P3",
+            "AC Voltage", "AC Voltage P2", "AC Voltage P3",
+            "AC Current", "AC Current P2", "AC Current P3",
+            "Power", "DC Voltage", "Purchased back feed AC Energy", "Total Reactive Power", "Power Factor",
+        )
+        if parameter not in allowed:
+            raise ValueError(f"parameter must be one of {allowed}, got {parameter!r}")
+        return self.requestItemHistory(itemId, starttime=starttime, endtime=endtime, parameter=parameter)
+
+    def requestHistoricalData(self, starttime=None, endtime=None, type="optimizer", parameter="Power"):
+        if type not in ("optimizer", "inverter", "string"):
+            raise ValueError("type must be 'optimizer', 'inverter', or 'string'")
+
+        solarsite = self.requestListOfAllPanels()
+
+        data = {}
+        for inverter in solarsite.inverters:
+            if "inverter" in type:
+                info = self.requestInverterHistory(inverter.inverterId, starttime, endtime, parameter)
+                data[inverter] = info
+            for string in inverter.strings:
+                if "string" in type:
+                    info = self.requestStringHistory(string.stringId, starttime, endtime, parameter)
+                    data[string] = info
+                for optimizer in string.optimizers:
+                    if "optimizer" in type:
+                        info = self.requestPanelHistory(optimizer.optimizerId, starttime, endtime, parameter)
+                        data[optimizer] = info
+
+        return data
+
+    def _doRequestWithCooldown(self, method, request_url, data=None, wait_sec=0.1, cooldown_sec=5, n_retries=3):
+        """
+        Same as _doRequest, but waiting before each call, and in between retries in case it fails
+        """
+        # Use f-string instead of % formatting for better performance
+        last_error = SolarEdgeAPIError(f"Could not perform request within {n_retries} retries")
+        for _ in range(n_retries):
+            try:
+                time.sleep(wait_sec)
+                res = self._doRequest(method=method, request_url=request_url, data=data)
+                return res
+            except ConnectionError as e:
+                if isinstance(e.args[0], Exception) and len(e.args[0].args) > 1 and \
+                        isinstance(e.args[0].args[1], ConnectionResetError) and e.args[0].args[1].errno == 10054:
+                    last_error = e
+                    time.sleep(cooldown_sec)
+                    continue
+                raise
+        raise last_error
+
+    def _prime_session_cookies(self, session: Session):
+        """Prime legacy session cookies and recover when CSRF moves off /p/login.
+
+        SolarEdge changed the monitoring portal in May 2026 so some accounts no
+        longer receive ``CSRF-TOKEN`` from ``/solaredge-web/p/login``. Keep the
+        historical bootstrap for compatibility, then fall back to the reported
+        ``/solaredge-web/p/logout/slo`` -> ``/solaredge-web/p/login`` sequence
+        when the CSRF cookie is still missing.
+        """
+        with session.head(
+            f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy",
+            headers={"user-agent": USER_AGENT},
+            timeout=API_TIMEOUT_SHORT,
+        ) as response:
+            pass  # Response automatically closed by context manager
+
+        session.auth = (self.username, self.password)
+        login_url = "https://monitoring.solaredge.com/solaredge-web/p/login"
+        logout_slo_url = "https://monitoring.solaredge.com/solaredge-web/p/logout/slo"
+
+        with session.get(login_url, timeout=API_TIMEOUT_SHORT) as response:
+            if response.status_code != 200:
+                _LOGGER.warning("Login request returned status %d", response.status_code)
+
+        if self.GetThecsrfToken(session.cookies.get_dict()) is not None:
+            return
+
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): CSRF cookie missing after /p/login; "
+                "trying logout/login bootstrap"
+            )
+        with session.get(logout_slo_url, timeout=API_TIMEOUT_SHORT) as response:
+            if response.status_code != 200:
+                _LOGGER.warning("Logout SLO request returned status %d", response.status_code)
+        with session.get(login_url, timeout=API_TIMEOUT_SHORT) as response:
+            if response.status_code != 200:
+                _LOGGER.warning("Login request after logout bootstrap returned status %d", response.status_code)
+        if self.GetThecsrfToken(session.cookies.get_dict()) is None:
+            _LOGGER.warning("CSRF token still not found in cookies after logout/login bootstrap")
+
+    def _begin_request(self):
+        """Mark an in-flight HTTP call so close() can wait for it to finish."""
+        with self._inflight_cond:
+            if self._closed:
+                raise RuntimeError("SolarEdge legacy API client is closed")
+            self._inflight += 1
+
+    def _end_request(self):
+        """Clear an in-flight HTTP call and wake close() waiters."""
+        with self._inflight_cond:
+            self._inflight = max(0, self._inflight - 1)
+            self._inflight_cond.notify_all()
+
+    def _get_session(self):
+        """Get or create a thread-local session for reuse.
+
+        Each thread gets its own session to avoid conflicts when using ThreadPoolExecutor.
+        Sessions are reused within the same thread to reduce login overhead.
+        All sessions are tracked so close() can close them and avoid leaking file descriptors.
+        """
+        if self._closed:
+            raise RuntimeError("SolarEdge legacy API client is closed")
+        if not hasattr(self._thread_local, 'session') or self._thread_local.session is None:
+            session = Session()
+            try:
+                self._prime_session_cookies(session)
+            except Exception:  # pylint: disable=broad-except
+                session.close()
+                raise
+            with self._sessions_lock:
+                self._all_sessions.add(session)
+            self._thread_local.session = session
+
+        return self._thread_local.session
+
+    def _request_headers(self, cookie: str, csrf_token: str) -> dict:
+        """Build headers dict for legacy API request (cookie, CSRF, referer, etc.)."""
+        return {
+            "authority": "monitoring.solaredge.com",
+            "accept": "*/*",
+            "accept-language": self._accept_language_header(),
+            "content-type": "application/json",
+            "cookie": cookie,
+            "origin": "https://monitoring.solaredge.com",
+            "referer": f"https://monitoring.solaredge.com/solaredge-web/p/site/{self.siteid}/",
+            "sec-ch-ua": '"Google Chrome";v="105", "Not)A;Brand";v="8", "Chromium";v="105"',
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
+            "user-agent": USER_AGENT,
+            "x-csrf-token": csrf_token,
+            "x-kl-ajax-request": "Ajax_Request",
+            "x-requested-with": "XMLHttpRequest",
+        }
+
+    def _doRequest(self, method, request_url, data=None):
+        """Execute request with thread-local session; return response text or ERROR001 string.
+
+        Uses 'with session.request(...) as response' so the response body is consumed and the
+        connection is released back to the pool (or closed); no file descriptors are left open.
+        """
+        self._begin_request()
+        try:
+            session = self._get_session()
+            therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
+            thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
+            if thecrsftoken is None:
+                _LOGGER.warning("CSRF token not found in cookies; refreshing legacy session bootstrap")
+                self._prime_session_cookies(session)
+                therightcookie = self.MakeStringFromCookie(session.cookies.get_dict())
+                thecrsftoken = self.GetThecsrfToken(session.cookies.get_dict())
+                if thecrsftoken is None:
+                    _LOGGER.warning("CSRF token still not found in cookies after refresh")
+                    thecrsftoken = ""
+            csrf_token_missing_locally = thecrsftoken == ""
+
+            with session.request(
+                method=method,
+                url=request_url,
+                headers=self._request_headers(therightcookie, thecrsftoken),
+                data=data,
+                timeout=API_TIMEOUT_LONG,
+            ) as response:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "Endpoint: %s %s | Status: %s | Response size: %d bytes",
+                        method,
+                        redact_url_for_log(request_url),
+                        response.status_code,
+                        len(response.text),
+                    )
+                response_text = response.text
+                status_code = response.status_code
+
+            if status_code == 200:
+                return response_text
+            if status_code == 498:
+                if csrf_token_missing_locally:
+                    _LOGGER.warning(
+                        "SolarEdge Optimizers (legacy): HTTP 498 from %s %s; request was sent without a local "
+                        "CSRF token after bootstrap refresh, so SolarEdge likely rejected the legacy session/CSRF bootstrap",
+                        method,
+                        request_url,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "SolarEdge Optimizers (legacy): HTTP 498 from %s %s; SolarEdge likely rejected an "
+                        "invalid or expired CSRF token / legacy web session",
+                        method,
+                        request_url,
+                    )
+            return f"ERROR001 - HTTP CODE: {status_code}"
+        finally:
+            self._end_request()
+
+    def getLifeTimeEnergy(self):
+        # Use f-string instead of .format() for better performance
+        url = f"https://monitoring.solaredge.com/solaredge-apigw/api/sites/{self.siteid}/layout/energy?timeUnit=ALL"
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Endpoint (lifetime energy, whole site): %s",
+                redact_url_for_log(url),
+            )
+        return self._doRequest("POST", url)
 
     def close(self, log_summary: bool = True):
-        """Wait for active operations, clear OAuth tokens, and mark the client closed.
+        """Close all sessions (all threads) to prevent file descriptor leaks.
 
-        Routine GET/POST use ``with requests.get/post(...)`` so responses and pooled connections
-        are released after each call. The PKCE login uses ``with Session() as session`` so that
-        session is closed before normal API traffic. Parallel energy-graph fetches use
-        ``with ThreadPoolExecutor(...)`` so executor threads finish and shutdown. This method
-        prevents new work and waits for tracked operations before clearing tokens. Pair with
-        dual API ``close()`` so legacy sessions are also closed. When called from
-        SolarEdgeDualAPI, pass log_summary=False.
+        Call when the API client is no longer needed (e.g. integration unload/removal).
+        Waits briefly for in-flight ``_doRequest`` calls, then sets ``_closed`` so any
+        subsequent ``_get_session()`` / ``_begin_request()`` raises. Closes every tracked
+        Session so connection pools and file descriptors are released. Idempotent; safe to
+        call multiple times.
+
+        When called from SolarEdgeDualAPI, pass log_summary=False so unload logs once at INFO.
         """
         with self._inflight_cond:
             if self._closed:
@@ -1570,20 +1084,35 @@ class solaredge_one:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     _LOGGER.warning(
-                        "SolarEdge One: Closing with %d in-flight operation(s) still active",
+                        "SolarEdge Optimizers (legacy): Closing with %d in-flight request(s) still active",
                         self._inflight,
                     )
                     break
                 self._inflight_cond.wait(timeout=remaining)
-        with self._token_lock:
-            if self._access_token and _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One: close() clearing access token")
-            self._access_token = None
-            self._refresh_token = None
-        if log_summary:
-            _LOGGER.info("SolarEdge One: API client closed (OAuth tokens cleared)")
-        elif _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge One: API client closed (OAuth tokens cleared)")
+        if hasattr(self._thread_local, "session"):
+            self._thread_local.session = None
+        with self._sessions_lock:
+            sessions_to_close = set(self._all_sessions)
+            self._all_sessions.clear()
+        closed_count = 0
+        for session in sessions_to_close:
+            try:
+                session.close()
+                closed_count += 1
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers (legacy): Closed session")
+            except Exception as e:  # pylint: disable=broad-except
+                _LOGGER.warning("SolarEdge Optimizers (legacy): Error closing session: %s", e)
+        if closed_count and log_summary:
+            _LOGGER.info(
+                "SolarEdge Optimizers (legacy): Closed %d session(s) (file descriptors released)",
+                closed_count,
+            )
+        elif closed_count and _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers (legacy): Closed %d session(s) (file descriptors released)",
+                closed_count,
+            )
 
     def __del__(self) -> None:
         """Best-effort cleanup if GC collects an unclosed client."""
@@ -1592,4 +1121,354 @@ class solaredge_one:
         except Exception as exc:  # pylint: disable=broad-except
             # Never raise from destructor, but leave a debug breadcrumb.
             if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge One API: Ignoring close error in __del__: %s", exc)
+                _LOGGER.debug(
+                    "SolarEdge Optimizers (legacy): Ignoring close error in __del__: %s", exc
+                )
+
+    def getAlerts(self, only_open=False):
+        # Note: FULL_ACCESS rights in the SE portal may be required (not DASHBOARD_AND_LAYOUT).
+        base = "https://monitoring.solaredge.com/solaredge-apigw/api/rna/v1.0"
+        url = f"{base}/site/{self.siteid}/alerts"
+        data = None
+        if only_open:
+            data = [{"fieldFilterOperator": "IN",
+                     "fieldName": "status",
+                     "fieldValue": ["OPEN"]}]
+        return self._doRequest("POST", url, data=json.dumps(data))
+
+    def GetThecsrfToken(self, cookies):
+        # Optimize using direct dictionary access instead of linear search
+        return cookies.get("CSRF-TOKEN")
+
+    def MakeStringFromCookie(self, cookies):
+        # Optimize string concatenation using list and join() instead of += in loop
+        # Direct access to known keys instead of iterating all cookies
+        cookie_parts = []
+        if "CSRF-TOKEN" in cookies:
+            cookie_parts.append(f"CSRF-TOKEN={cookies['CSRF-TOKEN']};")
+        if "JSESSIONID" in cookies:
+            cookie_parts.append(f"JSESSIONID={cookies['JSESSIONID']};")
+
+        # Fixed typo "concent" to "consent" in cookie string
+        # Use f-string instead of .format() for better performance
+        locale = self._locale_from_language()
+        cookie_parts.append(f"SolarEdge_Locale={locale}; SolarEdge_Locale={locale}; solaredge_cookie_consent=1;SolarEdge_Field_ID={self.siteid}")
+
+        return "".join(cookie_parts)
+
+    def decodeResult(self, result):
+        """Extract JSON from a legacy portal response body.
+
+        Prefers ``SE.systemData = {...};`` when present; otherwise scans for the first
+        embedded JSON object/array with stdlib ``json.JSONDecoder.raw_decode`` (no
+        third-party jsonfinder dependency; ``manifest.json`` requirements are empty).
+        """
+        # First try to extract JSON from SE.systemData = {...}; line (more specific and reliable)
+        # Find SE.systemData = and extract the JSON object (handles nested braces)
+        se_systemdata_match = re.search(r'SE\.systemData\s*=\s*', result)
+        if se_systemdata_match:
+            start_pos = se_systemdata_match.end()
+            # Find the opening brace
+            brace_start = result.find('{', start_pos)
+            if brace_start != -1:
+                # Count braces to find the matching closing brace
+                brace_count = 0
+                i = brace_start
+                while i < len(result):
+                    if result[i] == '{':
+                        brace_count += 1
+                    elif result[i] == '}':
+                        brace_count -= 1
+                        if brace_count == 0:
+                            # Found matching closing brace
+                            json_str = result[brace_start:i+1]
+                            try:
+                                json_result = json.loads(json_str)
+                                if _LOGGER.isEnabledFor(logging.DEBUG):
+                                    _LOGGER.debug(
+                                        "SolarEdge Optimizers (legacy): Extracted JSON from SE.systemData line"
+                                    )
+                                return json_result
+                            except json.JSONDecodeError as e:
+                                _LOGGER.warning("Failed to parse JSON from SE.systemData line: %s", e)
+                                # Fall through to stdlib JSON scan
+                            break
+                    i += 1
+
+        # Fallback: scan for the first embedded JSON object/array (stdlib; no third-party deps)
+        return self._first_embedded_json(result)
+
+    @staticmethod
+    def _first_embedded_json(text):
+        """Return the first JSON object or array embedded in text, or raise ValueError."""
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char not in "{[":
+                continue
+            try:
+                obj, _ = decoder.raw_decode(text, index)
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug(
+                        "SolarEdge Optimizers (legacy): Extracted embedded JSON via stdlib raw_decode "
+                        "(fallback; no SE.systemData match)"
+                    )
+                return obj
+            except json.JSONDecodeError:
+                continue
+        raise ValueError("data not found")
+
+
+class SolarEdgeSite:
+    def __init__(self, json_obj):
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Initializing SolarEdgeSite with siteId: %s", json_obj.get("siteId"))
+        self.siteId = json_obj["siteId"]
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Getting all inverters for site %s", self.siteId)
+        self.inverters = self.__GetAllInverters(json_obj)
+        before_count = len(self.inverters)
+        self.inverters = collapse_duplicate_inverter_slots(self.inverters, logger=_LOGGER)
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Site %s initialized with %d inverters"
+                " (from %d portal rows after slot collapse)",
+                self.siteId,
+                len(self.inverters),
+                before_count,
+            )
+
+    def __GetAllInverters(self, json_obj):
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Parsing inverters from logical tree")
+
+        inverters = []
+        child_count = len(json_obj["logicalTree"]["childIds"])
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Found %d children in logical tree", child_count)
+
+        for i in range(child_count):
+            child_name = json_obj["logicalTree"]["children"][i]["data"]["name"]
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug("SolarEdge Optimizers: Processing child %d: %s", i, child_name)
+
+            if "PRODUCTION METER" not in child_name.upper():
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Adding inverter at index %d", i)
+                inverters.append(SolarEdgeInverter(json_obj=json_obj, index=i))
+            else:
+                if _LOGGER.isEnabledFor(logging.DEBUG):
+                    _LOGGER.debug("SolarEdge Optimizers: Found production meter, processing sub-children")
+                sub_child_count = len(json_obj["logicalTree"]["children"][i]["childIds"])
+                for j in range(sub_child_count):
+                    if _LOGGER.isEnabledFor(logging.DEBUG):
+                        _LOGGER.debug("SolarEdge Optimizers: Adding inverter at indices %d,%d", i, j)
+                    inverters.append(SolarEdgeInverter(json_obj=json_obj, index=i, index2=j, powermeterpresent=True))
+
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Optimizers: Completed parsing %d inverters", len(inverters))
+        return inverters
+
+    def returnNumberOfOptimizers(self):
+        i = 0
+
+        for inverter in self.inverters:
+            for string in inverter.strings:
+                i = i + len(string.optimizers)
+
+        return i
+
+    def ReturnAllPanelsIds(self):
+
+        panel_ids = []
+
+        for inverter in self.inverters:
+            for string in inverter.strings:
+                for optimizer in string.optimizers:
+                    # Use f-string instead of .format() for better performance
+                    panel_ids.append(f"{optimizer.optimizerId}|{optimizer.serialNumber}")
+
+        return panel_ids
+
+
+class SolarEdgeInverter:
+
+    def __init__(self, json_obj, index, index2=0, powermeterpresent=False):
+        if powermeterpresent:
+            data = json_obj["logicalTree"]["children"][index]["children"][index2]["data"]
+            self.inverterId = data["id"]
+            self.serialNumber = data["serialNumber"]
+            self.name = data["name"]
+            self.displayName = data["displayName"]
+            self.relativeOrder = data["relativeOrder"]
+            self.type = data["type"]
+            self.operationsKey = data["operationsKey"]
+            self.status = data.get("status", "")
+            self.manufacturer = data.get("manufacturer", "SolarEdge")
+            self.model = data.get("model", "")
+            self.maxActivePower = data.get("maxActivePower")  # kW (One API) or None
+
+            self.strings = self.__GetStringInformation(
+                json_obj["logicalTree"]["children"][index]["children"][index2]["children"]
+            )
+        else:
+            data = json_obj["logicalTree"]["children"][index]["data"]
+            self.inverterId = data["id"]
+            self.serialNumber = data["serialNumber"]
+            self.name = data["name"]
+            self.displayName = data["displayName"]
+            self.relativeOrder = data["relativeOrder"]
+            self.type = data["type"]
+            self.operationsKey = data["operationsKey"]
+            self.status = data.get("status", "")
+            self.manufacturer = data.get("manufacturer", "SolarEdge")
+            self.model = data.get("model", "")
+            self.maxActivePower = data.get("maxActivePower")  # kW (One API) or None
+
+            self.strings = self.__GetStringInformation(
+                json_obj["logicalTree"]["children"][index]["children"]
+            )
+
+    def __GetStringInformation(self, json_obj):
+        strings = []
+
+        for i in range(len(json_obj)):
+            if "STRING" in json_obj[i]["data"]["name"].upper():
+                strings.append(SolarEdgeString(json_obj[i]))
+            else:
+                for j in range(len(json_obj[i]["children"])):
+                    strings.append(SolarEdgeString(json_obj[i]["children"][j]))
+
+        return strings
+
+
+class SolarEdgeString:
+    def __init__(self, json_obj):
+        data = json_obj["data"]
+        self.stringId = data["id"]
+        self.serialNumber = data["serialNumber"]
+        self.name = data["name"]
+        self.displayName = data["displayName"]
+        self.relativeOrder = data["relativeOrder"]
+        self.type = data["type"]
+        self.operationsKey = data["operationsKey"]
+        self.status = data.get("status", "")
+        self.optimizers = self.__GetOptimizers(json_obj)
+
+    def __GetOptimizers(self, json_obj):
+        optimizers = []
+
+        for i in range(len(json_obj["children"])):
+            optimizers.append(SolarlEdgeOptimizer(json_obj["children"][i]))
+
+        return optimizers
+
+
+class SolarlEdgeOptimizer:
+    def __init__(self, json_obj):
+        data = json_obj["data"]
+        self.optimizerId = data["id"]
+        self.serialNumber = data["serialNumber"]
+        self.name = data["name"]
+        self.displayName = data["displayName"]
+        self.relativeOrder = data["relativeOrder"]
+        self.type = data["type"]
+        self.operationsKey = data["operationsKey"]
+        self.status = data.get("status", "")
+
+
+class SolarEdgeAggregatedData:
+    """Data class for aggregated SolarEdge measurements at string/inverter/site level."""
+
+    __slots__ = (
+        'panel_id', 'entity_type', 'entity_id_path', 'serialnumber', 'panel_description',
+        'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage', 'power',
+        'voltage', 'lifetime_energy', 'child_count', 'active_optimizer_count', 'status',
+        'installation_date', 'peak_power', 'max_active_power',
+    )
+
+    def __init__(self, entity_id, entity_type, lifetime_energy=None, entity_id_path=None):
+        self.panel_id = entity_id  # Used for coordinator data lookup (e.g. site_2065855, inverter_123, string_1_1)
+        self.entity_type = entity_type  # "string", "inverter", or "site"
+        self.entity_id_path = entity_id_path or ()  # (site,) or (site, i) or (site, i, s) for entity_id generation
+        self.serialnumber = ""
+        self.panel_description = ""
+        self.lastmeasurement = None
+        self.model = ""
+        self.manufacturer = ""
+
+        # Aggregated measurements
+        self.current = 0.0
+        self.optimizer_voltage = 0.0  # Not used for aggregated
+        self.power = 0.0
+        self.voltage = 0.0
+
+        # Lifetime energy from API
+        self.lifetime_energy = lifetime_energy or 0.0
+
+        # Additional aggregated info
+        self.child_count = 0  # Number of optimizers in string, or strings in inverter
+        self.active_optimizer_count = 0  # Number of optimizers with recent data
+        self.status = ""  # Status from API (Active, Inactive, etc.)
+
+        # Site-only: from portal layout/information/site (installation date, peak power kW)
+        self.installation_date = None  # "YYYY-MM-DD" or None
+        self.peak_power = None  # float kW or None
+        # Inverter-only: from portal layout logical v2 (maxActivePower in watts, stored as kW)
+        self.max_active_power = None  # float kW or None
+
+
+class SolarEdgeOptimizerData:
+    """Data class for SolarEdge optimizer measurements and metadata."""
+
+    # Use __slots__ to reduce memory overhead and improve attribute access speed
+    __slots__ = (
+        '_timezone', '_json_obj', '_has_valid_measurements', 'serialnumber', 'panel_id', 'panel_description',
+        'lastmeasurement', 'model', 'manufacturer', 'current', 'optimizer_voltage',
+        'power', 'voltage', 'temperature', 'lifetime_energy', 'azimuth', 'tilt', 'status'
+    )
+
+    def __init__(
+        self,
+        panelid,
+        json_object,
+        timezone=None,
+        has_valid_measurements=None,
+        layout_status=None,
+    ):
+        self._timezone = timezone if timezone is not None else pytz.UTC
+        # True when the API provided a non-empty measurements dict (used for One vs legacy fallback)
+        if has_valid_measurements is not None:
+            self._has_valid_measurements = bool(has_valid_measurements)
+        else:
+            self._has_valid_measurements = bool(json_object.get("measurements") if isinstance(json_object.get("measurements"), dict) else False)
+
+        self.serialnumber = ""
+        self.panel_id = ""
+        self.panel_description = ""
+        self.lastmeasurement = ""
+        self.model = ""
+        self.manufacturer = ""
+        self.current = ""
+        self.optimizer_voltage = ""
+        self.power = ""
+        self.voltage = ""
+        self.temperature = ""
+        self.lifetime_energy = ""
+        self.azimuth = None
+        self.tilt = None
+        self.status = (layout_status or "").strip() if layout_status else ""
+
+        if panelid is not None:
+            self._json_obj = json_object
+            self.serialnumber = json_object["serialNumber"]
+            self.panel_id = panelid
+            self.panel_description = json_object.get("description", "")
+            rawdate = json_object.get("lastMeasurementDate", "")
+            self.lastmeasurement = _parse_last_measurement_date(rawdate, panelid, self._timezone)
+            self.model = json_object.get("model", "")
+            self.manufacturer = json_object.get("manufacturer", "")
+            expected_inactive = bool(self.status) and not is_status_active(self.status)
+            measurements = _normalize_measurements_dict(
+                json_object, panelid, expected_inactive=expected_inactive
+            )
+            _apply_measurements_to_optimizer_data(self, measurements, json_object, panelid)
