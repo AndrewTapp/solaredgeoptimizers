@@ -59,12 +59,14 @@ attribute on optimizer sensors.
 
 ## What You Need
 
-**Current release:** **2.5.0** (`manifest.json`). No third-party Python packages are declared
+**Current release:** **2.5.1** (`manifest.json`). No third-party Python packages are declared
 (`requirements: []`). The integration uses Home Assistant’s bundled `requests` and `pytz`.
 Legacy portal `systemData` parsing uses stdlib `json` only (the old `jsonfinder` requirement
 was removed in v2.4.21 after Home Assistant Core 2026.8.1 could not install it).
-See [`miscellaneous/20260925 Changes v2.5.0.md`](miscellaneous/20260925%20Changes%20v2.5.0.md)
-for this release (duplicate inverter-slot collapse and removable devices).
+**v2.5.1** hardens empty-optimizer lifetime refresh and quieter legacy layout 410 /
+empty-body fallback (Issue #71). See
+[`miscellaneous/20261111 Changes v2.5.1.md`](miscellaneous/20261111%20Changes%20v2.5.1.md)
+and [`miscellaneous/20260925 Changes v2.5.0.md`](miscellaneous/20260925%20Changes%20v2.5.0.md).
 
 To set up the integration you will need:
 
@@ -297,6 +299,11 @@ Removing the integration is still useful for registry cleanup (for example dupli
 ## Reliability and Errors
 
 - Temporary problems on SolarEdge’s servers (e.g. HTTP 5xx errors) or network/DNS issues (e.g. “Failed to resolve monitoring.solaredge.com”) are handled without crashing: the integration uses cached data where possible and will try again on the next update.
+- **Legacy layout HTTP 410 / empty body (v2.5.1+):** SolarEdge has retired
+  `…/solaredge-apigw/api/sites/{id}/layout/logical` for many accounts. The dual API
+  logs a clear WARNING (not a JSON parse ERROR) and depends on **SolarEdge One**.
+  Keep **Use SolarEdge One** enabled; if login still returns 410, One also failed —
+  re-authenticate with portal credentials that work in the current monitoring UI.
 - If the inverter information API returns **403 Forbidden** (e.g. some accounts lack that permission), the integration still works: inverter and optimizer devices use position-based identity, so model names may be missing but all sensors and devices function. The integration logs a one-time warning; no action is required.
 - If the **lifetime-energy** energy-graph API returns **403 Forbidden** for an optimizer serial, that is also non-fatal (lifetime may stay unknown for that panel). From **v2.4.22** the first 403 per serial is WARNING; later 403s for the same serial are DEBUG so logs are not flooded every hour.
 - A full refresh can take several minutes on sites with many optimizers. When using **SolarEdge One**, optimizer live data is fetched in **one batch POST** (all serials) per full refresh, reducing portal load; if that batch fails, the integration falls back to per-optimizer requests. When the lifetime-energy cache is cold, the integration fetches it **in parallel** (thread pool, up to `MAX_PARALLEL_WORKERS` = 10 concurrent requests) instead of one request per optimizer, so large sites complete much faster. The integration allows up to **30 minutes** for a full refresh before timing out (configurable via `COORDINATOR_REFRESH_TIMEOUT_SEC` in `const.py`), so slow API connections or sites with many optimizers can complete. API requests use configurable timeouts (`API_TIMEOUT_SHORT` = 30s for quick requests, `API_TIMEOUT_LONG` = 60s for longer operations).
