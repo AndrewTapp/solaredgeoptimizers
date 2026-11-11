@@ -374,8 +374,8 @@ def _log_removal_result(entity_ids: list[str], device_ids: list[str], entry_id: 
         LOGGER.warning(
             "SolarEdge Optimizers: remove_entities_and_devices_for_entry found no entities or "
             "devices to remove for entry %s. Delete the integration from Settings → Devices & "
-            "services → Integrations (not only from HACS) while the integration is still "
-            "installed so that cleanup can run.",
+            "services → Integrations (not only uninstalling the Marketplace package) while "
+            "the integration is still installed so that cleanup can run.",
             entry_id,
         )
 
