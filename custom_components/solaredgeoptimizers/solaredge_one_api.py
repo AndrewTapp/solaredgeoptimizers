@@ -36,7 +36,8 @@ API Endpoints (monitoring.solaredge.com/services/...):
 
 6. Lifetime Energy (per-optimizer):
    GET .../layout/energy-graph/site/{siteId}/optimizers?optimizer-serials=...
-   Fetches per-optimizer lifetime energy in parallel (thread pool)
+   Fetches per-optimizer lifetime energy in parallel (thread pool).
+   Skips the pool when the layout has no optimizer serials (avoids max_workers=0).
    Cached per LIFETIME_ENERGY_CACHE_TTL (e.g. 1 hour)
 
 7. Dashboard Site Production:
@@ -1496,6 +1497,12 @@ class solaredge_one:
             for s in inv.strings
             for opt in s.optimizers
         ]
+        if not serials:
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _LOGGER.debug(
+                    "SolarEdge One: No optimizers in layout; skipping lifetime energy fetch"
+                )
+            return {}
         result = {}
         max_workers = min(os.cpu_count() or 4, len(serials), MAX_PARALLEL_WORKERS)
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
