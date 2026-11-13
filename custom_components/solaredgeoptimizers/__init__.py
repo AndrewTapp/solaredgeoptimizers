@@ -14,7 +14,8 @@ links use ``via_device_id``; entities link to pre-registered devices by
 identifier only. Optimizer devices are created by the sensor platform after
 their string parents exist.
 
-See ``miscellaneous/20260925 Changes v2.5.0.md`` for release history.
+See ``miscellaneous/20261111 Changes v2.5.1.md`` and
+``miscellaneous/20260925 Changes v2.5.0.md`` for release history.
 """
 import logging
 from typing import Any
@@ -173,6 +174,13 @@ def _validate_login_status(http_result_code: int) -> None:
     if http_result_code == 401:
         LOGGER.error("SolarEdge Optimizers: Authentication failed (401); please re-authenticate")
         raise ConfigEntryAuthFailed("Invalid or expired credentials; please re-authenticate")
+    if http_result_code == 410:
+        LOGGER.error(
+            "SolarEdge Optimizers: Login check failed (status: 410). "
+            "Legacy layout is Gone and SolarEdge One also did not succeed; "
+            "confirm Use SolarEdge One is enabled and re-authenticate with portal credentials."
+        )
+        raise ConfigEntryNotReady
     if http_result_code != 200:
         LOGGER.error(
             "SolarEdge Optimizers: Login check failed (status: %s)",
@@ -366,8 +374,8 @@ def _log_removal_result(entity_ids: list[str], device_ids: list[str], entry_id: 
         LOGGER.warning(
             "SolarEdge Optimizers: remove_entities_and_devices_for_entry found no entities or "
             "devices to remove for entry %s. Delete the integration from Settings → Devices & "
-            "services → Integrations (not only from HACS) while the integration is still "
-            "installed so that cleanup can run.",
+            "services → Integrations (not only uninstalling the Marketplace package) while "
+            "the integration is still installed so that cleanup can run.",
             entry_id,
         )
 

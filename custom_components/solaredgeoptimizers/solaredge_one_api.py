@@ -53,29 +53,24 @@ Key Features:
 - Maximum daily temperature unit normalization (F to C conversion)
 - Duplicate name resolution with letter suffixes for same-position devices
 - Azimuth and tilt extraction from optimizer module data (radians to degrees)
-- Inverter nodes include maxActivePower (API watts → stored as kW) from layout for inverter-level sensor
-- Panel cache (PANELS_CACHE_TTL_ONE), site info (SITE_INFO_CACHE_TTL), temperature (TEMPERATURE_CACHE_TTL), lifetime (LIFETIME_ENERGY_CACHE_TTL)
-- No persistent HTTP session for /services/ calls: `requests.get`/`post` use response
-  context managers so connections are released; on HTTP 401 the first response is closed
-  *before* token refresh/PKCE and a single retry (avoids holding sockets during login).
-- OAuth uses a short-lived `Session()` inside `with` for PKCE login and refresh_token grant;
-  `_token_lock` serializes token obtain/clear under ThreadPoolExecutor.
-- Parallel lifetime-energy fetches use `with ThreadPoolExecutor(...) as executor` so workers
-  shut down cleanly.
-- `_get`/`_post` track in-flight operations. `close()` prevents new work, waits
-  within a bounded timeout, and then clears OAuth tokens under the lock; it is
-  idempotent and the dual wrapper suppresses child INFO summaries.
-- DEBUG never logs OAuth authorization codes (URLs redacted via `_redact_url_for_log`);
-  full optimizer payloads are summarized and 204 Location hosts are allowlisted
-  to `*.solaredge.com`.
-- Inactive/replaced optimizers (v2.4.19+): layout status from site structure passed into
-  SolarEdgeOptimizerData; empty live measurements for inactive units log at DEBUG only.
-- Lightweight checks use active optimizers only (coordinator); full refresh still includes
-  inactive layout entries.
-- v2.4.21+: no extra PyPI packages in ``manifest.json`` (``requirements: []``); HA provides
-  ``requests`` / ``pytz``. Legacy fallback JSON parsing is stdlib-only (see legacy client).
-- v2.4.22+: lifetime-energy HTTP 403 is WARNING once per optimizer serial, then DEBUG
-  (inverter-information 403 remains a one-time WARNING as before).
+- Inverter nodes include maxActivePower (API watts to stored kW) from layout
+- Panel, site-info, temperature, and lifetime caches (see const TTLs)
+- No persistent HTTP session for /services/ calls (response context managers).
+  On HTTP 401 the first response is closed before token refresh/PKCE and one retry.
+- OAuth uses a short-lived Session() inside with for PKCE login and refresh_token grant.
+  _token_lock serializes token obtain/clear under ThreadPoolExecutor.
+- Parallel lifetime-energy fetches use with ThreadPoolExecutor so workers shut down cleanly.
+- _get/_post track in-flight operations. close() prevents new work, waits within a bound,
+  then clears OAuth tokens under the lock (idempotent, dual wrapper suppresses child INFO).
+- DEBUG never logs OAuth authorization codes (URLs redacted via _redact_url_for_log).
+  Full optimizer payloads are summarized. 204 Location hosts are allowlisted to *.solaredge.com.
+- Inactive/replaced optimizers (v2.4.19+): layout status passed into SolarEdgeOptimizerData.
+  Empty live measurements for inactive units log at DEBUG only.
+- Lightweight checks use active optimizers only. Full refresh still includes inactive entries.
+- v2.4.21+: no extra PyPI packages in manifest.json (requirements empty). HA provides
+  requests and pytz. Legacy fallback JSON parsing is stdlib-only (see legacy client).
+- v2.4.22+: lifetime-energy HTTP 403 is WARNING once per optimizer serial, then DEBUG.
+  Inverter-information 403 remains a one-time WARNING as before.
 """
 import math
 import base64

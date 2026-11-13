@@ -90,7 +90,7 @@ The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitorin
 ### Requirements
 
 - **Home Assistant** (tested with recent versions; Core **2026.8.1+** supported).
-- **Current version:** **2.5.0** (`manifest.json`); see `miscellaneous/20260925 Changes v2.5.0.md`
+- **Current version:** **2.5.1** (`manifest.json`); see `miscellaneous/20261111 Changes v2.5.1.md`
   (duplicate inverter-slot collapse + removable devices). Prior hardening in
   `miscellaneous/20260904 Changes v2.4.22.md`.
 - **SolarEdge monitoring account**: Site ID, username (email), password.
@@ -365,12 +365,17 @@ cache expires (30 min, `TEMPERATURE_CACHE_TTL`).
 
 ## 5. Installation
 
-### Via HACS (recommended)
+### Via Marketplace (recommended on Home Assistant 2026.11+)
 
-1. **HACS** → **Custom repositories** → add `https://github.com/AndrewTapp/solaredgeoptimizers` as **Integration**.  
-2. **Integrations** → find **SolarEdge Optimizers** → **Download**. Versioned releases after `hacs.json` `zip_release` install from `solaredgeoptimizers.zip` on the GitHub Release; **v2.5.0 and earlier** still use the repository tree.  
-3. **Restart Home Assistant.**  
-4. **Settings** → **Devices & services** → **Add Integration** → search **SolarEdge Optimizers**.
+The built-in **Marketplace** replaces HACS. See [Marketplace](https://www.home-assistant.io/integrations/marketplace/).
+
+1. **Settings** → **Marketplace** (accept the first-use warning).  
+2. If the project is not in the catalog: upper right → **Add from link** → `https://github.com/AndrewTapp/solaredgeoptimizers` (GitHub connection required for custom repositories).  
+3. Open **SolarEdge Optimizers** / **SolarEdge Optimizers Data** → **Install**. Versioned releases use `solaredgeoptimizers.zip` from the GitHub Release (`hacs.json` `zip_release`; packaging unchanged). **v2.5.0 and earlier** still use the repository tree. Updates appear under **Settings** → **Updates**.  
+4. Restart Home Assistant if prompted.  
+5. **Settings** → **Devices & services** → **Add Integration** → search **SolarEdge Optimizers** (if setup did not open automatically).
+
+**Home Assistant 2026.10 or older:** use HACS → custom Integration repository with the same URL → Download. On upgrade to 2026.11+, HACS content migrates to the Marketplace automatically.
 
 ### Manual
 
@@ -685,14 +690,16 @@ logger:
 
 | Symptom | What to check |
 |--------|----------------|
-| Setup error `Requirements for solaredgeoptimizers not found: ['jsonfinder==0.4.2']` | Upgrade to **v2.4.21+** via HACS and restart. `manifest.json` `requirements` is `[]`; legacy `decodeResult` uses stdlib `json` only. |
+| Setup error `Requirements for solaredgeoptimizers not found: ['jsonfinder==0.4.2']` | Upgrade to **v2.4.21+** via the Marketplace (or manually) and restart. `manifest.json` `requirements` is `[]`; legacy `decodeResult` uses stdlib `json` only. |
 | “Invalid authentication” | Correct Site ID, email, password; account can log in at monitoring.solaredge.com. The integration tries SolarEdge One first and falls back to the legacy API; login succeeds if either returns 200. |
+| Login check **410** / “Legacy layout … Gone” / empty layout JSON | Legacy `…/layout/logical` is retired for many accounts (**v2.5.1+** logs this clearly). Dual login only surfaces 410 when **SolarEdge One also failed**. Enable **Use SolarEdge One**, confirm optimizers in the current portal UI, then re-authenticate / reload. |
+| `max_workers must be greater than 0` on lifetime energy | Fixed in **v2.5.1**: empty optimizer layouts skip the thread pool. Upgrade and reload; if data is still missing, One layout/auth is the real issue (see 410 row). |
 | “Failed to connect” | Network, firewall, DNS; outbound HTTPS to monitoring.solaredge.com. |
 | Config entry not loading | Logs for `ConfigEntryNotReady`; first refresh may fail if API is slow or returns errors. |
 | Sensors stay 0 | Last measurement age: 1 h when Obtained from is One API, 2 h when Legacy API. Check “Last measurement”, Last polled, and Obtained from; debug logs for API responses. If using a non-English HA language, ensure you’re on a version that supports locale-aware measurement keys (e.g. “Leistung [W]” for German). |
 | Stale data after password change; no re-auth prompt | From **v2.4.20+**, use integration menu → **Update credentials** to enter new username/password without deleting the entry. Or **Reload** the integration / restart HA to surface **Re-authenticate**. **Configure** (cog) does not include credentials. Check logs for `Authentication failed during update (401)`. |
 | Slow first load | **SolarEdge One:** one batch POST for optimizer data; when cache is cold, parallel lifetime-energy fetch. **Legacy:** parallel per-optimizer requests. Layout and lifetime energy cached after first run. Full refresh timeout 30 min (`COORDINATOR_REFRESH_TIMEOUT_SEC`). Sensor entities are registered in startup batches (`ENTITY_ADD_BATCH_SIZE`, default 50) from v2.4.18. |
-| “Client unable to keep up with pending messages” / hundreds of registry updates at startup | From **v2.4.18**, the sensor platform registers entities in batches with event-loop yields instead of one bulk `async_add_entities` call. Update via HACS and restart. Lower `ENTITY_ADD_BATCH_SIZE` in `const.py` for a gentler load; raise it for faster setup on capable hardware. |
+| “Client unable to keep up with pending messages” / hundreds of registry updates at startup | From **v2.4.18**, the sensor platform registers entities in batches with event-loop yields instead of one bulk `async_add_entities` call. Update via the Marketplace and restart. Lower `ENTITY_ADD_BATCH_SIZE` in `const.py` for a gentler load; raise it for faster setup on capable hardware. |
 | Many optimizer sensors show **unknown** right after setup or **HA restart** | Often normal until coordinator data is applied: v2.4.18 batched registration calls `coordinator.async_update_listeners()` (sync) after the last batch; from **v2.4.21** optimizer sensors reapply coordinator data in `async_added_to_hass` when the coordinator already has data (replacing the old unused `async_restore_last_state` path). Wait for the next coordinator cycle if values never appear; check **Obtained from** and portal connectivity. |
 | Stale data after password change during light-check-only periods | From **v2.4.21+**, auth-like failures on the light-check path also raise `ConfigEntryAuthFailed`. Use **Update credentials** or check logs for `Authentication failed during light_check (401)`. |
 | Optimizer devices show as **Unnamed device** | Update to v2.4.18+ so optimizer devices are pre-registered in the sensor platform before entities link by identifier. **Remove and re-add** the integration if stale unnamed stub devices remain from v2.4.17. |
@@ -705,7 +712,7 @@ logger:
 | Duplicate sensors/devices after optimizer or inverter swap | The integration uses position-based identity; after an update you should see one sensor per position. If you still have duplicates from before that change, **remove the integration** (Settings → Integrations → Delete) and **add it again** so the registry is cleaned and recreated with position-based devices. |
 | Extra inverter devices for one physical unit (e.g. `Inverter 1` + `1a`, Issue #66) | **v2.5.0+** collapses portal inverter rows that share the same display slot (ACTIVE / richest tree). Reload after upgrade, then **Delete** leftover ghost devices in the device UI (site parent cannot be removed). |
 | Two inverters (one with sensors, one with strings) | Usually caused by mismatched device IDs from an older release. **Remove the integration** and **add it again** so devices and entities are recreated with position/display-name IDs from the coordinator. |
-| “references a non existing via_device” on every startup | Fixed from **v2.4.17**: coordinator registers site/inverter/string devices before entities; entities link with identifiers-only `device_info` (`device_ids.link_device_info`). Update via HACS and restart; re-add the integration only if warnings persist on 2.4.17+. |
+| “references a non existing via_device” on every startup | Fixed from **v2.4.17**: coordinator registers site/inverter/string devices before entities; entities link with identifiers-only `device_info` (`device_ids.link_device_info`). Update via the Marketplace and restart; re-add the integration only if warnings persist on 2.4.17+. |
 | 403 Forbidden on inverter information | Non-fatal. The integration logs a warning; inverter and optimizer devices use position-based identity so model names may be missing but all sensors and devices work. |
 | Repeating 403 on per-optimizer lifetime energy | Non-fatal (lifetime may stay unknown for that serial). From **v2.4.22** the first 403 per serial is WARNING; later ones are DEBUG. |
 | TimeoutError on first load (many optimizers) | Full refresh has a 30-minute (1800 s) timeout (`COORDINATOR_REFRESH_TIMEOUT_SEC`). Lifetime energy is fetched in parallel when the cache is cold. If timeouts persist on very slow connections, check network or SolarEdge portal responsiveness; the coordinator logs a clear message when the timeout is reached. |
@@ -717,7 +724,7 @@ logger:
 - **DNS/connection errors** (e.g. “Failed to resolve monitoring.solaredge.com”): Lifetime energy and aggregation fall back to cached or empty data so the coordinator still completes; next cycle will retry.  
 - **Read timed out / timeout errors**: Optimizer data requests (SolarEdge One) use a 60 s timeout and one automatic retry. If you see "Error fetching data for optimizer … Read timed out" or "Timeout requesting optimizer data (retrying once)" in logs, the first attempt timed out and the retry was used. If timeouts persist, check network latency, firewall, or SolarEdge portal status; the next poll will try again.
 - **Unload**: Coordinator `async_shutdown` runs before platform teardown. The legacy and One clients then wait within a bounded interval for tracked work, and the dual API closes both backends in a `finally` path. It logs one INFO close summary, or WARNING if a backend fails.
-- **Removing the integration**: Config-entry removal uses the same coordinator shutdown and API-close helpers before removing linked entities and devices. Delete from **Settings → Devices & services → Integrations** (not only HACS) so this cleanup runs.
+- **Removing the integration**: Config-entry removal uses the same coordinator shutdown and API-close helpers before removing linked entities and devices. Delete from **Settings → Devices & services → Integrations** (not only uninstalling the Marketplace package) so this cleanup runs.
 
 ---
 
@@ -735,9 +742,9 @@ solaredgeoptimizers/
 ├── const.py               # DOMAIN, ENTITY_ADD_BATCH_SIZE, intervals, cache TTLs, sensor types, status helpers, parse_string/optimizer display names (incl. 1.1.1a suffix), build_optimizer_tasks, collapse_duplicate_inverter_slots, resolve_duplicate_indices, format_config_entry_title
 ├── exceptions.py          # SolarEdgeAPIError: custom exception for API/processing errors (used by legacy client)
 ├── coordinator.py         # DataUpdateCoordinator, adaptive polling, revert-to-One retry (30 min when from legacy), aggregation, _obtained_from, AggregationContext namedtuple, uses resolve_duplicate_indices from const.py
-├── hacs.json              # HACS metadata (zip_release + filename solaredgeoptimizers.zip)
+├── hacs.json              # Marketplace metadata (zip_release + filename solaredgeoptimizers.zip; same format as former HACS)
 
-├── info.md                # Integration info (e.g. for HACS)
+├── info.md                # Short integration summary (Marketplace listing / docs)
 ├── manifest.json         # Domain, version, requirements (empty; stdlib-only decode)
 ├── sensor.py              # Sensor entities; build_optimizer_tasks; _register_optimizer_devices; batched async_add_entities; capped/batch missing-optimizer backfill; async_added_to_hass reapply; _lookup_optimizer_data_item
 ├── solaredgeoptimizers.py # Legacy API client; _doRequest timeout; in-flight wait on close; stdlib decodeResult; data models
