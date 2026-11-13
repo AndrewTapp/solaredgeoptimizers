@@ -170,6 +170,50 @@ class SolarEdgeDualAPI:
                 return True
         return False
 
+    def _set_obtained_from(self, api: str) -> None:
+        """Record which backend supplied the latest requestAllData result."""
+        self._last_used_api = api
+        self._obtained_from = OBTAINED_FROM_LEGACY if api == "legacy" else OBTAINED_FROM_ONE
+
+    def _request_all_data_legacy_only(self) -> list[Any]:
+        """Fetch via legacy only (use_solaredge_one=False)."""
+        data_list = self._legacy.requestAllData()
+        self._set_obtained_from("legacy")
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Dual API: Using Legacy API only (use_solaredge_one=False)")
+        return data_list or []
+
+    def _log_one_data_source(self, previous_api: str | None) -> None:
+        """Log when dual mode is keeping One API data."""
+        if previous_api == "legacy":
+            _LOGGER.info("SolarEdge Dual API: Switched back to One API data")
+        elif _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug("SolarEdge Dual API: Using One API data")
+
+    def _log_legacy_fallback_success(self, previous_api: str | None) -> None:
+        """Log when dual mode falls back to (or stays on) legacy data."""
+        if previous_api != "legacy":
+            _LOGGER.info(
+                "SolarEdge Dual API: Using Legacy API data (One had no valid measurements or failed)"
+            )
+        elif _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "SolarEdge Dual API: Continuing to use Legacy API data "
+                "(One had no valid measurements or failed)"
+            )
+
+    def _log_legacy_request_all_data_failure(self, err: BaseException) -> None:
+        """Log legacy requestAllData failure (retired endpoint vs other errors)."""
+        if _is_legacy_gone_error(err):
+            _LOGGER.warning(
+                "SolarEdge Dual API: Legacy requestAllData unavailable (%s). "
+                "SolarEdge has retired the legacy layout endpoint for many accounts; "
+                "ensure SolarEdge One is enabled and working.",
+                err,
+            )
+            return
+        _LOGGER.error("SolarEdge Dual API: Legacy requestAllData also failed: %s", err)
+
     def requestAllData(self) -> list[Any]:
         """
         When use_solaredge_one is False, always use legacy. Otherwise try One first;
@@ -178,12 +222,7 @@ class SolarEdgeDualAPI:
         self._ensure_open()
         previous_api = self._last_used_api
         if not self._use_solaredge_one:
-            data_list = self._legacy.requestAllData()
-            self._last_used_api = "legacy"
-            self._obtained_from = OBTAINED_FROM_LEGACY
-            if _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Dual API: Using Legacy API only (use_solaredge_one=False)")
-            return data_list or []
+            return self._request_all_data_legacy_only()
 
         self._obtained_from = OBTAINED_FROM_ONE
         data_list = None
@@ -197,44 +236,24 @@ class SolarEdgeDualAPI:
                 e,
             )
         if data_list is not None and self._one_has_valid_measurements(data_list):
-            self._last_used_api = "one"
-            self._obtained_from = OBTAINED_FROM_ONE
-            if previous_api == "legacy":
-                _LOGGER.info("SolarEdge Dual API: Switched back to One API data")
-            elif _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug("SolarEdge Dual API: Using One API data")
+            self._set_obtained_from("one")
+            self._log_one_data_source(previous_api)
             return data_list
         # One unavailable or no valid measurements: use legacy
         try:
             data_list = self._legacy.requestAllData()
-            self._last_used_api = "legacy"
-            self._obtained_from = OBTAINED_FROM_LEGACY
-            if previous_api != "legacy":
-                _LOGGER.info(
-                    "SolarEdge Dual API: Using Legacy API data (One had no valid measurements or failed)"
-                )
-            elif _LOGGER.isEnabledFor(logging.DEBUG):
-                _LOGGER.debug(
-                    "SolarEdge Dual API: Continuing to use Legacy API data "
-                    "(One had no valid measurements or failed)"
-                )
+            self._set_obtained_from("legacy")
+            self._log_legacy_fallback_success(previous_api)
             return data_list or []
         except Exception as e:  # pylint: disable=broad-except
-            if _is_legacy_gone_error(e):
-                _LOGGER.warning(
-                    "SolarEdge Dual API: Legacy requestAllData unavailable (%s). "
-                    "SolarEdge has retired the legacy layout endpoint for many accounts; "
-                    "ensure SolarEdge One is enabled and working.",
-                    e,
-                )
-            else:
-                _LOGGER.error("SolarEdge Dual API: Legacy requestAllData also failed: %s", e)
-            if _is_auth_related_error(e) or (one_error is not None and _is_auth_related_error(one_error)):
+            self._log_legacy_request_all_data_failure(e)
+            if _is_auth_related_error(e) or (
+                one_error is not None and _is_auth_related_error(one_error)
+            ):
                 self.verify_authentication()
             # Return One result if we have it (even if invalid) so UI doesn't break
             if data_list is not None:
-                self._last_used_api = "one"
-                self._obtained_from = OBTAINED_FROM_ONE
+                self._set_obtained_from("one")
                 return data_list
             raise
 
