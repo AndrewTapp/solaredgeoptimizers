@@ -1,6 +1,7 @@
 # SolarEdge Optimizers Integration
 
 [![Release](https://img.shields.io/github/release/AndrewTapp/solaredgeoptimizers.svg)](https://github.com/AndrewTapp/solaredgeoptimizers/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CodeFactor Grade](https://img.shields.io/codefactor/grade/github/AndrewTapp/solaredgeoptimizers.svg)](https://www.codefactor.io/repository/github/AndrewTapp/solaredgeoptimizers)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.me/AndrewJTapp)
 [![Donate](https://img.shields.io/badge/Donate-BuyMeACoffee-green.svg)](https://buymeacoffee.com/andrewtapp)
@@ -16,6 +17,9 @@ from the portal layout/information/site). At inverter level you get
 same cache as layout).
 
 **📖 [Technical documentation (Wiki)](https://github.com/AndrewTapp/solaredgeoptimizers/wiki)** — architecture, data flow, sensors reference, troubleshooting, and more.
+
+> [!IMPORTANT]
+> **Coming from ProudElm/solaredgeoptimizers?** On Home Assistant **2026.11+**, Marketplace can still treat the shared `custom_components/solaredgeoptimizers` folder as owned by **ProudElm**, even when you already run this fork (e.g. 2.5.0). Updates then fail with *“The solaredgeoptimizers directory belongs to ProudElm/solaredgeoptimizers”* (see [Issue #73](https://github.com/AndrewTapp/solaredgeoptimizers/issues/73)). **Do not** use Marketplace **Uninstall** / **Delete and uninstall** on the ProudElm entry while the integration is set up — that can remove your config entry and entities. Use [Moving over from ProudElm](#moving-over-from-proudelm) instead. A proper one-click fix belongs in Home Assistant Marketplace ([core#190454](https://github.com/home-assistant/core/issues/190454)); until then use the manual steps below or wait for Core.
 
 ## Upgrading from an earlier version
 
@@ -341,6 +345,23 @@ Until this integration is part of Home Assistant Core, install it from the **Hom
 
 **Home Assistant 2026.10 or older:** use HACS with the same GitHub URL as a custom Integration repository, then Download. On upgrade to 2026.11+, HACS installs migrate automatically to the Marketplace.
 
+### Moving over from ProudElm
+
+Both repos install into the same folder (`custom_components/solaredgeoptimizers`). After the HACS → Marketplace migration, Marketplace may still record **ProudElm/solaredgeoptimizers** as `installed: true` alongside **AndrewTapp/solaredgeoptimizers**. Updates for this fork then fail with *“directory belongs to ProudElm/…”*.
+
+**Do not** uninstall ProudElm in the Marketplace UI while SolarEdge Optimizers is configured (that path can delete your Devices & services setup).
+
+**Preferred safe fix (storage edit):**
+
+1. Open the Marketplace integration → **Disable** it: [my.home-assistant.io redirect](https://my.home-assistant.io/redirect/integration/?domain=marketplace) (the Marketplace app entry can be hard to find in the normal Integrations list).
+2. Backup `/config/.storage/marketplace.repositories` (File editor / Studio Code Server / Samba / SSH).
+3. Search that file for `ProudElm/solaredgeoptimizers` and remove **only** the line `"installed": true` from **that** section. Leave the `AndrewTapp/solaredgeoptimizers` section alone (keep its `"installed": true`).
+4. Save, re-enable Marketplace, then retry the update to **2.5.1** (or current) under **Settings → Updates**.
+
+**Alternative (folder delete + redownload):** delete only `custom_components/solaredgeoptimizers` (not the config entry under Devices & services), restart Home Assistant so Marketplace forgets the installs, then install **AndrewTapp/solaredgeoptimizers** from Marketplace again. Your existing config entry should reload against the new files.
+
+Until Home Assistant adds detach / “replace with this repository” ([core#190454](https://github.com/home-assistant/core/issues/190454)), those manual steps (or waiting for Core) are the practical options. A new integration release cannot clear the block by itself: Marketplace refuses the update before downloading the zip.
+
 The **Obtained from** sensor on the site device shows "One API" or "Legacy API".
 
 **Configure (optional):** After setup, you can change **Entity ID prefix**, **Include Site ID in Entity ID**, or **Use SolarEdge One** without deleting the integration: go to **Settings** → **Devices & services** → **SolarEdge Optimizers** → your site → **Configure**. The dialog shows Entity ID prefix (description shows current prefix; leave empty to remove it), Include Site ID in Entity ID, and Use SolarEdge One. Saving will reload the integration. The integration only rebuilds entities when entity-ID shaping actually changed (prefix or Include Site ID), so normal restarts/reloads do not churn the entity registry. **Note:** Changing Entity ID prefix or Include Site ID can change entity IDs and unique_ids, so existing entity history and statistics may be lost; consider backing up or exporting data first. To update **username or password**, use **Update credentials** from the integration menu (three dots), not **Configure** — see [Re-authentication and updating credentials](#re-authentication-and-updating-credentials) above.
@@ -395,6 +416,10 @@ The config flow (add-integration setup) is translated into:
 To add another language, add a `translations/<code>.json` file with the same structure as `en.json` (config, options, entity, and device sections). The **options** section is used for the Reconfigure (Configure) dialog labels and description.
 
 ---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
 
 ## Many thanks to the following people
 
