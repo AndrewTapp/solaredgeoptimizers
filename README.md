@@ -1,6 +1,7 @@
 # SolarEdge Optimizers Integration
 
 [![Release](https://img.shields.io/github/release/AndrewTapp/solaredgeoptimizers.svg)](https://github.com/AndrewTapp/solaredgeoptimizers/releases)
+[![Downloads total](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FAndrewTapp%2Fsolaredgeoptimizers%2Fgh-pages%2Fgh-dl%2Fdownloads.json&query=%24.stats.total&label=downloads%2Ftotal&color=0A7EA4)](https://github.com/AndrewTapp/solaredgeoptimizers/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![CodeFactor Grade](https://img.shields.io/codefactor/grade/github/AndrewTapp/solaredgeoptimizers.svg)](https://www.codefactor.io/repository/github/AndrewTapp/solaredgeoptimizers)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.me/AndrewJTapp)
@@ -9,12 +10,15 @@
 This integration brings your SolarEdge optimizer data from the SolarEdge monitoring
 portal into Home Assistant. You can see current production, voltage, power,
 maximum daily optimizer temperature (SolarEdge One only), and lifetime energy at the level of individual
-optimizers, strings, inverters, or the whole site.
+optimizers, strings, inverters (or **SMI** parents), or the whole site.
 
 At site level you get **Installation date** and **Peak power** (SolarEdge One only;
 from the portal layout/information/site). At inverter level you get
 **Max active power** in kW (SolarEdge One only; from the portal layout logical v2,
-same cache as layout).
+same cache as layout). **v2.6.0+** also supports SolarEdge One sites whose layout
+uses **SMI** (Safety and Monitoring Interface) parents instead of inverters
+([Issue #74](https://github.com/AndrewTapp/solaredgeoptimizers/issues/74)); device
+names show as **SMI** `{site}.{n}` while identity stays position-based.
 
 **📖 [Technical documentation (Wiki)](https://github.com/AndrewTapp/solaredgeoptimizers/wiki)** — architecture, data flow, sensors reference, troubleshooting, and more.
 
@@ -63,13 +67,15 @@ attribute on optimizer sensors.
 
 ## What You Need
 
-**Current release:** **2.5.1** (`manifest.json`). No third-party Python packages are declared
+**Current release:** **2.6.0** (`manifest.json`). No third-party Python packages are declared
 (`requirements: []`). The integration uses Home Assistant’s bundled `requests` and `pytz`.
 Legacy portal `systemData` parsing uses stdlib `json` only (the old `jsonfinder` requirement
 was removed in v2.4.21 after Home Assistant Core 2026.8.1 could not install it).
-**v2.5.1** hardens empty-optimizer lifetime refresh and quieter legacy layout 410 /
-empty-body fallback (Issue #71). See
-[`miscellaneous/20261111 Changes v2.5.1.md`](miscellaneous/20261111%20Changes%20v2.5.1.md)
+**v2.6.0** adds SolarEdge One **SMI** parent layout support (Issue #74). **v2.5.1** hardened
+empty-optimizer lifetime refresh and quieter legacy layout 410 / empty-body fallback
+(Issue #71). See
+[`miscellaneous/20261119 Changes v2.6.0.md`](miscellaneous/20261119%20Changes%20v2.6.0.md),
+[`miscellaneous/20261111 Changes v2.5.1.md`](miscellaneous/20261111%20Changes%20v2.5.1.md),
 and [`miscellaneous/20260925 Changes v2.5.0.md`](miscellaneous/20260925%20Changes%20v2.5.0.md).
 
 To set up the integration you will need:
@@ -98,7 +104,7 @@ To set up the integration you will need:
 Your solar system is organised in a simple hierarchy. Device and entity names include the site so that multiple sites stay distinct (e.g. no duplicate `sensor.power` when you have two sites):
 
 - **Site [site]** – Your whole installation (e.g. Site 9999999). Entity IDs look like `sensor.[prefix]power_9999999`, `sensor.[prefix]inverter_count_9999999`, and so on.
-- **Inverter [site].[i]** – e.g. “Inverter 9999999.1”, “Inverter 9999999.2”. Entity IDs: `sensor.[prefix]power_9999999_1`, etc.
+- **Inverter [site].[i]** – e.g. “Inverter 9999999.1”, “Inverter 9999999.2”. Entity IDs: `sensor.[prefix]power_9999999_1`, etc. On **SMI** sites (v2.6.0+), the same slot is named **SMI** `{site}.{i}` (e.g. “SMI 9999999.1”).
 - **String [site].[i].[s]** – e.g. “String 9999999.1.1”. Entity IDs: `sensor.[prefix]power_9999999_1_1`, `sensor.[prefix]lifetime_energy_1_0`, etc. (Device names and entity IDs at string/optimizer level follow the API display name when it parses.)
 - **Optimizer [site].[i].[s].[o]** – e.g. “Optimizer 9999999.1.1.1”. Entity IDs: `sensor.[prefix]power_9999999_1_1_1`, `sensor.[prefix]lifetime_energy_1_0_1`, etc.
 

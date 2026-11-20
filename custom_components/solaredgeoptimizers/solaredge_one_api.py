@@ -14,7 +14,8 @@ API Endpoints (monitoring.solaredge.com/services/...):
 
 1. Site Structure:
    GET .../layout/logical/generic/v2/site/{siteId}?include-optimizers=true
-   Returns hierarchical site layout with inverters, strings, and optimizers
+   Returns hierarchical site layout with inverters or SMI parents, strings, and optimizers
+   (Issue #74: FOLDER/SMI nodes are mapped into the same parent role as INVERTER)
 
 2. Optimizer Live Data:
    POST .../layout/information/optimizers (body: list of serials)
@@ -556,12 +557,29 @@ def _v2_build_inverter_logical_children(inv_node: dict) -> list:
     return string_children
 
 
+# Portal top-level parent folders: name -> child node type (Issue #74 SMI sites).
+_V2_PARENT_FOLDER_CHILD_TYPES = {
+    "INVERTER": "INVERTER",
+    "SMI": "SMI",
+}
+
+
+def _v2_normalize_parent_type(raw_type: str | None) -> str:
+    """Return INVERTER or SMI for a layout parent node; default INVERTER."""
+    normalized = (raw_type or "INVERTER").upper()
+    if normalized in _V2_PARENT_FOLDER_CHILD_TYPES.values():
+        return normalized
+    return "INVERTER"
+
+
 def _v2_build_inverter_logical_node(inv_node: dict, resolved_name: str = None) -> dict:
-    """Build one inverter logical node (data + string children) for SolarEdgeSite."""
+    """Build one parent (inverter or SMI) logical node with string children for SolarEdgeSite."""
     inv_props = inv_node.get("properties") or {}
     inv_identifier = inv_props.get("identifier") or inv_node.get("serial") or inv_node.get("uuid", "")
     inv_serial = inv_node.get("serial") or inv_identifier
-    inv_name = resolved_name if resolved_name else (inv_node.get("name") or f"Inverter {inv_identifier}")
+    parent_type = _v2_normalize_parent_type(inv_node.get("type"))
+    default_label = "SMI" if parent_type == "SMI" else "Inverter"
+    inv_name = resolved_name if resolved_name else (inv_node.get("name") or f"{default_label} {inv_identifier}")
     inv_display = inv_node.get("displayOrder") or inv_name
     inv_order = inv_node.get("order") or 0
     status_raw = inv_props.get("status") or ""
@@ -578,7 +596,7 @@ def _v2_build_inverter_logical_node(inv_node: dict, resolved_name: str = None) -
         "name": inv_name,
         "displayName": inv_display,
         "relativeOrder": inv_order,
-        "type": "INVERTER",
+        "type": parent_type,
         "operationsKey": inv_node.get("uuid") or "",
         "status": status,
         "manufacturer": manufacturer,
@@ -592,16 +610,24 @@ def _v2_build_inverter_logical_node(inv_node: dict, resolved_name: str = None) -
     }
 
 
-def _v2_build_logical_children(structure: dict) -> list:
-    """Build list of inverter logical nodes from v2 site structure (FOLDER->INVERTER hierarchy)."""
-    raw_inverters = []
-    for inv_folder in _v2_find_children_by_type(structure, "FOLDER"):
-        if (inv_folder.get("name") or "").upper() != "INVERTER":
+def _v2_collect_parent_nodes(structure: dict) -> list:
+    """Collect INVERTER and SMI parent nodes from top-level FOLDER children."""
+    raw_parents = []
+    for folder in _v2_find_children_by_type(structure, "FOLDER"):
+        folder_name = (folder.get("name") or "").upper()
+        expected_child = _V2_PARENT_FOLDER_CHILD_TYPES.get(folder_name)
+        if not expected_child:
             continue
-        for inv_node in (inv_folder.get("children") or []):
-            if (inv_node.get("type") or "").upper() != "INVERTER":
+        for node in (folder.get("children") or []):
+            if (node.get("type") or "").upper() != expected_child:
                 continue
-            raw_inverters.append(inv_node)
+            raw_parents.append(node)
+    return raw_parents
+
+
+def _v2_build_logical_children(structure: dict) -> list:
+    """Build parent logical nodes from v2 site structure (FOLDER->INVERTER or FOLDER->SMI)."""
+    raw_inverters = _v2_collect_parent_nodes(structure)
 
     resolved_names = _resolve_duplicate_names_with_suffix(
         raw_inverters,

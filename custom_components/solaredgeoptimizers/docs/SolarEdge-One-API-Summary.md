@@ -4,7 +4,7 @@
 
 If you are on a version prior to v2.4.0 (or want a clean registry after any upgrade), the steps below ensure entities and devices are recreated correctly:
 
-1. **Update the integration via HACS** so the new code (including cleanup) is installed.
+1. **Update the integration via the Marketplace** (`Settings` → `Marketplace`, or **Settings** → **Updates**) so the new code (including cleanup) is installed. On Home Assistant 2026.10 or older, use HACS instead.
 2. **Restart Home Assistant** (optional but recommended).
 3. **Remove the integration from Home Assistant:** **Settings → Devices & services → Integrations** → SolarEdge Optimizers → **Delete**. This runs `async_remove_entry` and cleans entity and device registries for that entry.
 4. **Restart Home Assistant** (optional but recommended).
@@ -25,7 +25,7 @@ A site-level sensor **Obtained from** shows whether current data came from **"On
 
 ## How it replaces the old API
 
-- **Same purpose**: Both APIs expose site layout (inverters → strings → optimizers), live per-optimizer data (power, voltage, current, optimizer voltage), and lifetime energy. The integration presents the same hierarchy and sensors either way.
+- **Same purpose**: Both APIs expose site layout (inverters or SMI parents → strings → optimizers), live per-optimizer data (power, voltage, current, optimizer voltage), and lifetime energy. The integration presents the same hierarchy and sensors either way. **v2.6.0+** maps SolarEdge One `FOLDER`/`SMI` layout parents into the same parent role as inverters (Issue #74); legacy layout does not describe SMI trees.
 
 - **Different tech**:
   - **Legacy**: Basic Auth + web session (cookies/CSRF), separate endpoints for layout, per-panel `systemData`, and layout/energy. Data is scraped from web-style URLs and responses. If SolarEdge stops issuing `CSRF-TOKEN` from `/solaredge-web/p/login`, the integration retries `/solaredge-web/p/logout/slo` and then `/solaredge-web/p/login` before CSRF-protected POSTs. If SolarEdge still rejects the legacy POST flow, the logs now call out **HTTP 498** explicitly as a likely CSRF / legacy-session rejection.
@@ -60,4 +60,5 @@ A site-level sensor **Obtained from** shows whether current data came from **"On
 - **Status sensors:** Optimizer, string, and inverter status sensors show the device status from the API. **Blank** (empty) status is treated as active and displayed as **blank** with the active icon. The icon changes dynamically: check-circle for Active or blank, alert-circle for Inactive, help-circle for unknown (any other) status. This makes it easy to spot inactive devices at a glance in the Home Assistant UI.
 - **Azimuth and Tilt sensors:** Optimizer azimuth and tilt sensors show the panel orientation from the API (when available). Azimuth uses a compass icon; Tilt uses an angle-acute icon.
 - **Site-level Installation date and Peak power:** The integration fetches site information from `.../services/layout/information/site/{siteId}` (cached 2 h). This provides **installation date** (for the site-level Installation date sensor and as the start date for portal lifetime energy calls) and **peak power** in kW (for the site-level Peak power sensor). These sensors appear only when using the SolarEdge One API.
-- **Inverter-level Max active power:** The site layout (`.../services/layout/logical/generic/v2/site/{siteId}?include-optimizers=true`) returns per-inverter `maxActivePower` in watts. The integration converts to kW and exposes a **Max active power** sensor on each inverter device. Same cache as the layout (2 h). Only available when using the SolarEdge One API.
+- **Inverter-level Max active power:** The site layout (`.../services/layout/logical/generic/v2/site/{siteId}?include-optimizers=true`) returns per-inverter `maxActivePower` in watts. The integration converts to kW and exposes a **Max active power** sensor on each inverter device. Same cache as the layout (2 h). Only available when using the SolarEdge One API. SMI layout nodes often omit `maxActivePower`; the sensor is then absent for that parent.
+- **SMI parents (v2.6.0+ / Issue #74):** One layout may use a top-level `FOLDER` named `SMI` with child `type: SMI` instead of `INVERTER`. Parsing walks those nodes like inverters (strings → optimizers underneath). HA device names use **SMI** `{site}.{n}`. Identity stays position/`displayOrder`-based. `layout/information/inverters` is not called for SMI serials. Sibling `BATTERY`/`METER` folders remain ignored.

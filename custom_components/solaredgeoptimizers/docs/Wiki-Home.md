@@ -90,8 +90,8 @@ The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitorin
 ### Requirements
 
 - **Home Assistant** (tested with recent versions; Core **2026.8.1+** supported).
-- **Current version:** **2.5.1** (`manifest.json`); see `miscellaneous/20261111 Changes v2.5.1.md`
-  (duplicate inverter-slot collapse + removable devices). Prior hardening in
+- **Current version:** **2.6.0** (`manifest.json`); see `miscellaneous/20261119 Changes v2.6.0.md`
+  (SMI parent layout, Issue #74) and `miscellaneous/20261111 Changes v2.5.1.md`. Prior hardening in
   `miscellaneous/20260904 Changes v2.4.22.md`.
 - **SolarEdge monitoring account**: Site ID, username (email), password.
 - **Network**: Outbound HTTPS to `monitoring.solaredge.com` (legacy and SolarEdge One both use this host; SolarEdge One also uses `login.solaredge.com` for OAuth).
@@ -219,11 +219,11 @@ flowchart TD
     Str --> Opt
 ```
 
-- **Site** → **Inverters** → **Strings** → **Optimizers**.  
+- **Site** → **Inverters** (or **SMI** parents, v2.6.0+) → **Strings** → **Optimizers**.  
 - **Device names** include the site so multiple sites don’t clash:
-  **Site [site]**, **Inverter [site].[i]**, **String [site].[i].[s]**,
+  **Site [site]**, **Inverter [site].[i]** (or **SMI [site].[i]** on SMI layouts), **String [site].[i].[s]**,
   **Optimizer [site].[i].[s].[o]**
-  (e.g. Site 9999999, Inverter 9999999.1, String 9999999.1.1, Optimizer 9999999.1.1.1).  
+  (e.g. Site 9999999, Inverter 9999999.1 or SMI 9999999.1, String 9999999.1.1, Optimizer 9999999.1.1.1).  
 - **Device model and serial:** When using **SolarEdge One**, each **optimizer** device
   shows the optimizer **model** (e.g. P405-4RM4MRM-NA25) and serial number from the API.
   When the API provides a **panel type** (description, e.g. SunPower SPR-MAX3-400),
@@ -693,6 +693,7 @@ logger:
 | Setup error `Requirements for solaredgeoptimizers not found: ['jsonfinder==0.4.2']` | Upgrade to **v2.4.21+** via the Marketplace (or manually) and restart. `manifest.json` `requirements` is `[]`; legacy `decodeResult` uses stdlib `json` only. |
 | “Invalid authentication” | Correct Site ID, email, password; account can log in at monitoring.solaredge.com. The integration tries SolarEdge One first and falls back to the legacy API; login succeeds if either returns 200. |
 | Login check **410** / “Legacy layout … Gone” / empty layout JSON | Legacy `…/layout/logical` is retired for many accounts (**v2.5.1+** logs this clearly). Dual login only surfaces 410 when **SolarEdge One also failed**. Enable **Use SolarEdge One**, confirm optimizers in the current portal UI, then re-authenticate / reload. |
+| Site uses **SMI-35** / Safety and Monitoring Interface only (Issue #74); no inverter devices | **v2.6.0+** maps One layout `FOLDER`/`SMI` parents like inverters (device name **SMI** `{site}.{n}`). Keep **Use SolarEdge One = Yes**; reload or re-add after upgrade. Sample: `miscellaneous/site_structure_christiangue.json`. Battery/meter folders remain ignored. |
 | `max_workers must be greater than 0` on lifetime energy | Fixed in **v2.5.1**: empty optimizer layouts skip the thread pool. Upgrade and reload; if data is still missing, One layout/auth is the real issue (see 410 row). |
 | Marketplace: *directory belongs to ProudElm/solaredgeoptimizers* ([Issue #73](https://github.com/AndrewTapp/solaredgeoptimizers/issues/73)) | Stale Marketplace ownership after HACS migration (same domain/folder as this fork), not a bad release zip. **Do not** Uninstall / Delete-and-uninstall ProudElm while set up. See README [Moving over from ProudElm](https://github.com/AndrewTapp/solaredgeoptimizers#moving-over-from-proudelm): disable Marketplace → remove ProudElm’s `"installed": true` from `.storage/marketplace.repositories` → re-enable → update. Or delete only the component folder, restart, reinstall AndrewTapp. Long-term: [core#190454](https://github.com/home-assistant/core/issues/190454). |
 | “Failed to connect” | Network, firewall, DNS; outbound HTTPS to monitoring.solaredge.com. |
