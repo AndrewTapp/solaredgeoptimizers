@@ -103,6 +103,7 @@ from .const import (
     is_status_active,
     parse_string_display_name_path,
     build_optimizer_tasks,
+    inverter_position_key,
     string_position_key_from_display_name,
     resolve_duplicate_indices,
     ENTITY_ADD_BATCH_SIZE,
@@ -589,7 +590,7 @@ def _resolve_inverter_duplicates(site_struct) -> dict[int, str]:
     """Resolve duplicate inverters; coordinator owns the one-time INFO summary."""
     return resolve_duplicate_indices(
         site_struct.inverters,
-        get_key=lambda inv: getattr(inv, "displayName", "") or str(getattr(inv, "inverterId", "")),
+        get_key=inverter_position_key,
         get_status=lambda inv: getattr(inv, "status", "") or "",
         get_serial=lambda inv: getattr(inv, "serialNumber", "") or "",
         logger=_LOGGER,

@@ -90,7 +90,8 @@ The **SolarEdge Optimizers** integration pulls data from the SolarEdge monitorin
 ### Requirements
 
 - **Home Assistant** (tested with recent versions; Core **2026.8.1+** supported).
-- **Current version:** **2.6.0** (`manifest.json`); see `miscellaneous/20261119 Changes v2.6.0.md`
+- **Current version:** **2.6.1** (`manifest.json`); see `miscellaneous/20261128 Changes v2.6.1.md`
+  (multi-SMI displayOrder keep, Issue #80), `miscellaneous/20261119 Changes v2.6.0.md`
   (SMI parent layout, Issue #74) and `miscellaneous/20261111 Changes v2.5.1.md`. Prior hardening in
   `miscellaneous/20260904 Changes v2.4.22.md`.
 - **SolarEdge monitoring account**: Site ID, username (email), password.
@@ -713,6 +714,7 @@ logger:
 | Duplicate entity IDs (e.g. sensor.power_2) | Use a unique Entity ID prefix per site, or ensure you’re on a version that uses path-based entity IDs. Trailing `_2` on an otherwise correct path (e.g. `power_1_0_1_2`) is HA registry disambiguation — remove/re-add if stale. |
 | Duplicate sensors/devices after optimizer or inverter swap | The integration uses position-based identity; after an update you should see one sensor per position. If you still have duplicates from before that change, **remove the integration** (Settings → Integrations → Delete) and **add it again** so the registry is cleaned and recreated with position-based devices. |
 | Extra inverter devices for one physical unit (e.g. `Inverter 1` + `1a`, Issue #66) | **v2.5.0+** collapses portal inverter rows that share the same display slot (ACTIVE / richest tree). Reload after upgrade, then **Delete** leftover ghost devices in the device UI (site parent cannot be removed). |
+| Only one SMI device on a multi-SMI site; second SMI/optimizers missing (Issue #80) | **v2.6.1+** keeps multiple ACTIVE parents that reuse `displayOrder` when each has optimizers; SMI slot key prefers portal name. Sample: `miscellaneous/site_structure_struktur.json`. Reload after upgrade. |
 | Two inverters (one with sensors, one with strings) | Usually caused by mismatched device IDs from an older release. **Remove the integration** and **add it again** so devices and entities are recreated with position/display-name IDs from the coordinator. |
 | “references a non existing via_device” on every startup | Fixed from **v2.4.17**: coordinator registers site/inverter/string devices before entities; entities link with identifiers-only `device_info` (`device_ids.link_device_info`). Update via the Marketplace and restart; re-add the integration only if warnings persist on 2.4.17+. |
 | 403 Forbidden on inverter information | Non-fatal. The integration logs a warning; inverter and optimizer devices use position-based identity so model names may be missing but all sensors and devices work. |
@@ -741,7 +743,7 @@ solaredgeoptimizers/
 ├── api_dual.py            # SolarEdgeDualAPI: use_solaredge_one; when True tries One first then legacy, when False legacy only; exposes _obtained_from; close() both backends
 ├── config_flow.py         # Config flow, validation (dual API), format_config_entry_title, async_remove_entry (close API + shared cleanup helper)
 ├── device_ids.py          # Shared device registry identifiers; string_device_keys_for_registration, build_string_device_key_lookup; link_device_info (identifiers-only entity device_info)
-├── const.py               # DOMAIN, ENTITY_ADD_BATCH_SIZE, intervals, cache TTLs, sensor types, status helpers, parse_string/optimizer display names (incl. 1.1.1a suffix), build_optimizer_tasks, collapse_duplicate_inverter_slots, resolve_duplicate_indices, format_config_entry_title
+├── const.py               # DOMAIN, ENTITY_ADD_BATCH_SIZE, intervals, cache TTLs, sensor types, status helpers, parse_string/optimizer display names (incl. 1.1.1a suffix), build_optimizer_tasks, inverter_position_key, collapse_duplicate_inverter_slots, resolve_duplicate_indices, format_config_entry_title
 ├── exceptions.py          # SolarEdgeAPIError: custom exception for API/processing errors (used by legacy client)
 ├── coordinator.py         # DataUpdateCoordinator, adaptive polling, revert-to-One retry (30 min when from legacy), aggregation, _obtained_from, AggregationContext namedtuple, uses resolve_duplicate_indices from const.py
 ├── hacs.json              # Marketplace metadata (zip_release + filename solaredgeoptimizers.zip; same format as former HACS)
@@ -795,7 +797,8 @@ solaredgeoptimizers/
 | `build_optimizer_tasks()` | Build optimizer task list for sensor setup and coordinator position indexing (shared). |
 | `string_position_key_from_display_name()` | (inv, str) key for string duplicate resolution (ignores suffix). |
 | `make_duplicate_sort_key()` | Sort key for duplicate resolution: active first, then by serial. |
-| `collapse_duplicate_inverter_slots()` | Keep one inverter per display slot (ACTIVE / richest tree); drop portal phantoms (v2.5.0+). |
+| `collapse_duplicate_inverter_slots()` | Drop portal phantoms per display slot (v2.5.0+); keep multiple ACTIVE peers with optimizers (v2.6.1+ / Issue #80). |
+| `inverter_position_key()` | Parent slot key; SMI prefers portal name (v2.6.1+). |
 | `resolve_duplicate_indices()` | Letter suffixes (a, b, c...) for duplicate positions. |
 
 ### Device registry helpers (`device_ids.py`)

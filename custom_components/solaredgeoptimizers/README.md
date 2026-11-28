@@ -67,13 +67,15 @@ attribute on optimizer sensors.
 
 ## What You Need
 
-**Current release:** **2.6.0** (`manifest.json`). No third-party Python packages are declared
+**Current release:** **2.6.1** (`manifest.json`). No third-party Python packages are declared
 (`requirements: []`). The integration uses Home Assistant’s bundled `requests` and `pytz`.
 Legacy portal `systemData` parsing uses stdlib `json` only (the old `jsonfinder` requirement
 was removed in v2.4.21 after Home Assistant Core 2026.8.1 could not install it).
+**v2.6.1** keeps multiple ACTIVE SMI/inverter peers that reuse `displayOrder` (Issue #80).
 **v2.6.0** adds SolarEdge One **SMI** parent layout support (Issue #74). **v2.5.1** hardened
 empty-optimizer lifetime refresh and quieter legacy layout 410 / empty-body fallback
 (Issue #71). See
+[`miscellaneous/20261128 Changes v2.6.1.md`](miscellaneous/20261128%20Changes%20v2.6.1.md),
 [`miscellaneous/20261119 Changes v2.6.0.md`](miscellaneous/20261119%20Changes%20v2.6.0.md),
 [`miscellaneous/20261111 Changes v2.5.1.md`](miscellaneous/20261111%20Changes%20v2.5.1.md),
 and [`miscellaneous/20260925 Changes v2.5.0.md`](miscellaneous/20260925%20Changes%20v2.5.0.md).
@@ -255,7 +257,7 @@ When an optimizer, string, or inverter is marked as **Inactive** in the SolarEdg
 
 When the SolarEdge API returns multiple inverters, strings, or optimizers with the same name (e.g. two "Inverter 1" entries after a hardware replacement), the integration resolves duplicates automatically:
 
-- **Inverters (v2.5.0+):** Portal rows that share the **same display slot** (`displayOrder` / `displayName`, e.g. both `"1"`) are collapsed to **one** inverter before devices are created. The integration keeps the sole **ACTIVE** peer when that is unambiguous, otherwise the row with the **most optimizers**. A replaced/phantom inverter that is INACTIVE and empty therefore no longer becomes `Inverter 1a`. True multi-inverter sites with distinct slots (`1` and `2`) are unchanged. If more than one inverter still shares a name after that (unusual), active-first suffix rules still apply.
+- **Inverters / SMI (v2.5.0+ / v2.6.1+):** Portal rows that share the **same display slot** (`displayOrder` / `displayName`, e.g. both `"1"`) are collapsed before devices are created when one peer is a phantom (INACTIVE/empty). The integration keeps the sole **ACTIVE** peer when that is unambiguous, otherwise the row with the **most optimizers**. **v2.6.1+:** if two or more peers are ACTIVE and each already has optimizers, **all** of those live peers are kept (Issue #80 multi-SMI sites that reuse `displayOrder`). SMI parents also key the slot from portal **name** when present (`SMI 1.1` vs `SMI 2.1`). True multi-inverter sites with distinct slots (`1` and `2`) are unchanged. If more than one parent still shares a key after that (unusual), active-first suffix rules still apply.
 - **Strings**: Active (including blank status) strings come first (sorted by their position in the API response), then other statuses. The first active string keeps the original name; duplicates get suffixes.
 - **Optimizers**: Active (including blank status) optimizers come first (sorted by serial number), then other statuses. The first active optimizer keeps the original name; duplicates get suffixes. If the portal already names a unit **1.1.1a**, that letter is preserved. Replaced panels at the same slot are **not** collapsed away (lifetime history is retained).
 

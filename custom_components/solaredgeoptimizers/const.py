@@ -89,8 +89,10 @@ Utility Functions:
 - string_position_key_from_display_name(): (inv, str) key for string duplicate resolution
 - build_optimizer_tasks(): Optimizer task list for sensor setup and coordinator position indexing
 - resolve_duplicate_indices(): Assign letter suffixes to duplicate positions
+- inverter_position_key(): Parent slot key (SMI prefers portal name; else displayName)
 - collapse_duplicate_inverter_slots(): Drop portal phantom/replaced inverter peers
-  that share the same displayOrder/slot (keep ACTIVE / richest tree)
+  that share the same displayOrder/slot (keep ACTIVE / richest tree); keep multiple
+  ACTIVE peers that each have optimizers (Issue #80 multi-SMI displayOrder reuse)
 - format_config_entry_title(): Safe substitution of config.title_entry %(siteid)s with fallback
 - redact_url_for_log(): Remove query/fragment values before writing URLs to DEBUG
 - UNFORMATTED_CONFIG_TITLE_MARKER: Detects literal %(siteid)s in stored config entry titles
@@ -433,8 +435,19 @@ def make_duplicate_sort_key(item, get_status: Callable, get_serial: Callable) ->
     return (is_active, serial)
 
 
-def _inverter_slot_key(inverter) -> str:
-    """Logical inverter slot key (displayName / displayOrder), falling back to inverter id."""
+def inverter_position_key(inverter) -> str:
+    """Logical parent slot key for collapse and duplicate-suffix resolution.
+
+    Inverter sites use displayName / displayOrder (Issue #66). SMI parents often
+    reuse displayOrder across real units while the portal name differs (e.g.
+    ``SMI 1.1`` / ``SMI 2.1`` both with displayOrder ``1`` — Issue #80), so SMI
+    prefers ``name`` when present.
+    """
+    parent_type = (getattr(inverter, "type", "") or "").upper()
+    if parent_type == "SMI":
+        name = str(getattr(inverter, "name", "") or "").strip()
+        if name:
+            return name
     return str(
         getattr(inverter, "displayName", "")
         or getattr(inverter, "inverterId", "")
@@ -472,6 +485,16 @@ def _pick_canonical_inverter(group: list):
     )
 
 
+def _live_peers_with_optimizers(group: list) -> list:
+    """ACTIVE (or blank) peers that already have at least one optimizer child."""
+    return [
+        inv
+        for inv in group
+        if is_status_active(getattr(inv, "status", "") or "")
+        and _inverter_optimizer_count(inv) > 0
+    ]
+
+
 def collapse_duplicate_inverter_slots(inverters: list, logger=None) -> list:
     """Drop competing portal inverter rows that share the same logical display slot.
 
@@ -480,6 +503,10 @@ def collapse_duplicate_inverter_slots(inverters: list, logger=None) -> list:
     peers became suffixed HA devices (e.g. Inverter 1a). This keeps one inverter
     per slot: the sole ACTIVE peer when unambiguous, otherwise the richest
     optimizer tree. Distinct displayOrders (true multi-inverter sites) are unchanged.
+
+    When two or more peers in the same slot are ACTIVE and each already has
+    optimizers, all of those live peers are kept (Issue #80 multi-SMI sites that
+    reuse displayOrder). Phantom/empty peers in that group are still dropped.
     """
     if not inverters or len(inverters) < 2:
         return inverters
@@ -488,7 +515,7 @@ def collapse_duplicate_inverter_slots(inverters: list, logger=None) -> list:
     groups: dict[str, list] = defaultdict(list)
     order: list[str] = []
     for inv in inverters:
-        key = _inverter_slot_key(inv)
+        key = inverter_position_key(inv)
         if key not in groups:
             order.append(key)
         groups[key].append(inv)
@@ -499,6 +526,24 @@ def collapse_duplicate_inverter_slots(inverters: list, logger=None) -> list:
         if len(group) == 1:
             kept.append(group[0])
             continue
+
+        live = _live_peers_with_optimizers(group)
+        if len(live) >= 2:
+            kept.extend(live)
+            for inv in group:
+                if inv in live:
+                    continue
+                log.info(
+                    "SolarEdge Optimizers: Dropping empty/phantom inverter for display slot %r "
+                    "(serial=%s status=%s optimizers=%d); keeping %d live peers",
+                    key,
+                    getattr(inv, "serialNumber", "") or "?",
+                    getattr(inv, "status", "") or "(none)",
+                    _inverter_optimizer_count(inv),
+                    len(live),
+                )
+            continue
+
         winner = _pick_canonical_inverter(group)
         kept.append(winner)
         for inv in group:

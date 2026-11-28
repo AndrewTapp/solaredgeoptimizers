@@ -101,6 +101,7 @@ from .const import (
     is_status_active,
     parse_string_display_name_path,
     build_optimizer_tasks,
+    inverter_position_key,
     resolve_duplicate_indices,
     string_position_key_from_display_name,
 )
@@ -805,7 +806,7 @@ class MyCoordinator(DataUpdateCoordinator):
         # Resolve duplicate inverters across the site
         inv_suffix_map = resolve_duplicate_indices(
             site.inverters,
-            get_key=lambda inv: getattr(inv, "displayName", "") or str(getattr(inv, "inverterId", "")),
+            get_key=inverter_position_key,
             get_status=lambda inv: getattr(inv, "status", "") or "",
             get_serial=lambda inv: getattr(inv, "serialNumber", "") or "",
             logger=_LOGGER,
@@ -1157,7 +1158,7 @@ class MyCoordinator(DataUpdateCoordinator):
         """Resolve duplicate inverters and return suffix map."""
         inv_suffix_map = resolve_duplicate_indices(
             self._site_structure.inverters,
-            get_key=lambda inv: getattr(inv, "displayName", "") or str(getattr(inv, "inverterId", "")),
+            get_key=inverter_position_key,
             get_status=lambda inv: getattr(inv, "status", "") or "",
             get_serial=lambda inv: getattr(inv, "serialNumber", "") or "",
             logger=_LOGGER,

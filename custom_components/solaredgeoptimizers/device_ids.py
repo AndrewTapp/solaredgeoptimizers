@@ -25,6 +25,7 @@ from homeassistant.helpers.entity import DeviceInfo
 
 from .const import (
     DOMAIN,
+    inverter_position_key,
     parse_string_display_name_path,
     resolve_duplicate_indices,
     string_position_key_from_display_name,
@@ -68,7 +69,7 @@ def build_string_device_key_lookup(site, logger=None) -> dict[Any, tuple[str | i
     lookup: dict[Any, tuple[str | int, str | int]] = {}
     inv_suffix_map = resolve_duplicate_indices(
         site.inverters,
-        get_key=lambda inv: getattr(inv, "displayName", "") or str(getattr(inv, "inverterId", "")),
+        get_key=inverter_position_key,
         get_status=lambda inv: getattr(inv, "status", "") or "",
         get_serial=lambda inv: getattr(inv, "serialNumber", "") or "",
         logger=logger,

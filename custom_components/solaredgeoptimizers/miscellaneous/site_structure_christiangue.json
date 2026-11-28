@@ -1,0 +1,1837 @@
+{
+    "siteStructure": {
+        "uuid": "3874876",
+        "type": "SITE",
+        "name": "xxxxxxxxxxxxxxxx",
+        "identifier": "3874876",
+        "isContainChildren": true,
+        "isAlertOnChild": false,
+        "properties": {
+            "defaultPanelModel": "19-0028 Typ 1/6 (120 Zellen)",
+            "magnitude": "RESIDENTIAL"
+        },
+        "children": [
+            {
+                "type": "FOLDER",
+                "name": "SMI",
+                "isContainChildren": true,
+                "isAlertOnChild": false,
+                "children": [
+                    {
+                        "uuid": "10192B52",
+                        "type": "SMI",
+                        "name": "SMI 1.1",
+                        "serial": "10192B52-F6",
+                        "identifier": "10192B52",
+                        "order": 1,
+                        "displayOrder": "1",
+                        "isContainChildren": true,
+                        "isAlertOnChild": false,
+                        "properties": {
+                            "identifier": "10192B52",
+                            "status": "ACTIVE"
+                        },
+                        "children": [
+                            {
+                                "type": "FOLDER",
+                                "name": "STRING",
+                                "isContainChildren": true,
+                                "isAlertOnChild": false,
+                                "children": [
+                                    {
+                                        "uuid": "10192B52_30",
+                                        "type": "STRING",
+                                        "name": "String 1.1.0",
+                                        "identifier": "10192B52_30",
+                                        "order": 0,
+                                        "displayOrder": "1.0",
+                                        "isContainChildren": true,
+                                        "isAlertOnChild": false,
+                                        "properties": {
+                                            "identifier": "10192B52_30",
+                                            "status": "ACTIVE"
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "FOLDER",
+                                                "name": "OPTIMIZER",
+                                                "isContainChildren": true,
+                                                "isAlertOnChild": false,
+                                                "children": [
+                                                    {
+                                                        "uuid": "FD31AB8C",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.1",
+                                                        "serial": "FD31AB8C-29",
+                                                        "originalSerial": "FD31AB8C-29",
+                                                        "identifier": "FD31AB8C",
+                                                        "order": 1,
+                                                        "displayOrder": "1.0.1",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AB8C",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A92A",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.2",
+                                                        "serial": "FD31A92A-C5",
+                                                        "originalSerial": "FD31A92A-C5",
+                                                        "identifier": "FD31A92A",
+                                                        "order": 2,
+                                                        "displayOrder": "1.0.2",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A92A",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A486",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.3",
+                                                        "serial": "FD31A486-1C",
+                                                        "originalSerial": "FD31A486-1C",
+                                                        "identifier": "FD31A486",
+                                                        "order": 3,
+                                                        "displayOrder": "1.0.3",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A486",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A6C0",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.4",
+                                                        "serial": "FD31A6C0-58",
+                                                        "originalSerial": "FD31A6C0-58",
+                                                        "identifier": "FD31A6C0",
+                                                        "order": 4,
+                                                        "displayOrder": "1.0.4",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A6C0",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A6B5",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.5",
+                                                        "serial": "FD31A6B5-4D",
+                                                        "originalSerial": "FD31A6B5-4D",
+                                                        "identifier": "FD31A6B5",
+                                                        "order": 5,
+                                                        "displayOrder": "1.0.5",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A6B5",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AB3D",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.6",
+                                                        "serial": "FD31AB3D-DA",
+                                                        "originalSerial": "FD31AB3D-DA",
+                                                        "identifier": "FD31AB3D",
+                                                        "order": 6,
+                                                        "displayOrder": "1.0.6",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AB3D",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A8C6",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.7",
+                                                        "serial": "FD31A8C6-60",
+                                                        "originalSerial": "FD31A8C6-60",
+                                                        "identifier": "FD31A8C6",
+                                                        "order": 7,
+                                                        "displayOrder": "1.0.7",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A8C6",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD319100",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.8",
+                                                        "serial": "FD319100-83",
+                                                        "originalSerial": "FD319100-83",
+                                                        "identifier": "FD319100",
+                                                        "order": 8,
+                                                        "displayOrder": "1.0.8",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD319100",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AD27",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.9",
+                                                        "serial": "FD31AD27-C6",
+                                                        "originalSerial": "FD31AD27-C6",
+                                                        "identifier": "FD31AD27",
+                                                        "order": 9,
+                                                        "displayOrder": "1.0.9",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AD27",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31921E",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.10",
+                                                        "serial": "FD31921E-A2",
+                                                        "originalSerial": "FD31921E-A2",
+                                                        "identifier": "FD31921E",
+                                                        "order": 10,
+                                                        "displayOrder": "1.0.10",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31921E",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M90-4x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD3191D1",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.11",
+                                                        "serial": "FD3191D1-54",
+                                                        "originalSerial": "FD3191D1-54",
+                                                        "identifier": "FD3191D1",
+                                                        "order": 11,
+                                                        "displayOrder": "1.0.11",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD3191D1",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M90-4x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD3190A2",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.12",
+                                                        "serial": "FD3190A2-24",
+                                                        "originalSerial": "FD3190A2-24",
+                                                        "identifier": "FD3190A2",
+                                                        "order": 12,
+                                                        "displayOrder": "1.0.12",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD3190A2",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ACD1",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.13",
+                                                        "serial": "FD31ACD1-6F",
+                                                        "originalSerial": "FD31ACD1-6F",
+                                                        "identifier": "FD31ACD1",
+                                                        "order": 13,
+                                                        "displayOrder": "1.0.13",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ACD1",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M90-4x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31909C",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.14",
+                                                        "serial": "FD31909C-1E",
+                                                        "originalSerial": "FD31909C-1E",
+                                                        "identifier": "FD31909C",
+                                                        "order": 14,
+                                                        "displayOrder": "1.0.14",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31909C",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A628",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.15",
+                                                        "serial": "FD31A628-C0",
+                                                        "originalSerial": "FD31A628-C0",
+                                                        "identifier": "FD31A628",
+                                                        "order": 15,
+                                                        "displayOrder": "1.0.15",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A628",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AEF4",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.16",
+                                                        "serial": "FD31AEF4-94",
+                                                        "originalSerial": "FD31AEF4-94",
+                                                        "identifier": "FD31AEF4",
+                                                        "order": 16,
+                                                        "displayOrder": "1.0.16",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AEF4",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A5EC",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.1.0.17",
+                                                        "serial": "FD31A5EC-83",
+                                                        "originalSerial": "FD31A5EC-83",
+                                                        "identifier": "FD31A5EC",
+                                                        "order": 17,
+                                                        "displayOrder": "1.0.17",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A5EC",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "uuid": "10192B4B",
+                        "type": "SMI",
+                        "name": "SMI 1.2",
+                        "serial": "10192B4B-EF",
+                        "identifier": "10192B4B",
+                        "order": 2,
+                        "displayOrder": "2",
+                        "isContainChildren": true,
+                        "isAlertOnChild": false,
+                        "properties": {
+                            "identifier": "10192B4B",
+                            "status": "ACTIVE"
+                        },
+                        "children": [
+                            {
+                                "type": "FOLDER",
+                                "name": "STRING",
+                                "isContainChildren": true,
+                                "isAlertOnChild": false,
+                                "children": [
+                                    {
+                                        "uuid": "10192B4B_30",
+                                        "type": "STRING",
+                                        "name": "String 1.2.0",
+                                        "identifier": "10192B4B_30",
+                                        "order": 0,
+                                        "displayOrder": "2.0",
+                                        "isContainChildren": true,
+                                        "isAlertOnChild": false,
+                                        "properties": {
+                                            "identifier": "10192B4B_30",
+                                            "status": "ACTIVE"
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "FOLDER",
+                                                "name": "OPTIMIZER",
+                                                "isContainChildren": true,
+                                                "isAlertOnChild": false,
+                                                "children": [
+                                                    {
+                                                        "uuid": "FC31C0D6",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.1",
+                                                        "serial": "FC31C0D6-78",
+                                                        "originalSerial": "FC31C0D6-78",
+                                                        "identifier": "FC31C0D6",
+                                                        "order": 1,
+                                                        "displayOrder": "2.0.1",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FC31C0D6",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A472",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.2",
+                                                        "serial": "FD31A472-08",
+                                                        "originalSerial": "FD31A472-08",
+                                                        "identifier": "FD31A472",
+                                                        "order": 2,
+                                                        "displayOrder": "2.0.2",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A472",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AC41",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.3",
+                                                        "serial": "FD31AC41-DF",
+                                                        "originalSerial": "FD31AC41-DF",
+                                                        "identifier": "FD31AC41",
+                                                        "order": 3,
+                                                        "displayOrder": "2.0.3",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AC41",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A6B8",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.4",
+                                                        "serial": "FD31A6B8-50",
+                                                        "originalSerial": "FD31A6B8-50",
+                                                        "identifier": "FD31A6B8",
+                                                        "order": 4,
+                                                        "displayOrder": "2.0.4",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A6B8",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A8CE",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.5",
+                                                        "serial": "FD31A8CE-68",
+                                                        "originalSerial": "FD31A8CE-68",
+                                                        "identifier": "FD31A8CE",
+                                                        "order": 5,
+                                                        "displayOrder": "2.0.5",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A8CE",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD3190F4",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.6",
+                                                        "serial": "FD3190F4-76",
+                                                        "originalSerial": "FD3190F4-76",
+                                                        "identifier": "FD3190F4",
+                                                        "order": 6,
+                                                        "displayOrder": "2.0.6",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD3190F4",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A7A7",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.7",
+                                                        "serial": "FD31A7A7-40",
+                                                        "originalSerial": "FD31A7A7-40",
+                                                        "identifier": "FD31A7A7",
+                                                        "order": 7,
+                                                        "displayOrder": "2.0.7",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A7A7",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A7A2",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.8",
+                                                        "serial": "FD31A7A2-3B",
+                                                        "originalSerial": "FD31A7A2-3B",
+                                                        "identifier": "FD31A7A2",
+                                                        "order": 8,
+                                                        "displayOrder": "2.0.8",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A7A2",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A32D",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.9",
+                                                        "serial": "FD31A32D-C2",
+                                                        "originalSerial": "FD31A32D-C2",
+                                                        "identifier": "FD31A32D",
+                                                        "order": 9,
+                                                        "displayOrder": "2.0.9",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A32D",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD3190E1",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.10",
+                                                        "serial": "FD3190E1-63",
+                                                        "originalSerial": "FD3190E1-63",
+                                                        "identifier": "FD3190E1",
+                                                        "order": 10,
+                                                        "displayOrder": "2.0.10",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD3190E1",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD3190DC",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.11",
+                                                        "serial": "FD3190DC-5E",
+                                                        "originalSerial": "FD3190DC-5E",
+                                                        "identifier": "FD3190DC",
+                                                        "order": 11,
+                                                        "displayOrder": "2.0.11",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD3190DC",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ACE7",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.12",
+                                                        "serial": "FD31ACE7-85",
+                                                        "originalSerial": "FD31ACE7-85",
+                                                        "identifier": "FD31ACE7",
+                                                        "order": 12,
+                                                        "displayOrder": "2.0.12",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ACE7",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ACDE",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.13",
+                                                        "serial": "FD31ACDE-7C",
+                                                        "originalSerial": "FD31ACDE-7C",
+                                                        "identifier": "FD31ACDE",
+                                                        "order": 13,
+                                                        "displayOrder": "2.0.13",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ACDE",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD319094",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.14",
+                                                        "serial": "FD319094-16",
+                                                        "originalSerial": "FD319094-16",
+                                                        "identifier": "FD319094",
+                                                        "order": 14,
+                                                        "displayOrder": "2.0.14",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD319094",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ADF1",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.15",
+                                                        "serial": "FD31ADF1-90",
+                                                        "originalSerial": "FD31ADF1-90",
+                                                        "identifier": "FD31ADF1",
+                                                        "order": 15,
+                                                        "displayOrder": "2.0.15",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ADF1",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A617",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.16",
+                                                        "serial": "FD31A617-AF",
+                                                        "originalSerial": "FD31A617-AF",
+                                                        "identifier": "FD31A617",
+                                                        "order": 16,
+                                                        "displayOrder": "2.0.16",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A617",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ADD7",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.17",
+                                                        "serial": "FD31ADD7-76",
+                                                        "originalSerial": "FD31ADD7-76",
+                                                        "identifier": "FD31ADD7",
+                                                        "order": 17,
+                                                        "displayOrder": "2.0.17",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ADD7",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M90-4x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ADDC",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.18",
+                                                        "serial": "FD31ADDC-7B",
+                                                        "originalSerial": "FD31ADDC-7B",
+                                                        "identifier": "FD31ADDC",
+                                                        "order": 18,
+                                                        "displayOrder": "2.0.18",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ADDC",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A5EE",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.19",
+                                                        "serial": "FD31A5EE-85",
+                                                        "originalSerial": "FD31A5EE-85",
+                                                        "identifier": "FD31A5EE",
+                                                        "order": 19,
+                                                        "displayOrder": "2.0.19",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A5EE",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AC98",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.2.0.20",
+                                                        "serial": "FD31AC98-36",
+                                                        "originalSerial": "FD31AC98-36",
+                                                        "identifier": "FD31AC98",
+                                                        "order": 20,
+                                                        "displayOrder": "2.0.20",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AC98",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "uuid": "10192B4D",
+                        "type": "SMI",
+                        "name": "SMI 1.3",
+                        "serial": "10192B4D-F1",
+                        "identifier": "10192B4D",
+                        "order": 3,
+                        "displayOrder": "3",
+                        "isContainChildren": true,
+                        "isAlertOnChild": false,
+                        "properties": {
+                            "identifier": "10192B4D",
+                            "status": "ACTIVE"
+                        },
+                        "children": [
+                            {
+                                "type": "FOLDER",
+                                "name": "STRING",
+                                "isContainChildren": true,
+                                "isAlertOnChild": false,
+                                "children": [
+                                    {
+                                        "uuid": "10192B4D_30",
+                                        "type": "STRING",
+                                        "name": "String 1.3.0",
+                                        "identifier": "10192B4D_30",
+                                        "order": 0,
+                                        "displayOrder": "3.0",
+                                        "isContainChildren": true,
+                                        "isAlertOnChild": false,
+                                        "properties": {
+                                            "identifier": "10192B4D_30",
+                                            "status": "ACTIVE"
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "FOLDER",
+                                                "name": "OPTIMIZER",
+                                                "isContainChildren": true,
+                                                "isAlertOnChild": false,
+                                                "children": [
+                                                    {
+                                                        "uuid": "FD31AC72",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.1",
+                                                        "serial": "FD31AC72-10",
+                                                        "originalSerial": "FD31AC72-10",
+                                                        "identifier": "FD31AC72",
+                                                        "order": 1,
+                                                        "displayOrder": "3.0.1",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AC72",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A6E1",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.2",
+                                                        "serial": "FD31A6E1-79",
+                                                        "originalSerial": "FD31A6E1-79",
+                                                        "identifier": "FD31A6E1",
+                                                        "order": 2,
+                                                        "displayOrder": "3.0.2",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A6E1",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A6D3",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.3",
+                                                        "serial": "FD31A6D3-6B",
+                                                        "originalSerial": "FD31A6D3-6B",
+                                                        "identifier": "FD31A6D3",
+                                                        "order": 3,
+                                                        "displayOrder": "3.0.3",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A6D3",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A8F4",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.4",
+                                                        "serial": "FD31A8F4-8E",
+                                                        "originalSerial": "FD31A8F4-8E",
+                                                        "identifier": "FD31A8F4",
+                                                        "order": 4,
+                                                        "displayOrder": "3.0.4",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A8F4",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31912F",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.5",
+                                                        "serial": "FD31912F-B2",
+                                                        "originalSerial": "FD31912F-B2",
+                                                        "identifier": "FD31912F",
+                                                        "order": 5,
+                                                        "displayOrder": "3.0.5",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31912F",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A8DB",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.6",
+                                                        "serial": "FD31A8DB-75",
+                                                        "originalSerial": "FD31A8DB-75",
+                                                        "identifier": "FD31A8DB",
+                                                        "order": 6,
+                                                        "displayOrder": "3.0.6",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A8DB",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A341",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.7",
+                                                        "serial": "FD31A341-D6",
+                                                        "originalSerial": "FD31A341-D6",
+                                                        "identifier": "FD31A341",
+                                                        "order": 7,
+                                                        "displayOrder": "3.0.7",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A341",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A32E",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.8",
+                                                        "serial": "FD31A32E-C3",
+                                                        "originalSerial": "FD31A32E-C3",
+                                                        "identifier": "FD31A32E",
+                                                        "order": 8,
+                                                        "displayOrder": "3.0.8",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A32E",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A673",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.9",
+                                                        "serial": "FD31A673-0B",
+                                                        "originalSerial": "FD31A673-0B",
+                                                        "identifier": "FD31A673",
+                                                        "order": 9,
+                                                        "displayOrder": "3.0.9",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A673",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FC31C2A7",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.10",
+                                                        "serial": "FC31C2A7-4B",
+                                                        "originalSerial": "FC31C2A7-4B",
+                                                        "identifier": "FC31C2A7",
+                                                        "order": 10,
+                                                        "displayOrder": "3.0.10",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FC31C2A7",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A416",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.11",
+                                                        "serial": "FD31A416-AC",
+                                                        "originalSerial": "FD31A416-AC",
+                                                        "identifier": "FD31A416",
+                                                        "order": 11,
+                                                        "displayOrder": "3.0.11",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A416",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A329",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.12",
+                                                        "serial": "FD31A329-BE",
+                                                        "originalSerial": "FD31A329-BE",
+                                                        "identifier": "FD31A329",
+                                                        "order": 12,
+                                                        "displayOrder": "3.0.12",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A329",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "13CE1C0E",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.13",
+                                                        "serial": "13CE1C0E-0B",
+                                                        "originalSerial": "13CE1C0E-0B",
+                                                        "identifier": "13CE1C0E",
+                                                        "order": 13,
+                                                        "displayOrder": "3.0.13",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "13CE1C0E",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A785",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.14",
+                                                        "serial": "FD31A785-1E",
+                                                        "originalSerial": "FD31A785-1E",
+                                                        "identifier": "FD31A785",
+                                                        "order": 14,
+                                                        "displayOrder": "3.0.14",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A785",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ACE6",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.15",
+                                                        "serial": "FD31ACE6-84",
+                                                        "originalSerial": "FD31ACE6-84",
+                                                        "identifier": "FD31ACE6",
+                                                        "order": 15,
+                                                        "displayOrder": "3.0.15",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ACE6",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ADE0",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.16",
+                                                        "serial": "FD31ADE0-7F",
+                                                        "originalSerial": "FD31ADE0-7F",
+                                                        "identifier": "FD31ADE0",
+                                                        "order": 16,
+                                                        "displayOrder": "3.0.16",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ADE0",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ADEE",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.17",
+                                                        "serial": "FD31ADEE-8D",
+                                                        "originalSerial": "FD31ADEE-8D",
+                                                        "identifier": "FD31ADEE",
+                                                        "order": 17,
+                                                        "displayOrder": "3.0.17",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ADEE",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AC94",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.18",
+                                                        "serial": "FD31AC94-32",
+                                                        "originalSerial": "FD31AC94-32",
+                                                        "identifier": "FD31AC94",
+                                                        "order": 18,
+                                                        "displayOrder": "3.0.18",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AC94",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AC8F",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.3.0.19",
+                                                        "serial": "FD31AC8F-2D",
+                                                        "originalSerial": "FD31AC8F-2D",
+                                                        "identifier": "FD31AC8F",
+                                                        "order": 19,
+                                                        "displayOrder": "3.0.19",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AC8F",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "uuid": "10192B53",
+                        "type": "SMI",
+                        "name": "SMI 1.4",
+                        "serial": "10192B53-F7",
+                        "identifier": "10192B53",
+                        "order": 4,
+                        "displayOrder": "4",
+                        "isContainChildren": true,
+                        "isAlertOnChild": false,
+                        "properties": {
+                            "identifier": "10192B53",
+                            "status": "ACTIVE"
+                        },
+                        "children": [
+                            {
+                                "type": "FOLDER",
+                                "name": "STRING",
+                                "isContainChildren": true,
+                                "isAlertOnChild": false,
+                                "children": [
+                                    {
+                                        "uuid": "10192B53_30",
+                                        "type": "STRING",
+                                        "name": "String 1.4.0",
+                                        "identifier": "10192B53_30",
+                                        "order": 0,
+                                        "displayOrder": "4.0",
+                                        "isContainChildren": true,
+                                        "isAlertOnChild": false,
+                                        "properties": {
+                                            "identifier": "10192B53_30",
+                                            "status": "ACTIVE"
+                                        },
+                                        "children": [
+                                            {
+                                                "type": "FOLDER",
+                                                "name": "OPTIMIZER",
+                                                "isContainChildren": true,
+                                                "isAlertOnChild": false,
+                                                "children": [
+                                                    {
+                                                        "uuid": "FD31A927",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.1",
+                                                        "serial": "FD31A927-C2",
+                                                        "originalSerial": "FD31A927-C2",
+                                                        "identifier": "FD31A927",
+                                                        "order": 1,
+                                                        "displayOrder": "4.0.1",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A927",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A5DA",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.2",
+                                                        "serial": "FD31A5DA-71",
+                                                        "originalSerial": "FD31A5DA-71",
+                                                        "identifier": "FD31A5DA",
+                                                        "order": 2,
+                                                        "displayOrder": "4.0.2",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A5DA",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AA59",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.3",
+                                                        "serial": "FD31AA59-F5",
+                                                        "originalSerial": "FD31AA59-F5",
+                                                        "identifier": "FD31AA59",
+                                                        "order": 3,
+                                                        "displayOrder": "4.0.3",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AA59",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AA4E",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.4",
+                                                        "serial": "FD31AA4E-EA",
+                                                        "originalSerial": "FD31AA4E-EA",
+                                                        "identifier": "FD31AA4E",
+                                                        "order": 4,
+                                                        "displayOrder": "4.0.4",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AA4E",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A5BC",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.5",
+                                                        "serial": "FD31A5BC-53",
+                                                        "originalSerial": "FD31A5BC-53",
+                                                        "identifier": "FD31A5BC",
+                                                        "order": 5,
+                                                        "displayOrder": "4.0.5",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A5BC",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A6D7",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.6",
+                                                        "serial": "FD31A6D7-6F",
+                                                        "originalSerial": "FD31A6D7-6F",
+                                                        "identifier": "FD31A6D7",
+                                                        "order": 6,
+                                                        "displayOrder": "4.0.6",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A6D7",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A8C4",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.7",
+                                                        "serial": "FD31A8C4-5E",
+                                                        "originalSerial": "FD31A8C4-5E",
+                                                        "identifier": "FD31A8C4",
+                                                        "order": 7,
+                                                        "displayOrder": "4.0.7",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A8C4",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AB15",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.8",
+                                                        "serial": "FD31AB15-B2",
+                                                        "originalSerial": "FD31AB15-B2",
+                                                        "identifier": "FD31AB15",
+                                                        "order": 8,
+                                                        "displayOrder": "4.0.8",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AB15",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M90-4x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A8A7",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.9",
+                                                        "serial": "FD31A8A7-41",
+                                                        "originalSerial": "FD31A8A7-41",
+                                                        "identifier": "FD31A8A7",
+                                                        "order": 9,
+                                                        "displayOrder": "4.0.9",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A8A7",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD3190E0",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.10",
+                                                        "serial": "FD3190E0-62",
+                                                        "originalSerial": "FD3190E0-62",
+                                                        "identifier": "FD3190E0",
+                                                        "order": 10,
+                                                        "displayOrder": "4.0.10",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD3190E0",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M90-4x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A89A",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.11",
+                                                        "serial": "FD31A89A-34",
+                                                        "originalSerial": "FD31A89A-34",
+                                                        "identifier": "FD31A89A",
+                                                        "order": 11,
+                                                        "displayOrder": "4.0.11",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A89A",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD3190D1",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.12",
+                                                        "serial": "FD3190D1-53",
+                                                        "originalSerial": "FD3190D1-53",
+                                                        "identifier": "FD3190D1",
+                                                        "order": 12,
+                                                        "displayOrder": "4.0.12",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD3190D1",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31AAD9",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.13",
+                                                        "serial": "FD31AAD9-75",
+                                                        "originalSerial": "FD31AAD9-75",
+                                                        "identifier": "FD31AAD9",
+                                                        "order": 13,
+                                                        "displayOrder": "4.0.13",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31AAD9",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M90-4x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD3190CB",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.14",
+                                                        "serial": "FD3190CB-4D",
+                                                        "originalSerial": "FD3190CB-4D",
+                                                        "identifier": "FD3190CB",
+                                                        "order": 14,
+                                                        "displayOrder": "4.0.14",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD3190CB",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ACE2",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.15",
+                                                        "serial": "FD31ACE2-80",
+                                                        "originalSerial": "FD31ACE2-80",
+                                                        "identifier": "FD31ACE2",
+                                                        "order": 15,
+                                                        "displayOrder": "4.0.15",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ACE2",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ACEE",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.16",
+                                                        "serial": "FD31ACEE-8C",
+                                                        "originalSerial": "FD31ACEE-8C",
+                                                        "identifier": "FD31ACEE",
+                                                        "order": 16,
+                                                        "displayOrder": "4.0.16",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ACEE",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A612",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.17",
+                                                        "serial": "FD31A612-AA",
+                                                        "originalSerial": "FD31A612-AA",
+                                                        "identifier": "FD31A612",
+                                                        "order": 17,
+                                                        "displayOrder": "4.0.17",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A612",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A748",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.18",
+                                                        "serial": "FD31A748-E1",
+                                                        "originalSerial": "FD31A748-E1",
+                                                        "identifier": "FD31A748",
+                                                        "order": 18,
+                                                        "displayOrder": "4.0.18",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A748",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A600",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.19",
+                                                        "serial": "FD31A600-98",
+                                                        "originalSerial": "FD31A600-98",
+                                                        "identifier": "FD31A600",
+                                                        "order": 19,
+                                                        "displayOrder": "4.0.19",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A600",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M340-60-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31ADD8",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.20",
+                                                        "serial": "FD31ADD8-77",
+                                                        "originalSerial": "FD31ADD8-77",
+                                                        "identifier": "FD31ADD8",
+                                                        "order": 20,
+                                                        "displayOrder": "4.0.20",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31ADD8",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M136-6x4-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    },
+                                                    {
+                                                        "uuid": "FD31A3B4",
+                                                        "type": "OPTIMIZER",
+                                                        "name": "Optimizer 1.4.0.21",
+                                                        "serial": "FD31A3B4-49",
+                                                        "originalSerial": "FD31A3B4-49",
+                                                        "identifier": "FD31A3B4",
+                                                        "order": 21,
+                                                        "displayOrder": "4.0.21",
+                                                        "isContainChildren": false,
+                                                        "isAlertOnChild": false,
+                                                        "properties": {
+                                                            "moduleManufacturerName": "Megasol Energie AG",
+                                                            "identifier": "FD31A3B4",
+                                                            "panelsCount": 1,
+                                                            "model": "P401I-5RM4MRM-NA32",
+                                                            "moduleModelName": "M226-4x10-b GG LEVEL",
+                                                            "status": "ACTIVE",
+                                                            "moduleSerial": ""
+                                                        }
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}
