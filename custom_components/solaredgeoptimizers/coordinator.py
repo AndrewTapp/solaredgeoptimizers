@@ -13,7 +13,8 @@ Key Responsibilities:
 - Handles hardware swaps by using position-based keys instead of serial numbers
 - Indexes optimizer data by display-name position (via `build_optimizer_tasks`) including letter
   suffixes (e.g. 1.1.1a) as well as panel_id serial keys
-- Registers devices in Home Assistant device registry (site, inverters, strings; optimizers in sensor.py)
+- Registers devices in Home Assistant device registry (site, inverters or SMIs, strings; optimizers in sensor.py)
+- Issue #74: SolarEdge One layout parents typed SMI use the same registry path as inverters; device name is "SMI …"
 
 Adaptive Polling Strategy:
 - Lightweight check: samples up to 5 random **active** optimizers (batch, One API) or 1 active
@@ -408,10 +409,18 @@ class MyCoordinator(DataUpdateCoordinator):
                 )
 
     async def _fetch_inverter_models(self, site) -> None:
-        """Fetch inverter models from API if supported; set self._inverter_models (with error handling)."""
+        """Fetch inverter models from API if supported; set self._inverter_models (with error handling).
+
+        SMI parents (Issue #74) are skipped: layout/information/inverters expects inverter serials.
+        """
         if getattr(self.my_api, "get_inverter_models", None) is None:
             return
-        inv_serials = [inv.serialNumber for inv in site.inverters if getattr(inv, "serialNumber", None)]
+        inv_serials = [
+            inv.serialNumber
+            for inv in site.inverters
+            if getattr(inv, "serialNumber", None)
+            and (getattr(inv, "type", "") or "INVERTER").upper() == "INVERTER"
+        ]
         if not inv_serials:
             if _LOGGER.isEnabledFor(logging.DEBUG):
                 _LOGGER.debug("SolarEdge Optimizers: No inverter serials to fetch models for")
@@ -573,7 +582,8 @@ class MyCoordinator(DataUpdateCoordinator):
         # Child count = only active (and blank-status) strings in this inverter
         inverter_aggregated.child_count = int(inv_data.active_strings)
         inverter_aggregated.active_optimizer_count = inv_data.active_optimizers
-        inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
+        parent_label = "SMI" if (getattr(inverter, "type", "") or "").upper() == "SMI" else "Inverter"
+        inverter_aggregated.serialnumber = inverter.serialNumber or f"{parent_label}_{inverter.inverterId}"
         inverter_aggregated.panel_description = inverter.displayName
         inverter_aggregated.status = getattr(inverter, "status", "") or ""
         inverter_aggregated.max_active_power = getattr(inverter, "maxActivePower", None)
@@ -711,9 +721,15 @@ class MyCoordinator(DataUpdateCoordinator):
         inv_suffix is empty for first inverter at position, 'a', 'b', etc. for duplicates.
         """
         inv_idx_str = f"{inv_idx}{inv_suffix}"
+        parent_type = (getattr(inverter, "type", "") or "INVERTER").upper()
+        parent_label = "SMI" if parent_type == "SMI" else "Inverter"
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            _LOGGER.debug("SolarEdge Optimizers: Registering devices for inverter %s", inv_idx_str)
-        inverter_name = f"Inverter {site_id}.{inv_idx_str}"
+            _LOGGER.debug(
+                "SolarEdge Optimizers: Registering devices for %s %s",
+                parent_label.lower(),
+                inv_idx_str,
+            )
+        inverter_name = f"{parent_label} {site_id}.{inv_idx_str}"
         inv_model = self._inverter_models.get(inverter.serialNumber) if self._inverter_models else None
         model = (inv_model or f"{inverter.type} {inverter.displayName}").strip() or inverter.serialNumber
         if _LOGGER.isEnabledFor(logging.DEBUG):

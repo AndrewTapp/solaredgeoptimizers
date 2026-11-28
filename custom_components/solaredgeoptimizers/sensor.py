@@ -547,7 +547,8 @@ def _create_inverter_aggregated_data(inverter, inv_idx_str, include_site_id, sit
         entity_type="inverter",
         entity_id_path=(site_id, inv_idx_str) if include_site_id else (inv_idx_str,),
     )
-    inverter_aggregated.serialnumber = inverter.serialNumber or f"Inverter_{inverter.inverterId}"
+    parent_label = "SMI" if (getattr(inverter, "type", "") or "").upper() == "SMI" else "Inverter"
+    inverter_aggregated.serialnumber = inverter.serialNumber or f"{parent_label}_{inverter.inverterId}"
     inverter_aggregated.panel_description = inverter.displayName
     inverter_aggregated.status = getattr(inverter, "status", "") or ""
     inverter_aggregated.manufacturer = getattr(inverter, "manufacturer", "") or "SolarEdge"
